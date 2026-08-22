@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import {
   fetchContests,
@@ -7,20 +7,52 @@ import {
   type ContestState,
   type ContestSummary,
 } from '../lib/dpns';
-import { countdown, plural, type Countdown } from '../lib/format';
+import { countdown, plural } from '../lib/format';
 import { useNow } from '../lib/hooks';
 import { contestHref } from '../lib/router';
 import type { Network } from '../lib/sdk';
-import { BallotBar } from './BallotBar';
+import {
+  ABSTAIN_COLOR,
+  BallotBar,
+  contenderColor,
+  LOCK_COLOR,
+} from './BallotBar';
 import { ContestedName } from './ContestedName';
 
 type StateEntry = ContestState | 'loading' | 'error';
 
-function rowStatus(state: StateEntry, timing?: Countdown): string {
-  if (typeof state === 'object' && state.winner) return 'decided';
-  if (!timing) return '';
-  if (timing.past) return 'closing';
-  return `closes in ${timing.text}`;
+interface Outcome {
+  text: string;
+  tone: 'won' | 'locked' | '';
+}
+
+/** The result of an ended contest, once its state has loaded. */
+function outcome(state: StateEntry): Outcome | undefined {
+  if (typeof state !== 'object' || !state.winner) return undefined;
+  if (state.winner.identityId) return { text: 'awarded', tone: 'won' };
+  if (state.winner.kind.toLowerCase().includes('lock')) {
+    return { text: 'locked', tone: 'locked' };
+  }
+  return { text: 'no winner', tone: '' };
+}
+
+function Legend() {
+  return (
+    <div className="legend">
+      <span>
+        <i style={{ backgroundColor: contenderColor(0) }} /> leader
+      </span>
+      <span>
+        <i style={{ backgroundColor: contenderColor(1) }} /> other contenders
+      </span>
+      <span>
+        <i style={{ backgroundColor: ABSTAIN_COLOR }} /> abstain
+      </span>
+      <span>
+        <i className="hatched" style={{ backgroundColor: LOCK_COLOR }} /> lock
+      </span>
+    </div>
+  );
 }
 
 export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network }) {
@@ -77,19 +109,30 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
     };
   }, [sdk]);
 
-  const visible = useMemo(() => {
-    if (!Array.isArray(contests)) return [];
+  const { open, ended } = useMemo(() => {
+    if (!Array.isArray(contests)) return { open: [], ended: [] };
     const needle = filter.trim().toLowerCase();
-    if (!needle) return contests;
-    return contests.filter((c) => {
+    const matches = (c: ContestSummary) => {
+      if (!needle) return true;
       if (c.label.toLowerCase().includes(needle)) return true;
       const state = states[c.label];
       return (
         typeof state === 'object' &&
         (state.displayLabel?.toLowerCase().includes(needle) ?? false)
       );
-    });
-  }, [contests, filter, states]);
+    };
+    const open: ContestSummary[] = [];
+    const ended: ContestSummary[] = [];
+    for (const c of contests) {
+      if (!matches(c)) continue;
+      if (c.endsAtMs && c.endsAtMs > now) open.push(c);
+      else ended.push(c);
+    }
+    // Open: closing soonest first. Ended: most recently closed first.
+    open.sort((a, b) => a.endsAtMs! - b.endsAtMs!);
+    ended.sort((a, b) => (b.endsAtMs ?? -Infinity) - (a.endsAtMs ?? -Infinity));
+    return { open, ended };
+  }, [contests, filter, states, now]);
 
   if (contests === 'loading') {
     return (
@@ -112,18 +155,65 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
     );
   }
 
-  const soonest = contests.find((c) => c.endsAtMs && c.endsAtMs > now);
+  const soonest = open[0];
+
+  const row = (contest: ContestSummary, isOpen: boolean) => {
+    const state = states[contest.label];
+    const timing = contest.endsAtMs ? countdown(contest.endsAtMs, now) : undefined;
+    const result = outcome(state);
+    let status: ReactNode;
+    let statusClass = 'ledger-ends mono-label';
+    if (isOpen) {
+      status = timing ? `closes in ${timing.text}` : '';
+      if (timing?.urgent) statusClass += ' urgent';
+    } else if (result) {
+      status = result.text;
+      if (result.tone) statusClass += ` ${result.tone}`;
+    } else if (state === 'loading') {
+      status = '…';
+    } else {
+      status = 'awaiting result';
+    }
+    return (
+      <li key={contest.label}>
+        <a
+          className={isOpen ? 'ledger-row' : 'ledger-row ended'}
+          href={contestHref(contest.label)}
+        >
+          <span className="ledger-name">
+            <ContestedName
+              label={
+                (typeof state === 'object' && state.displayLabel) || contest.label
+              }
+            />
+          </span>
+          <span className="ledger-bar">
+            {state === 'loading' && <span className="bar-skeleton" />}
+            {state === 'error' && (
+              <span className="mono-label error">tally unavailable</span>
+            )}
+            {typeof state === 'object' && <BallotBar state={state} mini />}
+          </span>
+          <span className="ledger-votes mono-label">
+            {typeof state === 'object' ? plural(state.totalVotes, 'vote') : ''}
+          </span>
+          <span className={statusClass}>{status}</span>
+        </a>
+      </li>
+    );
+  };
 
   return (
     <div className="contest-list">
       <div className="status-strip">
-        <span className="mono-label">{plural(contests.length, 'active contest')}</span>
+        <span className="mono-label">{plural(open.length, 'open contest')}</span>
         {soonest?.endsAtMs && (
           <span className="mono-label">
             next closes in {countdown(soonest.endsAtMs, now).text}
           </span>
         )}
         <span className="mono-label">{network}</span>
+        <Legend />
       </div>
 
       {contests.length > 6 && (
@@ -137,48 +227,25 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
         />
       )}
 
-      {contests.length === 0 ? (
+      {contests.length === 0 && (
         <p className="page-note">No usernames are currently contested.</p>
-      ) : (
-        <ol className="ledger">
-          {visible.map((contest) => {
-            const state = states[contest.label];
-            const timing = contest.endsAtMs ? countdown(contest.endsAtMs, now) : undefined;
-            return (
-              <li key={contest.label}>
-                <a className="ledger-row" href={contestHref(contest.label)}>
-                  <span className="ledger-name">
-                    <ContestedName
-                      label={
-                        (typeof state === 'object' && state.displayLabel) ||
-                        contest.label
-                      }
-                    />
-                  </span>
-                  <span className="ledger-bar">
-                    {state === 'loading' && <span className="bar-skeleton" />}
-                    {state === 'error' && (
-                      <span className="mono-label error">tally unavailable</span>
-                    )}
-                    {typeof state === 'object' && <BallotBar state={state} mini />}
-                  </span>
-                  <span className="ledger-votes mono-label">
-                    {typeof state === 'object' ? plural(state.totalVotes, 'vote') : ''}
-                  </span>
-                  <span
-                    className={
-                      timing?.urgent ? 'ledger-ends mono-label urgent' : 'ledger-ends mono-label'
-                    }
-                  >
-                    {rowStatus(state, timing)}
-                  </span>
-                </a>
-              </li>
-            );
-          })}
-        </ol>
       )}
-      {visible.length === 0 && contests.length > 0 && (
+
+      {open.length > 0 && (
+        <>
+          <h2 className="section-title">Open for voting · {open.length}</h2>
+          <ol className="ledger">{open.map((c) => row(c, true))}</ol>
+        </>
+      )}
+
+      {ended.length > 0 && (
+        <>
+          <h2 className="section-title">Ended · {ended.length}</h2>
+          <ol className="ledger">{ended.map((c) => row(c, false))}</ol>
+        </>
+      )}
+
+      {open.length === 0 && ended.length === 0 && contests.length > 0 && (
         <p className="page-note">No contested names match “{filter.trim()}”.</p>
       )}
     </div>

@@ -15,6 +15,7 @@
   --amber: #b45309;
   --amber-tint: #fdf3e7;
   --lock: #b3362b;
+  --lock-tint: #fbecea;
   --abstain: #64748b;
   --win: #1b7a46;
   --win-tint: #e9f6ef;
@@ -243,7 +244,52 @@ a:focus-visible {
   display: flex;
   gap: 20px;
   flex-wrap: wrap;
+  align-items: center;
   padding: 10px 0 18px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.legend i.hatched {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.45) 0 2px,
+    transparent 2px 4px
+  );
+}
+
+.section-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+  margin: 30px 0 0;
+  padding-bottom: 8px;
   border-bottom: 2px solid var(--ink);
 }
 
@@ -291,6 +337,25 @@ a:focus-visible {
 .mono-label.urgent {
   color: var(--amber);
   font-weight: 600;
+}
+
+.ledger-ends.won {
+  color: var(--win);
+  font-weight: 600;
+}
+
+.ledger-ends.locked {
+  color: var(--lock);
+  font-weight: 600;
+}
+
+/* Ended contests are history: keep them legible but let open races pop. */
+.ledger-row.ended .ballot-bar {
+  opacity: 0.55;
+}
+
+.ledger-row.ended .ledger-name {
+  color: var(--ink-2);
 }
 
 .bar-skeleton {
@@ -390,6 +455,12 @@ a:focus-visible {
   border-color: var(--win);
   color: var(--win);
   background: var(--win-tint);
+}
+
+.chip.locked {
+  border-color: var(--lock);
+  color: var(--lock);
+  background: var(--lock-tint);
 }
 
 .contenders {
