@@ -21,6 +21,14 @@ export function switchNetwork(network: Network): void {
   location.reload();
 }
 
+/** WASM SDK errors are wasm-bindgen objects, not Error instances. */
+export function errorMessage(e: unknown): string {
+  if (e && typeof e === 'object' && 'message' in e) {
+    return String((e as { message: unknown }).message);
+  }
+  return String(e);
+}
+
 let handle: Promise<SdkHandle> | null = null;
 
 /**

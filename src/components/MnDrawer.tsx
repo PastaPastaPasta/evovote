@@ -7,7 +7,7 @@ import {
   removeMasternode,
   useMasternodes,
 } from '../lib/mn';
-import { shortId } from '../lib/format';
+import { plural, shortId } from '../lib/format';
 import type { Network } from '../lib/sdk';
 
 function KeyField({ mnId }: { mnId: string }) {
@@ -30,7 +30,7 @@ function KeyField({ mnId }: { mnId: string }) {
         type="password"
         placeholder="Voting key (WIF)"
         value={wif}
-        autoComplete="off"
+        autoComplete="new-password"
         onChange={(e) => setWif(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && wif.trim()) void submit();
@@ -79,7 +79,7 @@ export function MnDrawer({
   const runBulk = async () => {
     const result = await bulkImport(bulkText);
     const report = [
-      `Added ${result.added} masternode${result.added === 1 ? '' : 's'}, loaded ${result.keysLoaded} key${result.keysLoaded === 1 ? '' : 's'}.`,
+      `Added ${plural(result.added, 'masternode')}, loaded ${plural(result.keysLoaded, 'key')}.`,
       ...result.errors,
     ];
     setBulkReport(report);
@@ -164,7 +164,7 @@ export function MnDrawer({
           <input
             type="password"
             placeholder="Voting key WIF (optional, add later)"
-            autoComplete="off"
+            autoComplete="new-password"
             value={wif}
             onChange={(e) => setWif(e.target.value)}
           />

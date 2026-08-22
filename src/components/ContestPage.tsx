@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import {
   fetchContests,
@@ -7,7 +7,8 @@ import {
   fetchVoters,
   type ContestState,
 } from '../lib/dpns';
-import { countdown, endDate, plural, shortId } from '../lib/format';
+import { countdown, endDate, plural, shortId, type Countdown } from '../lib/format';
+import { useNow } from '../lib/hooks';
 import type { Network } from '../lib/sdk';
 import type { VoteChoice } from '../lib/vote';
 import {
@@ -42,12 +43,23 @@ function Voters({
   contenderId: string;
 }) {
   const [voters, setVoters] = useState<string[] | 'loading' | 'error' | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const load = () => {
     setVoters('loading');
     fetchVoters(sdk, label, contenderId)
-      .then(setVoters)
-      .catch(() => setVoters('error'));
+      .then((result) => {
+        if (mounted.current) setVoters(result);
+      })
+      .catch(() => {
+        if (mounted.current) setVoters('error');
+      });
   };
 
   if (voters === null) {
@@ -129,6 +141,31 @@ function ContenderRow({
   );
 }
 
+function statusChip(
+  state: ContestState,
+  timing: Countdown | undefined,
+  endsAtMs: number | undefined,
+) {
+  if (state.winner) {
+    const outcome = state.winner.identityId
+      ? `awarded to ${shortId(state.winner.identityId, 6)}`
+      : state.winner.kind.toLowerCase() === 'locked'
+        ? 'locked, awarded to no one'
+        : state.winner.kind;
+    return <span className="chip won">decided — {outcome}</span>;
+  }
+  if (timing && endsAtMs !== undefined) {
+    return (
+      <span className={timing.urgent ? 'chip urgent' : 'chip'}>
+        {timing.past
+          ? 'voting closed — awaiting finalization'
+          : `closes in ${timing.text} · ${endDate(endsAtMs)}`}
+      </span>
+    );
+  }
+  return <span className="chip">active contest</span>;
+}
+
 export function ContestPage({
   sdk,
   network,
@@ -138,17 +175,11 @@ export function ContestPage({
   sdk: EvoSDK;
   network: Network;
   label: string;
-  endsAtMs?: number;
   onVote: (choice: VoteChoice) => void;
 }) {
   const [state, setState] = useState<ContestState | 'loading' | 'error'>('loading');
   const [endsAtMs, setEndsAtMs] = useState<number | undefined>();
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
+  const now = useNow();
 
   useEffect(() => {
     let cancelled = false;
@@ -173,22 +204,18 @@ export function ContestPage({
     };
   }, [sdk, label]);
 
-  if (state === 'loading') {
+  if (state === 'loading' || state === 'error') {
     return (
       <div className="contest-page">
         <ContestHeader label={label} />
-        <p className="page-note">Reading vote state from Platform…</p>
-      </div>
-    );
-  }
-  if (state === 'error') {
-    return (
-      <div className="contest-page">
-        <ContestHeader label={label} />
-        <p className="page-note error">
-          Could not load this contest. The name may not be under an active
-          contest on {network}, or the network request failed.
-        </p>
+        {state === 'loading' ? (
+          <p className="page-note">Reading vote state from Platform…</p>
+        ) : (
+          <p className="page-note error">
+            Could not load this contest. The name may not be under an active
+            contest on {network}, or the network request failed.
+          </p>
+        )}
       </div>
     );
   }
@@ -204,33 +231,15 @@ export function ContestPage({
     );
   }
 
-  const decided = Boolean(state.winner);
   const timing = endsAtMs ? countdown(endsAtMs, now) : undefined;
-  const votable = !decided;
+  const votable = !state.winner;
 
   return (
     <div className="contest-page">
       <ContestHeader label={label} />
 
       <div className="contest-meta">
-        {decided && state.winner ? (
-          <span className="chip won">
-            decided —{' '}
-            {state.winner.identityId
-              ? `awarded to ${shortId(state.winner.identityId, 6)}`
-              : state.winner.kind === 'locked' || state.winner.kind === 'Locked'
-                ? 'locked, awarded to no one'
-                : state.winner.kind}
-          </span>
-        ) : timing ? (
-          <span className={timing.urgent ? 'chip urgent' : 'chip'}>
-            {timing.past
-              ? 'voting closed — awaiting finalization'
-              : `closes in ${timing.text} · ${endDate(endsAtMs!)}`}
-          </span>
-        ) : (
-          <span className="chip">active contest</span>
-        )}
+        {statusChip(state, timing, endsAtMs)}
         <span className="mono-label">{plural(state.totalVotes, 'vote')} cast</span>
       </div>
 

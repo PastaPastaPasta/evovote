@@ -1,6 +1,6 @@
 import type { ContestState } from '../lib/dpns';
 
-export const CONTENDER_COLORS = [
+const CONTENDER_COLORS = [
   '#008DE4',
   '#5AB6EE',
   '#94CEF4',

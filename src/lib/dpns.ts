@@ -39,8 +39,9 @@ function labelFromResource(entry: unknown): string | undefined {
 /**
  * Poll index values come back as serialized platform Values: a 0x12 text tag,
  * a single length byte, then UTF-8 (labels are far below 128 bytes).
+ * Exported for tests.
  */
-function decodeIndexValue(raw: unknown): string | undefined {
+export function decodeIndexValue(raw: unknown): string | undefined {
   if (typeof raw === 'string') return raw;
   let bytes: Uint8Array | undefined;
   if (raw instanceof Uint8Array) bytes = raw;
@@ -197,7 +198,7 @@ export async function fetchContestState(
       winner = { kind: w.kind, identityId: w.identityId?.toBase58() };
     }
   } catch {
-    winner = undefined;
+    // Unreadable winner info renders as an undecided contest.
   }
 
   return {

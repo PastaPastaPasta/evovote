@@ -7,17 +7,6 @@ export type VoteChoice =
   | { type: 'abstain' }
   | { type: 'lock' };
 
-export function describeChoice(choice: VoteChoice): string {
-  switch (choice.type) {
-    case 'identity':
-      return `for ${choice.identityId}`;
-    case 'abstain':
-      return 'abstain';
-    case 'lock':
-      return 'lock the name';
-  }
-}
-
 /**
  * Sign and broadcast one masternode vote, entirely in the browser.
  *
@@ -54,12 +43,18 @@ export async function castVote(
     indexValues: ['dash', args.label],
   });
 
-  const voteChoice =
-    args.choice.type === 'identity'
-      ? mod.ResourceVoteChoice.TowardsIdentity(args.choice.identityId)
-      : args.choice.type === 'abstain'
-        ? mod.ResourceVoteChoice.Abstain()
-        : mod.ResourceVoteChoice.Lock();
+  let voteChoice;
+  switch (args.choice.type) {
+    case 'identity':
+      voteChoice = mod.ResourceVoteChoice.TowardsIdentity(args.choice.identityId);
+      break;
+    case 'abstain':
+      voteChoice = mod.ResourceVoteChoice.Abstain();
+      break;
+    case 'lock':
+      voteChoice = mod.ResourceVoteChoice.Lock();
+      break;
+  }
 
   await sdk.voting.masternodeVote({
     // Core RPC ProTxHash hex, used as-is (not byte-reversed). Passed as raw
@@ -73,14 +68,6 @@ export async function castVote(
     votingKey,
     signer,
   });
-}
-
-/** WASM SDK errors are wasm-bindgen objects, not Error instances. */
-export function errorMessage(e: unknown): string {
-  if (e && typeof e === 'object' && 'message' in e) {
-    return String((e as { message: unknown }).message);
-  }
-  return String(e);
 }
 
 // ---- Local vote receipts ---------------------------------------------------

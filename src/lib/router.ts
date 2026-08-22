@@ -9,7 +9,13 @@ function parse(hash: string): Route {
   const path = hash.replace(/^#\/?/, '');
   if (path === 'about') return { page: 'about' };
   const contest = path.match(/^c\/(.+)$/);
-  if (contest) return { page: 'contest', label: decodeURIComponent(contest[1]) };
+  if (contest) {
+    try {
+      return { page: 'contest', label: decodeURIComponent(contest[1]) };
+    } catch {
+      // Malformed percent-encoding in a shared/typed URL: fall through home.
+    }
+  }
   return { page: 'home' };
 }
 

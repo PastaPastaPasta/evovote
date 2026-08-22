@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react';
 import { getWif, useMasternodes } from '../lib/mn';
-import { loadSdk, type Network } from '../lib/sdk';
+import { errorMessage, loadSdk, type Network } from '../lib/sdk';
 import {
   castVote,
-  errorMessage,
   loadReceipts,
   recordReceipt,
   type VoteChoice,
 } from '../lib/vote';
-import { shortId } from '../lib/format';
+import { plural, shortId } from '../lib/format';
 import { ContestedName } from './ContestedName';
 
 type MnStatus =
@@ -49,6 +48,11 @@ export function VoteModal({
   const [phase, setPhase] = useState<'pick' | 'run' | 'done'>('pick');
   const [statuses, setStatuses] = useState<Record<string, MnStatus>>({});
   const receipts = loadReceipts(network)[label] ?? {};
+
+  const openMasternodes = () => {
+    onClose();
+    onOpenMasternodes();
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -120,13 +124,7 @@ export function VoteModal({
             {ready.length === 0 ? (
               <div className="modal-empty">
                 <p>No voting keys are loaded in this tab.</p>
-                <button
-                  className="vote-button"
-                  onClick={() => {
-                    onClose();
-                    onOpenMasternodes();
-                  }}
-                >
+                <button className="vote-button" onClick={openMasternodes}>
                   Open Masternodes
                 </button>
               </div>
@@ -152,7 +150,7 @@ export function VoteModal({
                           <span className="mono-label">{shortId(mn.proTxHash, 6)}</span>
                           {used > 0 && (
                             <span className="mono-label">
-                              {used} vote{used === 1 ? '' : 's'} sent from this browser
+                              {plural(used, 'vote')} sent from this browser
                             </span>
                           )}
                         </label>
@@ -165,13 +163,7 @@ export function VoteModal({
                     {masternodes.length - ready.length} masternode
                     {masternodes.length - ready.length === 1 ? ' has' : 's have'} no
                     voting key loaded —{' '}
-                    <button
-                      className="link-button"
-                      onClick={() => {
-                        onClose();
-                        onOpenMasternodes();
-                      }}
-                    >
+                    <button className="link-button" onClick={openMasternodes}>
                       add keys
                     </button>
                     .
@@ -186,7 +178,7 @@ export function VoteModal({
                     disabled={selected.size === 0}
                     onClick={broadcast}
                   >
-                    Sign & broadcast {selected.size} vote{selected.size === 1 ? '' : 's'}
+                    Sign & broadcast {plural(selected.size, 'vote')}
                   </button>
                 </div>
               </>

@@ -7,6 +7,7 @@ import { VoteModal } from './components/VoteModal';
 import { initMnStore, useMasternodes } from './lib/mn';
 import { useRoute } from './lib/router';
 import {
+  errorMessage,
   loadSdk,
   storedNetwork,
   switchNetwork,
@@ -21,7 +22,8 @@ type SdkState =
   | { status: 'error'; message: string };
 
 export function App() {
-  const [network] = useState<Network>(storedNetwork);
+  // Constant for the page's lifetime: switchNetwork() persists and reloads.
+  const network: Network = storedNetwork();
   const [sdkState, setSdkState] = useState<SdkState>({ status: 'loading' });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pendingVote, setPendingVote] = useState<{
@@ -40,10 +42,7 @@ export function App() {
       })
       .catch((e: unknown) => {
         if (!cancelled) {
-          setSdkState({
-            status: 'error',
-            message: e instanceof Error ? e.message : String(e),
-          });
+          setSdkState({ status: 'error', message: errorMessage(e) });
         }
       });
     return () => {

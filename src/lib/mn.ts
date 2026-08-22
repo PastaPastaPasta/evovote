@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { loadSdk, type Network } from './sdk';
+import { errorMessage, loadSdk, type Network } from './sdk';
 import { isProTxHash, p2pkhAddress, wifNetwork } from './keys';
-import { errorMessage } from './vote';
 
 export interface Masternode {
   id: string;
@@ -21,8 +20,7 @@ interface StoredEntry {
 
 // ProTxHashes and labels are public information and persist across sessions.
 // Voting keys (WIFs) live only in this in-memory map and vanish with the tab.
-const wifs = new Map<string, string>();
-const addresses = new Map<string, string>();
+const keys = new Map<string, { wif: string; address: string }>();
 
 let network: Network = 'mainnet';
 let entries: StoredEntry[] = [];
@@ -36,8 +34,8 @@ function storageKey(): string {
 function rebuildSnapshot(): void {
   snapshot = entries.map((entry) => ({
     ...entry,
-    hasKey: wifs.has(entry.id),
-    votingAddress: addresses.get(entry.id),
+    hasKey: keys.has(entry.id),
+    votingAddress: keys.get(entry.id)?.address,
   }));
   for (const listener of listeners) listener();
 }
@@ -67,18 +65,21 @@ export function initMnStore(activeNetwork: Network): void {
   rebuildSnapshot();
 }
 
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function getSnapshot(): Masternode[] {
+  return snapshot;
+}
+
 export function useMasternodes(): Masternode[] {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    () => snapshot,
-  );
+  return useSyncExternalStore(subscribe, getSnapshot);
 }
 
 export function getWif(id: string): string | undefined {
-  return wifs.get(id);
+  return keys.get(id)?.wif;
 }
 
 export interface AddMnResult {
@@ -132,8 +133,7 @@ export async function importKey(id: string, wif: string): Promise<AddMnResult> {
     const { mod } = await loadSdk(network);
     const key = mod.PrivateKey.fromWIF(trimmed);
     const address = await p2pkhAddress(key.getPublicKeyHash(), network);
-    wifs.set(id, trimmed);
-    addresses.set(id, address);
+    keys.set(id, { wif: trimmed, address });
     rebuildSnapshot();
     return { ok: true };
   } catch (e) {
@@ -142,14 +142,12 @@ export async function importKey(id: string, wif: string): Promise<AddMnResult> {
 }
 
 export function forgetKey(id: string): void {
-  wifs.delete(id);
-  addresses.delete(id);
+  keys.delete(id);
   rebuildSnapshot();
 }
 
 export function removeMasternode(id: string): void {
-  wifs.delete(id);
-  addresses.delete(id);
+  keys.delete(id);
   entries = entries.filter((e) => e.id !== id);
   persist();
   rebuildSnapshot();

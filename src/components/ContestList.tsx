@@ -6,7 +6,8 @@ import {
   type ContestState,
   type ContestSummary,
 } from '../lib/dpns';
-import { countdown, plural } from '../lib/format';
+import { countdown, plural, type Countdown } from '../lib/format';
+import { useNow } from '../lib/hooks';
 import { contestHref } from '../lib/router';
 import type { Network } from '../lib/sdk';
 import { BallotBar } from './BallotBar';
@@ -14,24 +15,29 @@ import { ContestedName } from './ContestedName';
 
 type StateEntry = ContestState | 'loading' | 'error';
 
+function rowStatus(state: StateEntry, timing?: Countdown): string {
+  if (typeof state === 'object' && state.winner) return 'decided';
+  if (!timing) return '';
+  if (timing.past) return 'closing';
+  return `closes in ${timing.text}`;
+}
+
 export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network }) {
   const [contests, setContests] = useState<ContestSummary[] | 'loading' | 'error'>('loading');
   const [states, setStates] = useState<Record<string, StateEntry>>({});
   const [filter, setFilter] = useState('');
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
+  const now = useNow();
 
   useEffect(() => {
     let cancelled = false;
     setContests('loading');
     fetchContests(sdk)
-      .then((list) => {
+      .then((shared) => {
         if (cancelled) return;
-        list.sort((a, b) => (a.endsAtMs ?? Infinity) - (b.endsAtMs ?? Infinity));
+        // Copy before sorting: fetchContests memoizes and shares the array.
+        const list = [...shared].sort(
+          (a, b) => (a.endsAtMs ?? Infinity) - (b.endsAtMs ?? Infinity),
+        );
         setContests(list);
         setStates(Object.fromEntries(list.map((c) => [c.label, 'loading' as const])));
 
@@ -136,13 +142,7 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
                       timing?.urgent ? 'ledger-ends mono-label urgent' : 'ledger-ends mono-label'
                     }
                   >
-                    {typeof state === 'object' && state.winner
-                      ? 'decided'
-                      : timing
-                        ? timing.past
-                          ? 'closing'
-                          : `closes in ${timing.text}`
-                        : ''}
+                    {rowStatus(state, timing)}
                   </span>
                 </a>
               </li>
