@@ -207,14 +207,13 @@ export function ContestPage({
       .catch(() => {
         if (!cancelled) setState('error');
       });
-    // End time comes from the poll schedule; best effort.
-    fetchContests(sdk)
-      .then((contests) => {
-        if (cancelled) return;
-        const match = contests.find((c) => c.label === label);
-        if (match?.endsAtMs) setEndsAtMs(match.endsAtMs);
-      })
-      .catch(() => {});
+    // End time comes from the poll schedule; best effort. fetchContests
+    // resolves with whatever loaded even on partial failure.
+    void fetchContests(sdk).then((contests) => {
+      if (cancelled) return;
+      const match = contests.find((c) => c.label === label);
+      if (match?.endsAtMs) setEndsAtMs(match.endsAtMs);
+    });
     return () => {
       cancelled = true;
     };

@@ -137,20 +137,30 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
     };
   }, [needle, states]);
 
-  const visibleOpen = open.filter(matches);
-  // Ended contests: most recently decided first, once their tallies (which
-  // carry the deciding block time) have arrived; unknowns keep stream order.
+  // Classification is live: a contest whose end time passes while the page
+  // is open (or during a cached replay) moves to the ended section.
+  const stillOpen = open.filter((c) => c.endsAtMs !== undefined && c.endsAtMs > now);
+  const expired = open.filter((c) => c.endsAtMs !== undefined && c.endsAtMs <= now);
+
+  const visibleOpen = stillOpen.filter(matches);
+  // Ended contests: most recently concluded first. Freshly expired ones sort
+  // by their end time (always newest); decided ones by deciding-block time as
+  // tallies arrive; unknowns keep stream order.
   const visibleEnded = useMemo(() => {
-    const decidedAt = (c: ContestSummary) => {
+    const concludedAt = (c: ContestSummary) => {
       const state = states[c.label];
-      return typeof state === 'object' ? (state.winner?.decidedAtMs ?? 0) : 0;
+      const decided =
+        typeof state === 'object' ? state.winner?.decidedAtMs : undefined;
+      return decided ?? c.endsAtMs ?? 0;
     };
-    return ended
+    return [...expired, ...ended]
       .filter(matches)
-      .map((c, index) => ({ c, index, at: decidedAt(c) }))
+      .map((c, index) => ({ c, index, at: concludedAt(c) }))
       .sort((a, b) => b.at - a.at || a.index - b.index)
       .map((entry) => entry.c);
-  }, [ended, matches, states]);
+    // `expired` is derived from `open` and `now`, both in the dep list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ended, open, now, matches, states]);
   const total = open.length + ended.length;
   const streaming = streamStatus === 'streaming';
 
@@ -178,7 +188,7 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
     return <p className="page-note">No usernames are currently contested.</p>;
   }
 
-  const soonest = open.find((c) => c.endsAtMs && c.endsAtMs > now);
+  const soonest = stillOpen[0];
 
   const row = (contest: ContestSummary, isOpen: boolean) => {
     const state = states[contest.label];
@@ -194,6 +204,8 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
       if (result.tone) statusClass += ` ${result.tone}`;
     } else if (state === 'loading') {
       status = '…';
+    } else if (state === 'error') {
+      status = '';
     } else {
       status = 'awaiting result';
     }
@@ -229,7 +241,7 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
   return (
     <div className="contest-list">
       <div className="status-strip">
-        <span className="mono-label">{plural(open.length, 'open contest')}</span>
+        <span className="mono-label">{plural(stillOpen.length, 'open contest')}</span>
         {soonest?.endsAtMs && (
           <span className="mono-label">
             next closes in {countdown(soonest.endsAtMs, now).text}
@@ -237,6 +249,11 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
         )}
         <span className="mono-label">{network}</span>
         {streaming && <span className="mono-label">loading more…</span>}
+        {streamStatus === 'partial' && (
+          <span className="mono-label error">
+            some contests could not be loaded — reload to retry
+          </span>
+        )}
         <Legend />
       </div>
 

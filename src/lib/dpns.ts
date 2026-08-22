@@ -62,7 +62,9 @@ export function decodeIndexValue(raw: unknown): string | undefined {
 }
 
 const PAGE = 100;
-const MAX_PAGES = 10;
+// 2000-contest ceiling per source; mainnet is ~750 today. Raise if the
+// archive ever approaches it — truncation past the cap is silent.
+const MAX_PAGES = 20;
 const CONTESTS_TTL_MS = 60_000;
 
 /**
@@ -75,35 +77,43 @@ export interface ContestBatch {
   phase: StreamPhase;
   list: ContestSummary[];
 }
-export type StreamStatus = 'streaming' | 'done' | 'error';
+/** `partial`: some phase failed, so contests may be missing or misfiled. */
+export type StreamStatus = 'streaming' | 'done' | 'partial' | 'error';
+
+interface StreamSubscriber {
+  onBatch: (batch: ContestBatch) => void;
+  onStatus: (status: StreamStatus) => void;
+}
 
 interface StreamRun {
   at: number;
   batches: ContestBatch[];
   status: StreamStatus;
-  batchListeners: Set<(batch: ContestBatch) => void>;
-  statusListeners: Set<(status: StreamStatus) => void>;
+  listeners: Set<StreamSubscriber>;
 }
 
 let streamRun: StreamRun | null = null;
+
+// A run that never settles (one wedged SDK call) must not be joined forever.
+const STREAM_DEADLINE_MS = 120_000;
 
 function startStream(sdk: EvoSDK): StreamRun {
   const run: StreamRun = {
     at: Date.now(),
     batches: [],
     status: 'streaming',
-    batchListeners: new Set(),
-    statusListeners: new Set(),
+    listeners: new Set(),
   };
 
   void (async () => {
     const seen = new Set<string>();
-    let anySuccess = false;
+    let pollsFailed = false;
+    let archiveFailed = false;
     const push = (phase: StreamPhase, list: ContestSummary[]) => {
       if (list.length === 0) return;
       const batch = { phase, list };
       run.batches.push(batch);
-      for (const listener of run.batchListeners) listener(batch);
+      for (const listener of run.listeners) listener.onBatch(batch);
     };
 
     // Polls are paged newest-end-date-first with offset pagination.
@@ -131,8 +141,8 @@ function startStream(sdk: EvoSDK): StreamRun {
           limit: PAGE,
           ...(offset > 0 ? { offset } : {}),
         });
-        anySuccess = true;
       } catch {
+        pollsFailed = true;
         break;
       }
       const pastBatch: ContestSummary[] = [];
@@ -158,8 +168,14 @@ function startStream(sdk: EvoSDK): StreamRun {
             }
             seen.add(label);
             const summary = { label, endsAtMs: ts };
-            if (ts > nowMs) futures.push(summary);
-            else pastBatch.push(summary);
+            if (ts > nowMs) {
+              // Defensive: emit directly if a future bucket somehow arrives
+              // after the open batch already went out.
+              if (openEmitted) push('open', [summary]);
+              else futures.push(summary);
+            } else {
+              pastBatch.push(summary);
+            }
           } catch {
             // Tolerate unexpected poll shapes.
           }
@@ -184,8 +200,8 @@ function startStream(sdk: EvoSDK): StreamRun {
             ? { startAtValue: startCursor, startAtValueIncluded: false }
             : {}),
         });
-        anySuccess = true;
       } catch {
+        archiveFailed = true;
         break;
       }
       const batch: ContestSummary[] = [];
@@ -204,11 +220,15 @@ function startStream(sdk: EvoSDK): StreamRun {
       startCursor = last;
     }
 
-    run.status = anySuccess ? 'done' : 'error';
+    run.status =
+      pollsFailed || archiveFailed
+        ? seen.size === 0
+          ? 'error'
+          : 'partial'
+        : 'done';
     run.at = Date.now();
-    for (const listener of run.statusListeners) listener(run.status);
-    run.batchListeners.clear();
-    run.statusListeners.clear();
+    for (const listener of run.listeners) listener.onStatus(run.status);
+    run.listeners.clear();
   })();
 
   return run;
@@ -224,22 +244,25 @@ export function subscribeContests(
   onBatch: (batch: ContestBatch) => void,
   onStatus: (status: StreamStatus) => void,
 ): () => void {
-  if (
-    !streamRun ||
-    (streamRun.status !== 'streaming' &&
-      Date.now() - streamRun.at > CONTESTS_TTL_MS)
-  ) {
+  // Reuse an in-progress run (unless wedged past its deadline) or a clean
+  // completed one inside the TTL. Failed and partial runs always restart.
+  const reusable =
+    streamRun &&
+    (streamRun.status === 'streaming'
+      ? Date.now() - streamRun.at < STREAM_DEADLINE_MS
+      : streamRun.status === 'done' &&
+        Date.now() - streamRun.at < CONTESTS_TTL_MS);
+  if (!reusable) {
     streamRun = startStream(sdk);
   }
-  const run = streamRun;
+  const run = streamRun!;
   for (const batch of run.batches) onBatch(batch);
   onStatus(run.status);
   if (run.status !== 'streaming') return () => {};
-  run.batchListeners.add(onBatch);
-  run.statusListeners.add(onStatus);
+  const subscriber: StreamSubscriber = { onBatch, onStatus };
+  run.listeners.add(subscriber);
   return () => {
-    run.batchListeners.delete(onBatch);
-    run.statusListeners.delete(onStatus);
+    run.listeners.delete(subscriber);
   };
 }
 
