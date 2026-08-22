@@ -439,6 +439,10 @@ a:focus-visible {
   font-weight: 600;
 }
 
+.contender-requested {
+  font-size: 16px;
+}
+
 .contender-names {
   font-size: 13px;
   color: var(--ink-2);

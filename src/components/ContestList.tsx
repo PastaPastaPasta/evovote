@@ -80,10 +80,16 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
   const visible = useMemo(() => {
     if (!Array.isArray(contests)) return [];
     const needle = filter.trim().toLowerCase();
-    return needle
-      ? contests.filter((c) => c.label.toLowerCase().includes(needle))
-      : contests;
-  }, [contests, filter]);
+    if (!needle) return contests;
+    return contests.filter((c) => {
+      if (c.label.toLowerCase().includes(needle)) return true;
+      const state = states[c.label];
+      return (
+        typeof state === 'object' &&
+        (state.displayLabel?.toLowerCase().includes(needle) ?? false)
+      );
+    });
+  }, [contests, filter, states]);
 
   if (contests === 'loading') {
     return (
@@ -142,7 +148,12 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
               <li key={contest.label}>
                 <a className="ledger-row" href={contestHref(contest.label)}>
                   <span className="ledger-name">
-                    <ContestedName label={contest.label} />
+                    <ContestedName
+                      label={
+                        (typeof state === 'object' && state.displayLabel) ||
+                        contest.label
+                      }
+                    />
                   </span>
                   <span className="ledger-bar">
                     {state === 'loading' && <span className="bar-skeleton" />}

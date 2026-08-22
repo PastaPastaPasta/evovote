@@ -17,6 +17,8 @@ export interface ContestSummary {
 export interface ContenderState {
   identityId: string;
   votes: number;
+  /** The name exactly as this contender requested it (e.g. "Theroadnottaken"). */
+  requestedLabel?: string;
 }
 
 export interface ContestState {
@@ -25,6 +27,8 @@ export interface ContestState {
   lock: number;
   winner?: { kind: string; identityId?: string };
   totalVotes: number;
+  /** Requested form of the leading contender — preferred over the normalized label. */
+  displayLabel?: string;
 }
 
 function labelFromResource(entry: unknown): string | undefined {
@@ -195,17 +199,38 @@ export function fetchContestState(
   return entry.promise;
 }
 
+let dpnsContract: Promise<unknown> | null = null;
+
+function fetchDpnsContract(sdk: EvoSDK): Promise<unknown> {
+  if (!dpnsContract) {
+    dpnsContract = sdk.contracts.fetch(DPNS_CONTRACT_ID);
+    dpnsContract.catch(() => {
+      dpnsContract = null;
+    });
+  }
+  return dpnsContract;
+}
+
 async function queryContestState(
   sdk: EvoSDK,
   label: string,
 ): Promise<ContestState> {
-  const state = await sdk.voting.contestedResourceVoteState({
-    ...DPNS_POLL,
-    indexValues: ['dash', label],
-    resultType: 'voteTally',
-    includeLockedAndAbstaining: true,
-    limit: 100,
-  });
+  // Documents are requested alongside tallies so each contender's *requested*
+  // spelling ("Theroadnottaken") can be shown instead of the normalized index
+  // form ("ther0adn0ttaken"). The bytes are deserialized through the SDK —
+  // never rendered raw.
+  const [state, contract, mod] = await Promise.all([
+    sdk.voting.contestedResourceVoteState({
+      ...DPNS_POLL,
+      indexValues: ['dash', label],
+      resultType: 'documentsAndVoteTally',
+      includeLockedAndAbstaining: true,
+      limit: 100,
+    }),
+    fetchDpnsContract(sdk).catch(() => undefined),
+    import('@dashevo/evo-sdk'),
+  ]);
+  const version = sdk.version();
 
   const contenders: ContenderState[] = [];
   for (const raw of Array.from(state.contenders ?? [])) {
@@ -213,10 +238,27 @@ async function queryContestState(
       const c = raw as {
         identityId: { toBase58(): string };
         voteTally?: number;
+        serializedDocument?: Uint8Array;
       };
+      let requestedLabel: string | undefined;
+      if (contract && c.serializedDocument) {
+        try {
+          const doc = mod.Document.fromBytes(
+            c.serializedDocument,
+            contract as Parameters<typeof mod.Document.fromBytes>[1],
+            'domain',
+            version,
+          );
+          const requested = (doc.toJSON(version) as { label?: unknown }).label;
+          if (typeof requested === 'string') requestedLabel = requested;
+        } catch {
+          // Undecodable document: fall back to the normalized label.
+        }
+      }
       contenders.push({
         identityId: c.identityId.toBase58(),
         votes: c.voteTally ?? 0,
+        requestedLabel,
       });
     } catch {
       // Skip contenders we cannot read rather than failing the page.
@@ -244,6 +286,7 @@ async function queryContestState(
     winner,
     totalVotes:
       contenders.reduce((sum, c) => sum + c.votes, 0) + abstain + lock,
+    displayLabel: contenders.find((c) => c.requestedLabel)?.requestedLabel,
   };
 }
 

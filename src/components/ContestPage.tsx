@@ -94,6 +94,7 @@ function ContenderRow({
   label,
   identityId,
   votes,
+  requestedLabel,
   rank,
   share,
   isWinner,
@@ -104,6 +105,7 @@ function ContenderRow({
   label: string;
   identityId: string;
   votes: number;
+  requestedLabel?: string;
   rank: number;
   share: number;
   isWinner: boolean;
@@ -116,6 +118,11 @@ function ContenderRow({
       <span className="swatch" style={{ backgroundColor: contenderColor(rank) }} />
       <div className="contender-main">
         <div className="contender-id-line">
+          {requestedLabel && (
+            <span className="contender-requested">
+              <ContestedName label={requestedLabel} />
+            </span>
+          )}
           <span className="mono contender-id" title={identityId}>
             {shortId(identityId, 8)}
           </span>
@@ -236,7 +243,7 @@ export function ContestPage({
 
   return (
     <div className="contest-page">
-      <ContestHeader label={label} />
+      <ContestHeader label={label} displayLabel={state.displayLabel} />
 
       <div className="contest-meta">
         {statusChip(state, timing, endsAtMs)}
@@ -253,6 +260,7 @@ export function ContestPage({
             label={label}
             identityId={c.identityId}
             votes={c.votes}
+            requestedLabel={c.requestedLabel}
             rank={rank}
             share={state.totalVotes > 0 ? c.votes / state.totalVotes : 0}
             isWinner={state.winner?.identityId === c.identityId}
@@ -299,16 +307,26 @@ export function ContestPage({
   );
 }
 
-function ContestHeader({ label }: { label: string }) {
+function ContestHeader({
+  label,
+  displayLabel,
+}: {
+  label: string;
+  displayLabel?: string;
+}) {
+  const shown = displayLabel || label;
   return (
     <header className="contest-header">
       <a href="#/" className="back-link">
         ← All contests
       </a>
       <h1 className="contest-title">
-        <ContestedName label={label} />
+        <ContestedName label={shown} />
         <span className="tld">.dash</span>
       </h1>
+      {shown.toLowerCase() !== label.toLowerCase() && (
+        <p className="mono-label">registers as {label}.dash</p>
+      )}
     </header>
   );
 }
