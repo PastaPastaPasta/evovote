@@ -1,5 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#008DE4"/>
-  <ellipse cx="32" cy="32" rx="13" ry="17" fill="none" stroke="#fff" stroke-width="6"/>
-  <line x1="21" y1="46" x2="43" y2="18" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#12A7F5"/>
+      <stop offset="1" stop-color="#0072C6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <rect x="20.5" y="15.5" width="23" height="33" rx="11.5" fill="none" stroke="#FFFFFF" stroke-width="7"/>
+  <line x1="26" y1="40" x2="38" y2="24" stroke="#F59E2E" stroke-width="5.5" stroke-linecap="round"/>
 </svg>

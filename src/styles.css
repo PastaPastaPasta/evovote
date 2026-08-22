@@ -19,9 +19,34 @@
   --abstain: #64748b;
   --win: #1b7a46;
   --win-tint: #e9f6ef;
+  --swatch-border: rgba(0, 0, 0, 0.12);
+  --backdrop: rgba(19, 36, 48, 0.45);
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: 'Instrument Sans', system-ui, -apple-system, sans-serif;
   --radius: 6px;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --paper: #0f1b24;
+  --surface: #172732;
+  --ink: #e6eef4;
+  --ink-2: #8fa5b3;
+  --line: #223543;
+  --line-strong: #36505f;
+  --blue: #0f9af0;
+  --blue-deep: #5cbaf3;
+  --blue-tint: #11364f;
+  --amber: #e6a458;
+  --amber-tint: #33270f;
+  --lock: #e0685a;
+  --lock-tint: #3a201b;
+  --abstain: #7e93a6;
+  --win: #46c088;
+  --win-tint: #143427;
+  --swatch-border: rgba(255, 255, 255, 0.18);
+  --backdrop: rgba(2, 8, 12, 0.6);
+  color-scheme: dark;
 }
 
 * {
@@ -98,8 +123,37 @@ a:focus-visible {
   gap: 10px;
 }
 
+.brand > span:first-of-type {
+  display: inline-flex;
+  align-items: baseline;
+}
+
 .brand-mark {
   color: var(--blue);
+}
+
+.brand-glyph {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  align-self: center;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 34px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0;
+}
+
+.theme-toggle:hover {
+  background: var(--blue-tint);
 }
 
 .brand-tag {
@@ -270,7 +324,7 @@ a:focus-visible {
   width: 10px;
   height: 10px;
   border-radius: 3px;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--swatch-border);
 }
 
 .legend i.hatched {
@@ -483,7 +537,7 @@ a:focus-visible {
   border-radius: 4px;
   margin-top: 4px;
   flex-shrink: 0;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--swatch-border);
 }
 
 .swatch.hatched {
@@ -632,7 +686,7 @@ a:focus-visible {
 .drawer-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(19, 36, 48, 0.45);
+  background: var(--backdrop);
   z-index: 10;
 }
 

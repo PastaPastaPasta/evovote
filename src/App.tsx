@@ -14,7 +14,44 @@ import {
   type Network,
   type SdkHandle,
 } from './lib/sdk';
+import { useTheme, type ThemePref } from './lib/theme';
 import type { VoteChoice } from './lib/vote';
+
+function ThemeIcon({ pref }: { pref: ThemePref }) {
+  if (pref === 'light') {
+    return (
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <circle cx="12" cy="12" r="4.2" fill="currentColor" />
+        <g stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <line x1="12" y1="2.5" x2="12" y2="5" />
+          <line x1="12" y1="19" x2="12" y2="21.5" />
+          <line x1="2.5" y1="12" x2="5" y2="12" />
+          <line x1="19" y1="12" x2="21.5" y2="12" />
+          <line x1="5" y1="5" x2="6.8" y2="6.8" />
+          <line x1="17.2" y1="17.2" x2="19" y2="19" />
+          <line x1="5" y1="19" x2="6.8" y2="17.2" />
+          <line x1="17.2" y1="6.8" x2="19" y2="5" />
+        </g>
+      </svg>
+    );
+  }
+  if (pref === 'dark') {
+    return (
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path
+          d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a7 7 0 0 0 11 11z"
+          fill="currentColor"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" />
+    </svg>
+  );
+}
 
 type SdkState =
   | { status: 'loading' }
@@ -32,6 +69,7 @@ export function App() {
   } | null>(null);
   const route = useRoute();
   const masternodes = useMasternodes();
+  const { pref: themePref, cycle: cycleTheme } = useTheme();
 
   useEffect(() => {
     initMnStore(network);
@@ -54,11 +92,22 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <a className="brand" href="#/">
-          <span className="brand-mark">EVO</span>VOTE
+          <img className="brand-glyph" src="./favicon.svg" alt="" />
+          <span>
+            <span className="brand-mark">EVO</span>VOTE
+          </span>
           <span className="brand-tag">contested Dash usernames</span>
         </a>
         <nav className="topbar-nav">
           <a href="#/about">About</a>
+          <button
+            className="theme-toggle"
+            onClick={cycleTheme}
+            title={`Theme: ${themePref} — click to change`}
+            aria-label={`Theme: ${themePref} — click to change`}
+          >
+            <ThemeIcon pref={themePref} />
+          </button>
           <button className="mn-button" onClick={() => setDrawerOpen(true)}>
             Masternodes
             {masternodes.length > 0 && (
