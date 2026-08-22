@@ -155,11 +155,47 @@ export function fetchContests(sdk: EvoSDK): Promise<ContestSummary[]> {
   return promise;
 }
 
+const stateCache = new Map<
+  string,
+  { at: number; promise: Promise<ContestState>; value?: ContestState }
+>();
+const STATE_TTL_MS = 60_000;
+
+/** Cached contest state, synchronously — lets a remounting list render instantly. */
+export function peekContestState(label: string): ContestState | undefined {
+  const hit = stateCache.get(label);
+  return hit && Date.now() - hit.at < STATE_TTL_MS ? hit.value : undefined;
+}
+
 /**
- * Tallies for one contest. Requested as `voteTally` only: contender documents
- * are serialized binary and have no business anywhere near the render path.
+ * Tallies for one contest, cached briefly so navigating between the list and
+ * a contest page doesn't refetch the world. Requested as `voteTally` only:
+ * contender documents are serialized binary and have no business anywhere
+ * near the render path.
  */
-export async function fetchContestState(
+export function fetchContestState(
+  sdk: EvoSDK,
+  label: string,
+): Promise<ContestState> {
+  const hit = stateCache.get(label);
+  if (hit && Date.now() - hit.at < STATE_TTL_MS) return hit.promise;
+  const entry: { at: number; promise: Promise<ContestState>; value?: ContestState } = {
+    at: Date.now(),
+    promise: queryContestState(sdk, label),
+  };
+  stateCache.set(label, entry);
+  entry.promise.then(
+    (value) => {
+      entry.value = value;
+    },
+    () => {
+      stateCache.delete(label);
+    },
+  );
+  return entry.promise;
+}
+
+async function queryContestState(
   sdk: EvoSDK,
   label: string,
 ): Promise<ContestState> {

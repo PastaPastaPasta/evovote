@@ -3,6 +3,7 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import {
   fetchContests,
   fetchContestState,
+  peekContestState,
   type ContestState,
   type ContestSummary,
 } from '../lib/dpns';
@@ -39,11 +40,17 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
           (a, b) => (a.endsAtMs ?? Infinity) - (b.endsAtMs ?? Infinity),
         );
         setContests(list);
-        setStates(Object.fromEntries(list.map((c) => [c.label, 'loading' as const])));
+        // Recently fetched tallies render immediately (back-navigation case);
+        // only the rest go through the fetch pool.
+        setStates(
+          Object.fromEntries(
+            list.map((c) => [c.label, peekContestState(c.label) ?? ('loading' as const)]),
+          ),
+        );
 
         // Tallies need one query per contest; fetch a few at a time so rows
         // fill in progressively instead of blocking on the whole set.
-        const queue = [...list];
+        const queue = list.filter((c) => !peekContestState(c.label));
         const workers = Array.from({ length: 4 }, async () => {
           for (;;) {
             const next = queue.shift();
@@ -79,13 +86,23 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
   }, [contests, filter]);
 
   if (contests === 'loading') {
-    return <p className="page-note">Reading contested names from Platform…</p>;
+    return (
+      <div className="sdk-loading">
+        <div className="spinner" aria-hidden="true" />
+        <p>Reading contested names from Platform…</p>
+      </div>
+    );
   }
   if (contests === 'error') {
     return (
-      <p className="page-note error">
-        Could not load contests. Check your connection and reload the page.
-      </p>
+      <div className="sdk-loading">
+        <p className="error">
+          Could not load contests. Check your connection and reload the page.
+        </p>
+        <button className="vote-button" onClick={() => location.reload()}>
+          Retry
+        </button>
+      </div>
     );
   }
 
