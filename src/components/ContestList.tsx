@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import {
-  fetchContests,
   fetchContestState,
   peekContestState,
+  subscribeContests,
   type ContestState,
   type ContestSummary,
+  type StreamStatus,
 } from '../lib/dpns';
 import { countdown, plural } from '../lib/format';
 import { useNow } from '../lib/hooks';
@@ -20,6 +21,8 @@ import {
 import { ContestedName } from './ContestedName';
 
 type StateEntry = ContestState | 'loading' | 'error';
+
+const TALLY_CONCURRENCY = 5;
 
 interface Outcome {
   text: string;
@@ -56,106 +59,126 @@ function Legend() {
 }
 
 export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network }) {
-  const [contests, setContests] = useState<ContestSummary[] | 'loading' | 'error'>('loading');
+  // Batches arrive already in display order: open soonest-closing first,
+  // then ended newest first, then the archive.
+  const [open, setOpen] = useState<ContestSummary[]>([]);
+  const [ended, setEnded] = useState<ContestSummary[]>([]);
   const [states, setStates] = useState<Record<string, StateEntry>>({});
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>('streaming');
   const [filter, setFilter] = useState('');
   const now = useNow();
 
   useEffect(() => {
     let cancelled = false;
-    setContests('loading');
-    fetchContests(sdk)
-      .then((shared) => {
-        if (cancelled) return;
-        // Copy before sorting: fetchContests memoizes and shares the array.
-        const list = [...shared].sort(
-          (a, b) => (a.endsAtMs ?? Infinity) - (b.endsAtMs ?? Infinity),
-        );
-        setContests(list);
-        // Recently fetched tallies render immediately (back-navigation case);
-        // only the rest go through the fetch pool.
-        setStates(
-          Object.fromEntries(
-            list.map((c) => [c.label, peekContestState(c.label) ?? ('loading' as const)]),
-          ),
-        );
+    setOpen([]);
+    setEnded([]);
+    setStates({});
+    setStreamStatus('streaming');
 
-        // Tallies need one query per contest; fetch a few at a time so rows
-        // fill in progressively instead of blocking on the whole set.
-        const queue = list.filter((c) => !peekContestState(c.label));
-        const workers = Array.from({ length: 4 }, async () => {
-          for (;;) {
-            const next = queue.shift();
-            if (!next || cancelled) return;
-            try {
-              const state = await fetchContestState(sdk, next.label);
-              if (!cancelled) {
-                setStates((prev) => ({ ...prev, [next.label]: state }));
-              }
-            } catch {
-              if (!cancelled) {
-                setStates((prev) => ({ ...prev, [next.label]: 'error' }));
-              }
-            }
-          }
-        });
-        void Promise.all(workers);
-      })
-      .catch(() => {
-        if (!cancelled) setContests('error');
-      });
+    // Tallies stream too: rows enqueue as their batch lands, in the same
+    // most-relevant-first order, a few in flight at a time.
+    const queue: string[] = [];
+    let workers = 0;
+    const pump = () => {
+      while (workers < TALLY_CONCURRENCY && queue.length > 0 && !cancelled) {
+        const label = queue.shift()!;
+        workers++;
+        fetchContestState(sdk, label)
+          .then((state) => {
+            if (!cancelled) setStates((prev) => ({ ...prev, [label]: state }));
+          })
+          .catch(() => {
+            if (!cancelled) setStates((prev) => ({ ...prev, [label]: 'error' }));
+          })
+          .finally(() => {
+            workers--;
+            if (!cancelled) pump();
+          });
+      }
+    };
+
+    const unsubscribe = subscribeContests(
+      sdk,
+      (batch) => {
+        if (cancelled) return;
+        const append = (prev: ContestSummary[]) => [...prev, ...batch.list];
+        if (batch.phase === 'open') setOpen(append);
+        else setEnded(append);
+        const seeded: Record<string, StateEntry> = {};
+        for (const contest of batch.list) {
+          const cached = peekContestState(contest.label);
+          seeded[contest.label] = cached ?? 'loading';
+          if (!cached) queue.push(contest.label);
+        }
+        setStates((prev) => ({ ...prev, ...seeded }));
+        pump();
+      },
+      (status) => {
+        if (!cancelled) setStreamStatus(status);
+      },
+    );
+
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [sdk]);
 
-  const { open, ended } = useMemo(() => {
-    if (!Array.isArray(contests)) return { open: [], ended: [] };
-    const needle = filter.trim().toLowerCase();
-    const matches = (c: ContestSummary) => {
-      if (!needle) return true;
-      if (c.label.toLowerCase().includes(needle)) return true;
-      const state = states[c.label];
+  const needle = filter.trim().toLowerCase();
+  const matches = useMemo(() => {
+    if (!needle) return () => true;
+    return (contest: ContestSummary) => {
+      if (contest.label.toLowerCase().includes(needle)) return true;
+      const state = states[contest.label];
       return (
         typeof state === 'object' &&
         (state.displayLabel?.toLowerCase().includes(needle) ?? false)
       );
     };
-    const open: ContestSummary[] = [];
-    const ended: ContestSummary[] = [];
-    for (const c of contests) {
-      if (!matches(c)) continue;
-      if (c.endsAtMs && c.endsAtMs > now) open.push(c);
-      else ended.push(c);
+  }, [needle, states]);
+
+  const visibleOpen = open.filter(matches);
+  // Ended contests: most recently decided first, once their tallies (which
+  // carry the deciding block time) have arrived; unknowns keep stream order.
+  const visibleEnded = useMemo(() => {
+    const decidedAt = (c: ContestSummary) => {
+      const state = states[c.label];
+      return typeof state === 'object' ? (state.winner?.decidedAtMs ?? 0) : 0;
+    };
+    return ended
+      .filter(matches)
+      .map((c, index) => ({ c, index, at: decidedAt(c) }))
+      .sort((a, b) => b.at - a.at || a.index - b.index)
+      .map((entry) => entry.c);
+  }, [ended, matches, states]);
+  const total = open.length + ended.length;
+  const streaming = streamStatus === 'streaming';
+
+  if (total === 0) {
+    if (streaming) {
+      return (
+        <div className="sdk-loading">
+          <div className="spinner" aria-hidden="true" />
+          <p>Reading contested names from Platform…</p>
+        </div>
+      );
     }
-    // Open: closing soonest first. Ended: most recently closed first.
-    open.sort((a, b) => a.endsAtMs! - b.endsAtMs!);
-    ended.sort((a, b) => (b.endsAtMs ?? -Infinity) - (a.endsAtMs ?? -Infinity));
-    return { open, ended };
-  }, [contests, filter, states, now]);
-
-  if (contests === 'loading') {
-    return (
-      <div className="sdk-loading">
-        <div className="spinner" aria-hidden="true" />
-        <p>Reading contested names from Platform…</p>
-      </div>
-    );
-  }
-  if (contests === 'error') {
-    return (
-      <div className="sdk-loading">
-        <p className="error">
-          Could not load contests. Check your connection and reload the page.
-        </p>
-        <button className="vote-button" onClick={() => location.reload()}>
-          Retry
-        </button>
-      </div>
-    );
+    if (streamStatus === 'error') {
+      return (
+        <div className="sdk-loading">
+          <p className="error">
+            Could not load contests. Check your connection and reload the page.
+          </p>
+          <button className="vote-button" onClick={() => location.reload()}>
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return <p className="page-note">No usernames are currently contested.</p>;
   }
 
-  const soonest = open[0];
+  const soonest = open.find((c) => c.endsAtMs && c.endsAtMs > now);
 
   const row = (contest: ContestSummary, isOpen: boolean) => {
     const state = states[contest.label];
@@ -213,10 +236,11 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
           </span>
         )}
         <span className="mono-label">{network}</span>
+        {streaming && <span className="mono-label">loading more…</span>}
         <Legend />
       </div>
 
-      {contests.length > 6 && (
+      {total > 6 && (
         <input
           className="search"
           type="search"
@@ -227,25 +251,21 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
         />
       )}
 
-      {contests.length === 0 && (
-        <p className="page-note">No usernames are currently contested.</p>
-      )}
-
-      {open.length > 0 && (
+      {visibleOpen.length > 0 && (
         <>
-          <h2 className="section-title">Open for voting · {open.length}</h2>
-          <ol className="ledger">{open.map((c) => row(c, true))}</ol>
+          <h2 className="section-title">Open for voting · {visibleOpen.length}</h2>
+          <ol className="ledger">{visibleOpen.map((c) => row(c, true))}</ol>
         </>
       )}
 
-      {ended.length > 0 && (
+      {visibleEnded.length > 0 && (
         <>
-          <h2 className="section-title">Ended · {ended.length}</h2>
-          <ol className="ledger">{ended.map((c) => row(c, false))}</ol>
+          <h2 className="section-title">Ended · {visibleEnded.length}</h2>
+          <ol className="ledger">{visibleEnded.map((c) => row(c, false))}</ol>
         </>
       )}
 
-      {open.length === 0 && ended.length === 0 && contests.length > 0 && (
+      {visibleOpen.length === 0 && visibleEnded.length === 0 && (
         <p className="page-note">No contested names match “{filter.trim()}”.</p>
       )}
     </div>

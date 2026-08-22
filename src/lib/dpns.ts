@@ -25,7 +25,7 @@ export interface ContestState {
   contenders: ContenderState[];
   abstain: number;
   lock: number;
-  winner?: { kind: string; identityId?: string };
+  winner?: { kind: string; identityId?: string; decidedAtMs?: number };
   totalVotes: number;
   /** Requested form of the leading contender — preferred over the normalized label. */
   displayLabel?: string;
@@ -63,100 +63,198 @@ export function decodeIndexValue(raw: unknown): string | undefined {
 
 const PAGE = 100;
 const MAX_PAGES = 10;
+const CONTESTS_TTL_MS = 60_000;
 
-async function fetchAllLabels(sdk: EvoSDK): Promise<string[]> {
-  const labels: string[] = [];
-  const seen = new Set<string>();
-  let cursor: string | undefined;
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const resources = await sdk.group.contestedResources({
-      ...DPNS_POLL,
-      startIndexValues: ['dash'],
-      limit: PAGE,
-      ...(cursor !== undefined
-        ? { startAtValue: cursor, startAtValueIncluded: false }
-        : {}),
-    });
-    let last: string | undefined;
-    for (const entry of resources) {
-      const label = labelFromResource(entry);
-      if (!label) continue;
-      last = label;
-      if (!seen.has(label)) {
-        seen.add(label);
-        labels.push(label);
-      }
-    }
-    if (resources.length < PAGE || !last) break;
-    cursor = last;
-  }
-  return labels;
+/**
+ * Streaming order: open contests soonest-closing first, then recently ended
+ * newest first, then the archive of long-decided contests whose polls are
+ * gone. Batches arrive already in display order.
+ */
+export type StreamPhase = 'open' | 'ended' | 'archive';
+export interface ContestBatch {
+  phase: StreamPhase;
+  list: ContestSummary[];
+}
+export type StreamStatus = 'streaming' | 'done' | 'error';
+
+interface StreamRun {
+  at: number;
+  batches: ContestBatch[];
+  status: StreamStatus;
+  batchListeners: Set<(batch: ContestBatch) => void>;
+  statusListeners: Set<(status: StreamStatus) => void>;
 }
 
-async function fetchEndTimes(sdk: EvoSDK): Promise<Map<string, number>> {
-  const endsAt = new Map<string, number>();
-  let startTimeMs: number | undefined;
-  for (let page = 0; page < MAX_PAGES; page++) {
-    let buckets;
-    try {
-      buckets = await sdk.voting.votePollsByEndDate({
-        limit: PAGE,
-        ...(startTimeMs !== undefined
-          ? { startTimeMs, startTimeIncluded: false }
-          : {}),
-      });
-    } catch {
-      break;
-    }
-    let lastTs: number | undefined;
-    for (const bucket of buckets) {
-      let ts: number;
-      let polls: unknown[];
+let streamRun: StreamRun | null = null;
+
+function startStream(sdk: EvoSDK): StreamRun {
+  const run: StreamRun = {
+    at: Date.now(),
+    batches: [],
+    status: 'streaming',
+    batchListeners: new Set(),
+    statusListeners: new Set(),
+  };
+
+  void (async () => {
+    const seen = new Set<string>();
+    let anySuccess = false;
+    const push = (phase: StreamPhase, list: ContestSummary[]) => {
+      if (list.length === 0) return;
+      const batch = { phase, list };
+      run.batches.push(batch);
+      for (const listener of run.batchListeners) listener(batch);
+    };
+
+    // Polls are paged newest-end-date-first with offset pagination.
+    // startTimeMs/endTimeMs are unusable in @dashevo/evo-sdk 4.1.1: integer
+    // timestamps fail its Value deserializer ("expected f64") and fractional
+    // ones fail its own integer check — a verified catch-22. Descending order
+    // means page one carries every open contest plus the newest-ended ones,
+    // so the rows that matter render after a single round trip.
+    const nowMs = Date.now();
+    const futures: ContestSummary[] = [];
+    let openEmitted = false;
+    const emitOpen = () => {
+      openEmitted = true;
+      // Descending gave furthest-future first; the open section wants
+      // soonest-closing first.
+      push('open', [...futures].reverse());
+    };
+
+    let offset = 0;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let buckets;
       try {
-        ts = Number(bucket.timestampMs);
-        polls = Array.from(bucket.votePolls ?? []);
+        buckets = await sdk.voting.votePollsByEndDate({
+          orderAscending: false,
+          limit: PAGE,
+          ...(offset > 0 ? { offset } : {}),
+        });
+        anySuccess = true;
       } catch {
-        continue;
+        break;
       }
-      lastTs = ts;
-      for (const poll of polls) {
+      const pastBatch: ContestSummary[] = [];
+      for (const bucket of buckets) {
+        let ts: number;
+        let polls: unknown[];
         try {
-          const p = poll as { documentTypeName?: string; indexValues?: unknown[] };
-          const label = decodeIndexValue(Array.from(p.indexValues ?? [])[1]);
-          if (p.documentTypeName === 'domain' && label) {
-            endsAt.set(label, ts);
-          }
+          ts = Number(bucket.timestampMs);
+          polls = Array.from(bucket.votePolls ?? []);
         } catch {
-          // Tolerate unexpected poll shapes; the end time is optional data.
+          continue;
+        }
+        if (ts <= nowMs && !openEmitted) emitOpen();
+        for (const poll of polls) {
+          try {
+            const p = poll as {
+              documentTypeName?: string;
+              indexValues?: unknown[];
+            };
+            const label = decodeIndexValue(Array.from(p.indexValues ?? [])[1]);
+            if (p.documentTypeName !== 'domain' || !label || seen.has(label)) {
+              continue;
+            }
+            seen.add(label);
+            const summary = { label, endsAtMs: ts };
+            if (ts > nowMs) futures.push(summary);
+            else pastBatch.push(summary);
+          } catch {
+            // Tolerate unexpected poll shapes.
+          }
         }
       }
+      push('ended', pastBatch);
+      if (buckets.length < PAGE) break;
+      offset += PAGE;
     }
-    if (buckets.length < PAGE || lastTs === undefined) break;
-    startTimeMs = lastTs;
-  }
-  return endsAt;
+    if (!openEmitted) emitOpen();
+
+    // Archive: contests whose polls are gone (decided long ago). Index order.
+    let startCursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let resources;
+      try {
+        resources = await sdk.group.contestedResources({
+          ...DPNS_POLL,
+          startIndexValues: ['dash'],
+          limit: PAGE,
+          ...(startCursor !== undefined
+            ? { startAtValue: startCursor, startAtValueIncluded: false }
+            : {}),
+        });
+        anySuccess = true;
+      } catch {
+        break;
+      }
+      const batch: ContestSummary[] = [];
+      let last: string | undefined;
+      for (const entry of resources) {
+        const label = labelFromResource(entry);
+        if (!label) continue;
+        last = label;
+        if (!seen.has(label)) {
+          seen.add(label);
+          batch.push({ label });
+        }
+      }
+      push('archive', batch);
+      if (resources.length < PAGE || !last) break;
+      startCursor = last;
+    }
+
+    run.status = anySuccess ? 'done' : 'error';
+    run.at = Date.now();
+    for (const listener of run.statusListeners) listener(run.status);
+    run.batchListeners.clear();
+    run.statusListeners.clear();
+  })();
+
+  return run;
 }
 
-let contestsCache: { at: number; promise: Promise<ContestSummary[]> } | null =
-  null;
-
-/** Active username contests with their scheduled end time where known. */
-export function fetchContests(sdk: EvoSDK): Promise<ContestSummary[]> {
-  if (contestsCache && Date.now() - contestsCache.at < 60_000) {
-    return contestsCache.promise;
+/**
+ * Subscribe to the contest stream. Already-fetched batches replay
+ * synchronously (instant back-navigation); new ones arrive as pages land.
+ * Returns an unsubscribe function.
+ */
+export function subscribeContests(
+  sdk: EvoSDK,
+  onBatch: (batch: ContestBatch) => void,
+  onStatus: (status: StreamStatus) => void,
+): () => void {
+  if (
+    !streamRun ||
+    (streamRun.status !== 'streaming' &&
+      Date.now() - streamRun.at > CONTESTS_TTL_MS)
+  ) {
+    streamRun = startStream(sdk);
   }
-  const promise = (async () => {
-    const [labels, endsAt] = await Promise.all([
-      fetchAllLabels(sdk),
-      fetchEndTimes(sdk),
-    ]);
-    return labels.map((label) => ({ label, endsAtMs: endsAt.get(label) }));
-  })();
-  contestsCache = { at: Date.now(), promise };
-  promise.catch(() => {
-    contestsCache = null;
+  const run = streamRun;
+  for (const batch of run.batches) onBatch(batch);
+  onStatus(run.status);
+  if (run.status !== 'streaming') return () => {};
+  run.batchListeners.add(onBatch);
+  run.statusListeners.add(onStatus);
+  return () => {
+    run.batchListeners.delete(onBatch);
+    run.statusListeners.delete(onStatus);
+  };
+}
+
+/** All contests, resolved once the stream completes. */
+export function fetchContests(sdk: EvoSDK): Promise<ContestSummary[]> {
+  return new Promise((resolve) => {
+    const all: ContestSummary[] = [];
+    subscribeContests(
+      sdk,
+      (batch) => all.push(...batch.list),
+      (status) => {
+        if (status !== 'streaming') resolve(all);
+      },
+    );
   });
-  return promise;
 }
 
 const stateCache = new Map<
@@ -273,7 +371,14 @@ async function queryContestState(
   try {
     const w = state.winner;
     if (w) {
-      winner = { kind: w.kind, identityId: w.identityId?.toBase58() };
+      let decidedAtMs: number | undefined;
+      try {
+        const timeMs = Number(w.block?.timeMs);
+        if (Number.isFinite(timeMs) && timeMs > 0) decidedAtMs = timeMs;
+      } catch {
+        // The deciding block is optional display data.
+      }
+      winner = { kind: w.kind, identityId: w.identityId?.toBase58(), decidedAtMs };
     }
   } catch {
     // Unreadable winner info renders as an undecided contest.

@@ -154,17 +154,21 @@ function statusChip(
   endsAtMs: number | undefined,
 ) {
   if (state.winner) {
+    const when = state.winner.decidedAtMs
+      ? ` · ${endDate(state.winner.decidedAtMs)}`
+      : '';
     if (state.winner.identityId) {
       return (
         <span className="chip won">
           awarded to {shortId(state.winner.identityId, 6)}
+          {when}
         </span>
       );
     }
     if (state.winner.kind.toLowerCase().includes('lock')) {
-      return <span className="chip locked">locked — awarded to no one</span>;
+      return <span className="chip locked">locked — awarded to no one{when}</span>;
     }
-    return <span className="chip">decided — {state.winner.kind}</span>;
+    return <span className="chip">decided — {state.winner.kind}{when}</span>;
   }
   if (timing && endsAtMs !== undefined) {
     return (
