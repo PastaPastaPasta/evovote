@@ -255,6 +255,14 @@ export function ContestPage({
 
       <div className="contest-meta">
         {statusChip(state, timing, endsAtMs)}
+        {state.contenders.length >= 2 && (
+          <span
+            className="contest-flag"
+            title={`${state.contenders.length} identities want this name`}
+          >
+            {state.contenders.length} contenders
+          </span>
+        )}
         <span className="mono-label">{plural(state.totalVotes, 'vote')} cast</span>
       </div>
 

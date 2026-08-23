@@ -376,6 +376,23 @@ a:focus-visible {
 .ledger-name {
   font-size: 17px;
   overflow-wrap: anywhere;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Marks a real fight: two or more identities after the same name. */
+.contest-flag {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--amber);
+  background: var(--amber-tint);
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+  border-radius: 999px;
+  padding: 1px 8px;
 }
 
 .ledger-votes {

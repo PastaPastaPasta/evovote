@@ -1,11 +1,13 @@
 import type { ContestState } from '../lib/dpns';
 
+// The leader is Dash blue; the first challenger gets a clearly different hue
+// (teal) so a real fight is visible at a glance, not a blue-on-blue guess.
 const CONTENDER_COLORS = [
   '#008DE4',
-  '#5AB6EE',
-  '#94CEF4',
+  '#0FA88F',
+  '#7CC4EF',
+  '#67D4C0',
   '#C2E3F9',
-  '#DDF0FC',
 ];
 export const ABSTAIN_COLOR = '#9DB0BE';
 export const LOCK_COLOR = '#B3362B';

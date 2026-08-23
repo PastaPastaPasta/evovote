@@ -46,7 +46,7 @@ function Legend() {
         <i style={{ backgroundColor: contenderColor(0) }} /> leader
       </span>
       <span>
-        <i style={{ backgroundColor: contenderColor(1) }} /> other contenders
+        <i style={{ backgroundColor: contenderColor(1) }} /> challenger
       </span>
       <span>
         <i style={{ backgroundColor: ABSTAIN_COLOR }} /> abstain
@@ -143,24 +143,9 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
   const expired = open.filter((c) => c.endsAtMs !== undefined && c.endsAtMs <= now);
 
   const visibleOpen = stillOpen.filter(matches);
-  // Ended contests: most recently concluded first. Freshly expired ones sort
-  // by their end time (always newest); decided ones by deciding-block time as
-  // tallies arrive; unknowns keep stream order.
-  const visibleEnded = useMemo(() => {
-    const concludedAt = (c: ContestSummary) => {
-      const state = states[c.label];
-      const decided =
-        typeof state === 'object' ? state.winner?.decidedAtMs : undefined;
-      return decided ?? c.endsAtMs ?? 0;
-    };
-    return [...expired, ...ended]
-      .filter(matches)
-      .map((c, index) => ({ c, index, at: concludedAt(c) }))
-      .sort((a, b) => b.at - a.at || a.index - b.index)
-      .map((entry) => entry.c);
-    // `expired` is derived from `open` and `now`, both in the dep list.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ended, open, now, matches, states]);
+  // Ended contests keep stream arrival order — rows only ever append at the
+  // bottom, never reshuffle while tallies load. Freshly expired ones lead.
+  const visibleEnded = [...expired, ...ended].filter(matches);
   const total = open.length + ended.length;
   const streaming = streamStatus === 'streaming';
 
@@ -221,6 +206,14 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
                 (typeof state === 'object' && state.displayLabel) || contest.label
               }
             />
+            {typeof state === 'object' && state.contenders.length >= 2 && (
+              <span
+                className="contest-flag"
+                title={`${state.contenders.length} identities want this name`}
+              >
+                {state.contenders.length} contenders
+              </span>
+            )}
           </span>
           <span className="ledger-bar">
             {state === 'loading' && <span className="bar-skeleton" />}
