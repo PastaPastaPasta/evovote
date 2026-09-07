@@ -9,7 +9,8 @@ import {
 } from '../lib/dpns';
 import { countdown, endDate, plural, shortId, type Countdown } from '../lib/format';
 import { useNow } from '../lib/hooks';
-import type { Network } from '../lib/sdk';
+import { Discussion } from './Discussion';
+import type { SdkHandle, Network } from '../lib/sdk';
 import type { VoteChoice } from '../lib/vote';
 import {
   ABSTAIN_COLOR,
@@ -184,12 +185,14 @@ function statusChip(
 
 export function ContestPage({
   sdk,
+  handle,
   network,
   label,
   onVote,
 }: {
   sdk: EvoSDK;
   network: Network;
+  handle: SdkHandle;
   label: string;
   onVote: (choice: VoteChoice) => void;
 }) {
@@ -312,13 +315,14 @@ export function ContestPage({
       <p className="fine-print">
         Each masternode can cast up to 5 votes on a contest; the latest vote
         counts. Regular masternodes vote with weight 1, evonodes with weight 4.
-        Campaigning happens off-chain — contenders usually post their identity
+        Contenders also share their identity
         on the{' '}
         <a href="https://forum.dash.org" target="_blank" rel="noreferrer">
           Dash forum
         </a>{' '}
         or Discord.
       </p>
+      <Discussion handle={handle} network={network} label={label} />
     </div>
   );
 }

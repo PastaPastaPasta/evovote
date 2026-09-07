@@ -154,6 +154,8 @@ export function App() {
             {route.page === 'contest' && (
               <ContestPage
                 sdk={sdkState.handle.sdk}
+                handle={sdkState.handle}
+                key={route.label}
                 network={network}
                 label={route.label}
                 onVote={(choice) => setPendingVote({ label: route.label, choice })}

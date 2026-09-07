@@ -54,17 +54,17 @@ export function AboutPage() {
       </section>
 
       <section>
-        <h2>Why there are no comments</h2>
+        <h2>Discussing a contest</h2>
         <p>
-          Masternode voter identities are created automatically by Platform and
-          carry a single read-only voting key with no credits, so they cannot
-          create documents — which means they cannot post comments or any other
-          content. Campaigning for a name happens off-chain: contenders usually
-          share their identity ID and requested name on the{' '}
-          <a href="https://forum.dash.org" target="_blank" rel="noreferrer">
-            Dash forum
-          </a>{' '}
-          or the Dash Discord.
+          Comments and replies use a normal Dash Platform identity with credits.
+          Connect a compatible Dash wallet to approve each comment, or sign in
+          with an authentication key. EvoVote discovers your identity from the
+          key’s public hash; you do not need to enter an identity ID.
+        </p>
+        <p>
+          Comments are public and permanent, and their storage fees are paid
+          from your Platform credits. Discussion does not affect official
+          tallies: those votes still require a masternode voting key.
         </p>
       </section>
 

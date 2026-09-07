@@ -986,3 +986,34 @@ a:focus-visible {
     animation-duration: 2s;
   }
 }
+
+/* Contest discussion */
+.discussion { border-top: 2px solid var(--ink); margin-top: 40px; padding-top: 24px; }
+.discussion h2 { margin: 2px 0 8px; font-size: 26px; }
+.discussion-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.discussion-compose { border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: 20px; margin: 24px 0; }
+.discussion form { display: grid; gap: 10px; margin-top: 16px; }
+.discussion textarea, .discussion input { width: 100%; min-width: 0; }
+.discussion textarea { resize: vertical; }
+.discussion-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.key-login { margin-top: 18px; }
+.key-login summary, .wallet-request summary { cursor: pointer; }
+.wallet-request { display: grid; justify-items: start; gap: 12px; margin: 16px 0; }
+.wallet-request h3 { margin: 0; }
+.wallet-request svg { max-width: 100%; height: auto; }
+.wallet-request details { width: 100%; }
+.wallet-request textarea { font-family: var(--mono); font-size: 11px; width: 100%; }
+.wallet-request a { text-decoration: none; }
+.comment-list { list-style: none; padding: 0; }
+.comment { border-bottom: 1px solid var(--line); padding: 22px 0; scroll-margin-top: 24px; }
+.comment time { color: var(--ink-2); font-size: 12px; }
+.comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pending-comment { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 12px; }
+.discussion .success { color: var(--win); }
+.discussion button:disabled { cursor: default; opacity: .55; }
+
+.wallet-vote form, .wallet-vote label { display: grid; gap: 8px; }
+.wallet-vote form { gap: 16px; }
+.wallet-vote input, .wallet-vote select { min-width: 0; width: 100%; }
+.signing-method { margin-bottom: 20px; }
+.signing-method button[aria-pressed='true'] { background: var(--blue-tint); border-color: var(--blue); }

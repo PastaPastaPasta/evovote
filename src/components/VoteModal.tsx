@@ -8,6 +8,7 @@ import {
   type VoteChoice,
 } from '../lib/vote';
 import { plural, shortId } from '../lib/format';
+import { WalletVote } from './WalletVote';
 import { ContestedName } from './ContestedName';
 
 type MnStatus =
@@ -40,6 +41,7 @@ export function VoteModal({
   onClose: () => void;
   onOpenMasternodes: () => void;
 }) {
+  const [mode, setMode] = useState<'wallet' | 'key'>('wallet');
   const masternodes = useMasternodes();
   const ready = masternodes.filter((mn) => mn.hasKey);
   const [selected, setSelected] = useState<Set<string>>(
@@ -119,7 +121,15 @@ export function VoteModal({
           </span>
         </h2>
 
-        {phase === 'pick' && (
+        {phase === 'pick' && <div className="discussion-actions signing-method" role="group" aria-label="Signing method">
+          <button className="vote-button ghost" aria-pressed={mode === 'wallet'} onClick={() => setMode('wallet')}>Use wallet</button>
+          <button className="vote-button ghost" aria-pressed={mode === 'key'} onClick={() => setMode('key')}>Use voting keys in this tab</button>
+        </div>}
+        {phase === 'pick' && mode === 'wallet' && <>
+          <WalletVote network={network} label={label} choice={choice} />
+          <div className="modal-actions"><button className="vote-button ghost" onClick={onClose}>Close</button></div>
+        </>}
+        {phase === 'pick' && mode === 'key' && (
           <>
             {ready.length === 0 ? (
               <div className="modal-empty">

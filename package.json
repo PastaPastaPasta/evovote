@@ -8,10 +8,14 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "contract:prepare": "node scripts/prepare-discussion-contract.mjs"
   },
   "dependencies": {
     "@dashevo/evo-sdk": "4.1.1",
+    "@noble/hashes": "^2.4.0",
+    "@noble/secp256k1": "^3.2.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
