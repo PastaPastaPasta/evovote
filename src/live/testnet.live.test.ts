@@ -5,7 +5,12 @@
  */
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { collectDirectoryIds } from '../charters/directory';
+import { fetchElectionStatus, fetchProposals, fetchTeam, leaderCanReceive } from '../charters/reads';
+import { buildApplication, contestFundToJoin, estimateCreate, MODERATION_CONTEST_FUND } from '../charters/writes';
 import { fetchActivePolls } from '../discovery/activePolls';
+import { keyInfoFrom } from '../identity/keys';
+import type { SdkHandle } from '../sdk/connection';
 import { sweepContestedResources } from '../discovery/archive';
 import { fetchContestedIndex } from '../discovery/contracts';
 import { fetchContest } from '../discovery/voteState';
@@ -21,12 +26,17 @@ import { voterIdentityId } from '../voting/keys';
 const PRO_TX_HASH = 'f37de98bcd094e33307c6705204bccdf4d7ad10eb08999c1c9281847b5ef22b0';
 const VOTING_HASH160 = 'c88818ac93c56d21cb72c3255e3de33d160674d3';
 
+// An identity that owns a DPNS name on testnet (000.dash), with plain keys.
+const DPNS_OWNER = '9idHpqmf8i9U6tfWiWMQCVF39vshNgYisT7DL6yK2pCF';
+
 let sdk: EvoSDK;
+let handle: SdkHandle;
 
 beforeAll(async () => {
   const mod = await import('@dashevo/evo-sdk');
   sdk = mod.EvoSDK.testnetTrusted({ settings: { timeoutMs: 30_000 } });
   await sdk.connect();
+  handle = { sdk, mod, network: 'testnet' };
 });
 
 describe('testnet (rc.4, read-only)', () => {
@@ -115,5 +125,53 @@ describe('testnet (rc.4, read-only)', () => {
       { pageSize: 5, maxPages: 1 },
     );
     for await (const page of pages) expect(page.failure).toBeUndefined();
+  });
+
+  // ---- moderator elections and the identity session (WP2/WP3), read-only ----
+
+  it('reads a non-elected contract as not-elected, with every read succeeding', async () => {
+    const status = await fetchElectionStatus(sdk, DPNS_CONTRACT_ID, { force: true });
+    expect(status.failures).toEqual([]);
+    expect(status.contractFound).toBe(true);
+    expect(status.moderation?.declaration.kind).toBe('none');
+    expect(status.timing.phase).toBe('not-elected');
+    await expect(fetchTeam(sdk, DPNS_CONTRACT_ID)).resolves.toBeUndefined();
+    await expect(fetchProposals(sdk, DPNS_CONTRACT_ID)).resolves.toEqual({ proposals: [], capped: false });
+  });
+
+  it('builds the moderated-contract directory without read failures', async () => {
+    const ids = await collectDirectoryIds(sdk, 'testnet');
+    expect(ids.failures).toEqual([]);
+  });
+
+  it('prices every charter write with Drive\'s estimator', async () => {
+    for (const type of ['reason', 'submittedCharter', 'joinRequest', 'electedCharter'] as const) {
+      const cost = await estimateCreate(handle, type);
+      expect(cost.fees).toBeGreaterThan(0n);
+      expect(cost.fees).toBeLessThan(1_000_000_000n); // under 0.01 DASH
+    }
+  });
+
+  it('asks 0.5 DASH to join a moderator election', async () => {
+    const application = buildApplication(handle.mod, {
+      targetContractId: DPNS_CONTRACT_ID,
+      leaderId: DPNS_OWNER,
+      submittedCharterId: CHARTERS_CONTRACT_ID,
+      members: [],
+    });
+    try {
+      expect(await contestFundToJoin(handle, application)).toBe(MODERATION_CONTEST_FUND);
+    } finally {
+      application.free();
+    }
+  });
+
+  it('finds an identity by its key hash and reads its keys', async () => {
+    const identity = await sdk.identities.fetch(DPNS_OWNER);
+    const keys = identity!.publicKeys.map(keyInfoFrom);
+    expect(keys[0]).toMatchObject({ purpose: 'AUTHENTICATION', securityLevel: 'MASTER' });
+    const found = await sdk.identities.byPublicKeyHash(keys[1].hash160);
+    expect(found?.id.toBase58()).toBe(DPNS_OWNER);
+    await expect(leaderCanReceive(sdk, DPNS_OWNER)).resolves.toBe(false);
   });
 });

@@ -54,6 +54,31 @@ Legend: ✅ confirmed · ⚠️ differs from design §3 (the code follows the ve
 | Weight 1 / 4 | ❔ | Not checked in WP1 (no browser-side masternode-type source). The keyring does not show weight yet. |
 | Consensus codes used by the refusal map | rs-dpp `errors/consensus/codes.rs` @ rc.4 | ✅ 40105, 40110, 40111, 40204, 40300–40307, 40400, 40401. |
 
+## Moderator elections and the identity session (WP2/WP3)
+
+Checked on 2026-10-17 against testnet (rc.4), read-only. **[live test]** marks the facts `npm run test:live` re-checks.
+
+| Fact | How verified | Result |
+|---|---|---|
+| No charter activity on testnet yet | `documents.query` on every charters type; `contestedResources` sweep | ✅ 0 `reason`, `submittedCharter`, `joinRequest` and `electedCharter` documents, and no contested target. The directory (`#/m`) is empty unless a contract is configured or added. **[live test]** |
+| Contract JSON carries `createdAt` | `contract.toJSON(14)` | ✅ A top-level `createdAt` (ms), `null` on system contracts. `electionDelay` is measured from it; a contract with no `createdAt` never opens an election that declares a delay. |
+| Elected declaration shape | wasm-sdk `ContractModerators` typings + Platform book | ⚠️ Not seen live (no elected contract on testnet). `charters/declaration.ts` reads `config.moderation.moderators` with `$type: 'elected'` and defaults missing windows to one week, as the book says. |
+| The fund to join a moderator election | `documents.contestFundToJoin(electedCharter)` | ✅ 50,000,000,000 credits (0.5 DASH) for a contest with no contenders. **[live test]** `documents.create({ contestFund })` states it; no hand-built `$prefundedVotingBalance` is needed. |
+| Fee estimates | wasm `documentCreateCost(contract, type, opts, 14)` | ✅ Works offline from the contract. Defaults (newValues): `reason` 0.00046, `submittedCharter` 0.00148, `joinRequest` 0.00066, `electedCharter` 0.00043 DASH plus the 0.5 DASH fund (reported in `contractCharges`). **[live test]** Identity updates have no estimator; the app uses 0.001 DASH. |
+| Identifier properties in document JSON | probes | ⚠️ A document read from chain renders identifiers as base58 (and `properties` holds strings); one built with `Document.fromObject` without its contract renders them as base64. Integers in a built document come back as `bigint`. `charters/documents.ts` `idFromValue` accepts every form. |
+| Identity by key hash | `identities.byPublicKeyHash` | ✅ Finds an identity by the HASH160 of an ECDSA_SECP256K1 key. The session falls back to `byNonUniquePublicKeyHash` (ECDSA_HASH160 keys) and asks the user to pick when several share it. **[live test]** |
+| Key getters | `IdentityPublicKey` probe | ✅ `purpose`/`securityLevel`/`keyType` are upper-case strings (`DECRYPTION`, `MEDIUM`, `ECDSA_SECP256K1`), `data` is hex, `contractBounds.toJSON()` is `{ $type: 'documentType', id, documentTypeName }`. |
+
+### Write paths not verified live
+
+Nothing was signed or broadcast in WP2/WP3. Unit tests build and sign with throwaway keys against a mocked SDK. WP6 must
+run each of these on a throwaway elected contract: `reason` create, the identity update adding a DECRYPTION key bound to
+`submittedCharter` (MASTER-signed, the new key signing its own proof), `submittedCharter` create, the identity update adding
+an ENCRYPTION key bound to `joinRequest`, `buildJoinRequest` + create, `encryptedFor.decrypt` of a join request by the
+leader, and the `electedCharter` create with `contestFund` (first applicant, second applicant, late applicant → 40111,
+after seating → 40105). Also check that integer properties built as JS numbers are accepted on rc.4 (they were on the
+5.0 betas).
+
 ## Not verified in WP1
 
 - **Live voting**: by design, there were no keys and no broadcasts. The full sign → broadcast → read-back path needs testnet masternode keys (WP6 QA).
