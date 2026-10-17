@@ -8,6 +8,7 @@ import { KeyringPanel, MnDrawer } from './components/KeyringPanel';
 import { VoteModal } from './components/VoteModal';
 import { AboutPage } from './pages/AboutPage';
 import { ContestPage } from './pages/ContestPage';
+import { ContractPage } from './pages/ContractPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { useRoute, type Route } from './router';
@@ -96,9 +97,12 @@ function Page({
       );
     case 'contract':
       return (
-        <PlaceholderPage title={`Contract ${shortId(route.contractId, 6)}`}>
-          <p>The contested-index browser for any contract arrives in a later release.</p>
-        </PlaceholderPage>
+        <ContractPage
+          key={route.contractId}
+          sdk={handle.sdk}
+          network={network}
+          contractId={route.contractId}
+        />
       );
     case 'me':
       return (

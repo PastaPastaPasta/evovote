@@ -2,6 +2,7 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import type { ArchivePage } from '../discovery/archive';
 import type { Contender, Contest, ContestSummary, VoteChoiceKind } from '../model/contest';
 import type { PollKey } from '../model/pollKey';
+import type { FieldRow } from './fields';
 
 export type KindId = 'dpns' | 'charter' | 'generic';
 
@@ -14,6 +15,8 @@ export interface ContenderView {
   subtitle?: string;
   /** Key/value rows (the generic kind shows the document's fields). */
   fields?: Array<[string, string]>;
+  /** Typed key/value rows (identifiers with copy buttons, bytes as hex). */
+  rows?: FieldRow[];
 }
 
 /**

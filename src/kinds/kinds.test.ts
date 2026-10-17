@@ -113,7 +113,7 @@ describe('charter and generic stubs', () => {
     expect(genericKind.choices({ ...base, resolution: 0 })).toContain('lock');
     expect(genericKind.choices({ ...base, resolution: 1 })).not.toContain('lock');
     expect(genericKind.choices(base)).not.toContain('lock');
-    expect(genericKind.title(base)).toBe('t · 7');
+    expect(genericKind.title(base)).toBe('t · 7 · EG7RGf…4UmN88');
   });
 });
 
@@ -136,6 +136,7 @@ describe('contestedIndices', () => {
         indexName: 'parentNameAndLabel',
         properties: ['normalizedParentDomainName', 'normalizedLabel'],
         resolution: 0,
+        fieldMatches: [],
         description: undefined,
       },
     ]);
