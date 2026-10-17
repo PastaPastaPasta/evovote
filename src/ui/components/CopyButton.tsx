@@ -7,7 +7,8 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
   useEffect(() => () => clearTimeout(timer.current), []);
 
   const copy = () => {
-    navigator.clipboard.writeText(text).then(
+    // navigator.clipboard is missing outside secure contexts (plain http).
+    (navigator.clipboard?.writeText(text) ?? Promise.reject(new Error('no clipboard'))).then(
       () => setState('copied'),
       () => setState('failed'),
     );

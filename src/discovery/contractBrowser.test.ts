@@ -76,6 +76,17 @@ describe('indexValueForProperty', () => {
     expect(indexValueForProperty(OWNER, 'nested.ref', schema)).toEqual({ type: 'identifier', value: OWNER });
   });
 
+  it('should keep floats as floats and decode base64 byte arrays', () => {
+    const floats = { properties: { score: { type: 'number' }, blob: { type: 'array', byteArray: true } } };
+    expect(indexValueForProperty(3, 'score', floats)).toEqual({ type: 'float', value: 3 });
+    expect(indexValueForProperty('AAEC', 'blob', floats)).toEqual({ type: 'bytes', value: Uint8Array.from([0, 1, 2]) });
+  });
+
+  it('should refuse an identifier string that is not a 32-byte id', () => {
+    expect(indexValueForProperty('not-an-id', 'owner', schema)).toBeUndefined();
+    expect(indexValueForProperty('abc', '$ownerId', schema)).toBeUndefined();
+  });
+
   it('should type system properties without a schema entry', () => {
     expect(indexValueForProperty(OWNER, '$ownerId', schema)).toEqual({ type: 'identifier', value: OWNER });
     expect(indexValueForProperty(1700000000000, '$createdAt', schema)).toEqual({ type: 'integer', value: 1700000000000n });
@@ -136,6 +147,16 @@ describe('sweepContestedIndex', () => {
     const { keys, failures } = await collect(sweepContestedIndex(sdk, 'k5', index(['group', 'group']), schema));
     expect(keys.map((v) => (v[1] as { value: string }).value)).toEqual(['y']);
     expect(failures).toEqual([{ source: 'card · byProps', message: 'node unavailable' }]);
+  });
+
+  it('should report values it cannot type instead of dropping them silently', async () => {
+    const { group } = fakeGroup({ '': [1.5, 2] });
+    const sdk = { group } as unknown as EvoSDK;
+    const { keys, failures } = await collect(sweepContestedIndex(sdk, 'k7', index(['rank']), schema));
+    expect(keys).toEqual([[{ type: 'integer', value: 2n }]]);
+    expect(failures).toEqual([
+      { source: 'card · byProps', message: expect.stringContaining('1 value(s) of “rank” could not be read') },
+    ]);
   });
 
   it('should stop when aborted', async () => {
@@ -246,6 +267,27 @@ describe('browseContract', () => {
     // Progressive snapshots: loading first, states filled in as they land.
     expect(updates[0].load).toBe('loading');
     expect(updates.some((u) => u.types[0]?.contests.some((c) => c.state === 'loading'))).toBe(true);
+  });
+
+  it('should prefer the chain’s own key for an open poll over the schema-typed one', async () => {
+    const sdk = browserSdk({ contracts: { 'chain-contract': contractJson }, tree: { '': ['alpha', 'beta'] } });
+    // The chain holds alpha's value as bytes, not text: voting must use this key.
+    const chainKey = {
+      contractId: 'chain-contract',
+      documentTypeName: 'card',
+      indexName: 'byProps',
+      indexValues: [{ type: 'identifier' as const, value: 'alpha' }],
+    };
+    const view = await browseContract(sdk, 'chain-contract', {
+      readActive: async () => ({
+        polls: [{ key: chainKey, keyString: encodePollKey(chainKey), endsAtMs: 99 }],
+        failures: [],
+      }),
+      readContest: stateFor(),
+    });
+    const [alpha, beta] = view.types[0].contests;
+    expect(alpha.summary).toEqual({ key: chainKey, keyString: encodePollKey(chainKey), endsAtMs: 99 });
+    expect(beta.summary.key.indexValues).toEqual([{ type: 'text', value: 'beta' }]);
   });
 
   it('should read states with bounded concurrency', async () => {

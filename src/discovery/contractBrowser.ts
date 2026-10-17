@@ -1,6 +1,7 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import type { Contest, ContestSummary } from '../model/contest';
-import { indexValueFromJs, type IndexValue } from '../model/indexValue';
+import { base58Decode, base64ToBytesSafe } from '../model/bytes';
+import { displayIndexValue, indexValueFromJs, type IndexValue } from '../model/indexValue';
 import { encodePollKey, type PollKey } from '../model/pollKey';
 import { errorMessage } from '../sdk/errors';
 import { getActivePolls } from './activePolls';
@@ -42,6 +43,14 @@ interface PropertySchema {
   contentMediaType?: unknown;
 }
 
+function isIdentifierText(value: string): boolean {
+  try {
+    return base58Decode(value).length === 32;
+  } catch {
+    return false;
+  }
+}
+
 /** The JSON schema of an index property; dotted paths walk nested objects. */
 function propertySchema(docSchema: unknown, path: string): PropertySchema | undefined {
   let node = docSchema as { properties?: Record<string, unknown> } | undefined;
@@ -75,12 +84,22 @@ export function indexValueForProperty(
       typeof raw === 'object' && raw !== null && 'toBase58' in raw
         ? (raw as { toBase58(): string }).toBase58()
         : raw;
-    return indexValueFromJs(asString, 'identifier');
+    const id = indexValueFromJs(asString, 'identifier');
+    // A string that is not a 32-byte base58 id could never be a poll key.
+    return id?.type === 'identifier' && isIdentifierText(id.value) ? id : undefined;
   }
   if (SYSTEM_INTEGER_FIELDS.has(property) || schema?.type === 'integer') {
     return typeof raw === 'bigint' || (typeof raw === 'number' && Number.isInteger(raw))
       ? { type: 'integer', value: BigInt(raw) }
       : undefined;
+  }
+  if (schema?.type === 'number') {
+    // An integral float must stay a float: the chain encodes it as one.
+    return typeof raw === 'number' ? { type: 'float', value: raw } : undefined;
+  }
+  if (schema?.byteArray === true && typeof raw === 'string') {
+    const bytes = base64ToBytesSafe(raw);
+    return bytes ? { type: 'bytes', value: bytes } : undefined;
   }
   return indexValueFromJs(raw);
 }
@@ -123,6 +142,7 @@ export async function* sweepContestedIndex(
     const leaf = prefix.length === depth - 1;
     const property = index.properties[prefix.length];
     const branches: IndexValue[] = [];
+    let untyped = 0;
     const sweep = sweepContestedResources(
       sdk,
       {
@@ -133,7 +153,10 @@ export async function* sweepContestedIndex(
         prefix,
         toKey: (resource) => {
           const value = indexValueForProperty(resource, property, docSchema);
-          if (!value) return undefined;
+          if (!value) {
+            untyped++;
+            return undefined;
+          }
           if (!leaf) {
             branches.push(value);
             return undefined;
@@ -165,6 +188,15 @@ export async function* sweepContestedIndex(
       emitted += page.keys.length;
       yield page;
     }
+    if (untyped > 0) {
+      yield {
+        keys: [],
+        failure: {
+          source,
+          message: `${untyped} value(s) of “${property}” could not be read as the type the contract declares, so they are not listed`,
+        },
+      };
+    }
     for (const value of branches) {
       if (stopped) return;
       yield* walk([...prefix, value]);
@@ -172,6 +204,16 @@ export async function* sweepContestedIndex(
   }
 
   yield* walk([]);
+}
+
+/** A key by what it displays, ignoring the Platform value types. */
+function looseKey(key: PollKey): string {
+  return JSON.stringify([
+    key.contractId,
+    key.documentTypeName,
+    key.indexName,
+    key.indexValues.map(displayIndexValue),
+  ]);
 }
 
 // ---- assembling the contract browser --------------------------------------------
@@ -264,12 +306,13 @@ export async function browseContract(
 
   // End times come from the end-date index; reading it also keeps the chain's
   // own poll objects, which are what a vote on a non-text index is signed over.
-  const endsAt = new Map<string, number>();
+  // A swept value is typed from the contract's schema, which can differ from
+  // the chain's own types (floats, bytes, $ref properties). Open polls are the
+  // ones that can be voted on, so they keep the key exactly as the chain has it.
+  const openPolls = new Map<string, ContestSummary>();
   try {
     const active = await (opts.readActive ?? getActivePolls)(sdk);
-    for (const poll of active.polls) {
-      if (poll.endsAtMs !== undefined) endsAt.set(poll.keyString, poll.endsAtMs);
-    }
+    for (const poll of active.polls) openPolls.set(looseKey(poll.key), poll);
     view.failures.push(...active.failures);
   } catch (e) {
     view.failures.push({ source: 'active polls', message: errorMessage(e) });
@@ -301,10 +344,10 @@ export async function browseContract(
         if (aborted()) break;
         if (page.failure) view.failures.push(page.failure);
         if (page.cap) view.caps.push(page.cap);
-        const fresh: BrowsedContest[] = page.keys.map((key: PollKey) => {
-          const keyString = encodePollKey(key);
-          return { summary: { key, keyString, endsAtMs: endsAt.get(keyString) }, state: 'loading' };
-        });
+        const fresh: BrowsedContest[] = page.keys.map((key: PollKey) => ({
+          summary: openPolls.get(looseKey(key)) ?? { key, keyString: encodePollKey(key) },
+          state: 'loading',
+        }));
         type.contests.push(...fresh);
         for (const entry of fresh) {
           settled.push(new Promise<void>((done) => pump.push([{ entry, done }])));

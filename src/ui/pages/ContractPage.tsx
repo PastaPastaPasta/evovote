@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import {
   BROWSE_MAX_CONTESTS,
@@ -157,13 +157,21 @@ export function ContractPage({
   });
   const now = useNow();
 
+  const showedList = useRef(false);
+
   useEffect(() => {
     const abort = new AbortController();
+    // "Show more" re-runs the browse: keep the list on screen until the new
+    // sweep has listed everything, instead of blanking it and losing scroll.
+    const keepPrevious = showedList.current;
     void browseContract(sdk, contractId, {
       maxContests: limit,
       signal: abort.signal,
       onUpdate: (next) => {
-        if (!abort.signal.aborted) setView(next);
+        if (abort.signal.aborted) return;
+        if (keepPrevious && (next.load !== 'ready' || next.types.some((t) => t.sweeping))) return;
+        if (next.load === 'ready') showedList.current = true;
+        setView(next);
       },
     });
     return () => abort.abort();

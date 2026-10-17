@@ -346,9 +346,11 @@ export function ContestPage({
       <ReadIssues failures={readIssues} caps={[]} />
       {open && !signable && (
         <p className="mono-label">
-          {activeChecked
-            ? 'This poll is not in the list of open polls read from Platform, so it cannot be voted on from here. Reload to try again.'
-            : 'Checking that this poll is open for voting…'}
+          {!activeChecked
+            ? 'Checking that this poll is open for voting…'
+            : failures.length > 0
+              ? 'The list of open polls could not be read completely (see above), so this poll cannot be voted on from here. Reload to try again.'
+              : 'This poll is not in the list of open polls read from Platform, so it cannot be voted on from here. Reload to try again.'}
         </p>
       )}
 
