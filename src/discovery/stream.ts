@@ -1,5 +1,6 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import type { ContestSummary } from '../model/contest';
+import { errorMessage } from '../sdk/errors';
 import { encodePollKey } from '../model/pollKey';
 import { getActivePolls } from './activePolls';
 import type { ArchivePage } from './archive';
@@ -38,6 +39,7 @@ interface Subscriber {
 }
 
 interface StreamRun {
+  /** Last activity while streaming (a wedge is a long silence); completion time after. */
   at: number;
   sources: readonly ArchiveSource[];
   batches: ContestBatch[];
@@ -46,7 +48,7 @@ interface StreamRun {
 }
 
 const CONTESTS_TTL_MS = 60_000;
-// A run that never settles (one wedged SDK call) must not be joined forever.
+// A run that goes quiet this long (one wedged SDK call) is not joined.
 const STREAM_DEADLINE_MS = 120_000;
 
 let streamRun: StreamRun | null = null;
@@ -63,6 +65,7 @@ function startStream(sdk: EvoSDK, sources: readonly ArchiveSource[]): StreamRun 
   const push = (phase: StreamPhase, list: ContestSummary[]) => {
     const fresh = list.filter((c) => !seen.has(c.keyString));
     for (const c of fresh) seen.add(c.keyString);
+    run.at = Date.now();
     if (fresh.length === 0) return;
     const batch = { phase, list: fresh };
     run.batches.push(batch);
@@ -94,7 +97,7 @@ function startStream(sdk: EvoSDK, sources: readonly ArchiveSource[]): StreamRun 
           if (page.failure || page.cap) report({ failures: [...failures], caps: [...caps] });
         }
       } catch (e) {
-        failures.push({ source: `${source.kindId} archive`, message: String(e) });
+        failures.push({ source: `${source.kindId} archive`, message: errorMessage(e) });
       }
     }
 

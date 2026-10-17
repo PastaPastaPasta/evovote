@@ -36,7 +36,7 @@ function KeyField({ mnId }: { mnId: string }) {
         spellCheck={false}
         onChange={(e) => setWif(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && wif.trim()) void submit();
+          if (e.key === 'Enter' && wif.trim() && !busy) void submit();
         }}
       />
       <button className="vote-button ghost" disabled={!wif.trim() || busy} onClick={submit}>

@@ -1,6 +1,7 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import type { Contender, Contest, ContestSummary, Resolution, Winner } from '../model/contest';
 import { toQueryValue } from '../model/indexValue';
+import { freeQuietly } from '../sdk/free';
 import type { PollKey } from '../model/pollKey';
 import { fetchContestedIndex, fetchContract } from './contracts';
 
@@ -48,7 +49,7 @@ export function toContest(
     resolution?: Resolution;
     decodeDocument?: (bytes: Uint8Array) => Record<string, unknown> | undefined;
   } = {},
-): Contest & { unreadableContenders: number } {
+): Contest {
   const contenders: Contender[] = [];
   let unreadableContenders = 0;
   for (const raw of Array.from(state.contenders ?? [])) {
@@ -66,11 +67,7 @@ export function toContest(
     } catch {
       unreadableContenders++;
     } finally {
-      try {
-        c.free?.();
-      } catch {
-        // Already freed.
-      }
+      freeQuietly(c);
     }
   }
   contenders.sort((a, b) => b.votes - a.votes);
@@ -142,17 +139,13 @@ async function queryContest(sdk: EvoSDK, summary: ContestSummary): Promise<Conte
             try {
               return doc.toJSON(version) as Record<string, unknown>;
             } finally {
-              doc.free();
+              freeQuietly(doc);
             }
           }
         : undefined,
     });
   } finally {
-    try {
-      state.free();
-    } catch {
-      // Already freed.
-    }
+    freeQuietly(state);
   }
 }
 
@@ -220,7 +213,7 @@ export async function fetchVoters(
     try {
       return id.toHex();
     } finally {
-      id.free();
+      freeQuietly(id);
     }
   });
 }

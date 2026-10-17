@@ -1,5 +1,6 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { errorMessage } from '../sdk/errors';
+import { freeQuietly } from '../sdk/free';
 import type { ContestSummary } from '../model/contest';
 import { encodePollKey, pollKeyFromSdkPoll, type SdkVotePollLike } from '../model/pollKey';
 import type { Cap, Failure } from './types';
@@ -46,16 +47,16 @@ export function livePollFor(keyString: string): unknown {
   return livePolls.get(keyString);
 }
 
+/**
+ * Keep the first object seen for a key and free later copies. A poll never
+ * changes, and a vote in flight may still hold the first one: the SDK only
+ * clones it after an await, so freeing it here could pull it out from under
+ * that vote.
+ */
 function remember(keyString: string, poll: LivePoll): void {
   const previous = livePolls.get(keyString);
-  if (previous && previous !== poll) {
-    try {
-      previous.free?.();
-    } catch {
-      // Already freed.
-    }
-  }
-  livePolls.set(keyString, poll);
+  if (!previous) livePolls.set(keyString, poll);
+  else if (previous !== poll) freeQuietly(poll);
 }
 
 /**
@@ -129,7 +130,10 @@ export async function fetchActivePolls(
   const failures: Failure[] = [];
   const caps: Cap[] = [];
 
-  const walk = async (upper: number | undefined): Promise<ContestSummary[]> => {
+  const walk = async (
+    upper: number | undefined,
+    walkFailures: Failure[],
+  ): Promise<ContestSummary[]> => {
     const byKey = new Map<string, ContestSummary>();
     let lower: { startTimeMs: bigint; startTimeIncluded: boolean } | undefined;
     for (let page = 0; page < maxPages; page++) {
@@ -143,17 +147,11 @@ export async function fetchActivePolls(
       try {
         read = readEntries(entries);
       } finally {
-        for (const entry of entries) {
-          try {
-            entry.free?.();
-          } catch {
-            // Freed already.
-          }
-        }
+        entries.forEach(freeQuietly);
       }
       for (const s of read.summaries) byKey.set(s.keyString, s);
       if (read.unreadable > 0) {
-        failures.push({
+        walkFailures.push({
           source: 'active polls',
           message: `${read.unreadable} poll(s) on page ${page + 1} could not be read`,
         });
@@ -161,6 +159,14 @@ export async function fetchActivePolls(
       const full = read.pollCount >= pageSize || entries.length >= pageSize;
       if (!full || read.first === undefined || read.last === undefined) {
         return [...byKey.values()];
+      }
+      if (read.first === read.last) {
+        // A full page of one timestamp: the rest of that timestamp cannot be
+        // reached (no offset), so the walk moves past it and says so.
+        walkFailures.push({
+          source: 'active polls',
+          message: `more than ${pageSize} polls end at ${new Date(Number(read.last)).toISOString()}; some of them are not listed`,
+        });
       }
       lower = { startTimeMs: read.last, startTimeIncluded: read.first !== read.last };
     }
@@ -170,10 +176,15 @@ export async function fetchActivePolls(
 
   let polls: ContestSummary[] = [];
   try {
-    polls = await walk(now + ACTIVE_HORIZON_MS);
+    const walkFailures: Failure[] = [];
+    polls = await walk(now + ACTIVE_HORIZON_MS, walkFailures);
+    failures.push(...walkFailures);
   } catch (boundedError) {
+    // The first attempt's partial failures are discarded with its results.
+    const walkFailures: Failure[] = [];
     try {
-      polls = await walk(undefined);
+      polls = await walk(undefined, walkFailures);
+      failures.push(...walkFailures);
       failures.push({
         source: 'active polls',
         message: `time-bounded query failed, read without an upper bound: ${errorMessage(boundedError)}`,

@@ -4,10 +4,14 @@ import { voteChoicesEqual, type VoteChoice } from '../model/contest';
 import { isConstructible, toQueryValue } from '../model/indexValue';
 import type { PollKey } from '../model/pollKey';
 import type { SdkHandle } from '../sdk/connection';
+import { freeQuietly } from '../sdk/free';
 import { readCurrentVotes } from './currentVotes';
 import type { LoadedKey } from './keyring';
 
 type VotePollInstance = InstanceType<SdkHandle['mod']['VotePoll']>;
+
+/** A vote that failed before anything was sent: it cannot have landed. */
+export class NotBroadcastError extends Error {}
 
 /**
  * The VotePoll to sign over. Platform keys a poll (and its contest fund) by
@@ -24,7 +28,7 @@ export function votePollFor(
   const live = livePollFor(keyString);
   if (live) return { poll: live as VotePollInstance, owned: false };
   if (!key.indexValues.every(isConstructible)) {
-    throw new Error(
+    throw new NotBroadcastError(
       'This contest is not in the current list of open polls, so it cannot be voted on from here. Reload the contest and try again.',
     );
   }
@@ -56,25 +60,35 @@ export async function castVote(
   },
 ): Promise<void> {
   const { sdk, mod } = handle;
-  const privateKey = mod.PrivateKey.fromWIF(args.key.wif);
-  const votingKey = new mod.IdentityPublicKey({
-    keyId: 0,
-    purpose: 'voting',
-    securityLevel: 'high',
-    keyType: 'ecdsa_hash160',
-    isReadOnly: true,
-    data: hexToBytes(args.key.hash160),
-  });
-  const signer = new mod.IdentitySigner();
-  signer.addKey(privateKey);
-  const { poll, owned } = votePollFor(mod, args.pollKey, args.keyString);
-  const voteChoice =
-    args.choice.type === 'identity'
-      ? mod.ResourceVoteChoice.TowardsIdentity(args.choice.identityId)
-      : args.choice.type === 'abstain'
-        ? mod.ResourceVoteChoice.Abstain()
-        : mod.ResourceVoteChoice.Lock();
+  // Everything created here is ours to free: the SDK clones option objects.
+  const owned: unknown[] = [];
+  const own = <T>(obj: T): T => {
+    owned.push(obj);
+    return obj;
+  };
   try {
+    const privateKey = own(mod.PrivateKey.fromWIF(args.key.wif));
+    const votingKey = own(
+      new mod.IdentityPublicKey({
+        keyId: 0,
+        purpose: 'voting',
+        securityLevel: 'high',
+        keyType: 'ecdsa_hash160',
+        isReadOnly: true,
+        data: hexToBytes(args.key.hash160),
+      }),
+    );
+    const signer = own(new mod.IdentitySigner());
+    signer.addKey(privateKey);
+    const { poll, owned: pollIsOurs } = votePollFor(mod, args.pollKey, args.keyString);
+    if (pollIsOurs) own(poll);
+    const voteChoice = own(
+      args.choice.type === 'identity'
+        ? mod.ResourceVoteChoice.TowardsIdentity(args.choice.identityId)
+        : args.choice.type === 'abstain'
+          ? mod.ResourceVoteChoice.Abstain()
+          : mod.ResourceVoteChoice.Lock(),
+    );
     const recorded = await sdk.voting.masternodeVote({
       // Base58 of the Core-order bytes: unambiguous, unlike a hex string
       // that could also parse as base58. rc.4 accepts hex, bytes or base58.
@@ -84,16 +98,9 @@ export async function castVote(
       votingKey,
       signer,
     });
-    recorded?.free?.();
+    own(recorded);
   } finally {
-    // The SDK clones option objects, so these are ours to free.
-    for (const obj of [privateKey, votingKey, signer, voteChoice, owned ? poll : undefined]) {
-      try {
-        obj?.free();
-      } catch {
-        // Already freed.
-      }
-    }
+    owned.forEach(freeQuietly);
   }
 }
 

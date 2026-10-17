@@ -2,6 +2,7 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import { base58Encode, hexToBytes } from '../model/bytes';
 import type { VoteChoice } from '../model/contest';
 import { encodePollKey, pollKeyFromSdkPoll, type SdkVotePollLike } from '../model/pollKey';
+import { freeQuietly } from '../sdk/free';
 
 /** The structural shape of a wasm ResourceVote this module reads. */
 export interface ResourceVoteLike {
@@ -38,11 +39,7 @@ export function readResourceVote(
   } catch {
     return undefined;
   } finally {
-    try {
-      rv.free?.();
-    } catch {
-      // Already freed.
-    }
+    freeQuietly(rv);
   }
 }
 
@@ -73,13 +70,19 @@ export async function readCurrentVotes(
       ...(startAtVoteId ? { startAtVoteId, startAtIncluded: false } : {}),
     });
     let lastId: string | undefined;
+    let unreadable = 0;
     for (const [voteId, rv] of votes) {
       lastId = voteId;
       const read = readResourceVote(rv as unknown as ResourceVoteLike);
       if (read) out.set(read.keyString, read.choice);
+      else unreadable++;
     }
-    if (votes.size < PAGE || !lastId) break;
+    // An unreadable vote could be the one on the poll being planned.
+    if (unreadable > 0) throw new Error(`${unreadable} current vote(s) could not be read`);
+    if (votes.size < PAGE || !lastId) return out;
     startAtVoteId = lastId;
   }
-  return out;
+  // Past the cap a vote could be missing, and "missing" would read as "has
+  // not voted": report the read as failed instead.
+  throw new Error(`more than ${PAGE * MAX_PAGES} current votes; not all could be read`);
 }

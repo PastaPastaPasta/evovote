@@ -20,9 +20,19 @@ describe('parseRoute', () => {
     expect(parseRoute('#/k/nope').page).toBe('notFound');
   });
 
-  it('should keep poll keys verbatim', () => {
+  it('should keep canonical poll keys as they are', () => {
     const key = dpnsKeyString('alice');
     expect(parseRoute(`#/p/${key}`)).toEqual({ page: 'poll', keyString: key });
+  });
+
+  it('should canonicalize equivalent spellings of a poll key, and pass bad ones through', () => {
+    const key = dpnsKeyString('alice');
+    const [contract, type, index] = key.split('/');
+    // Same values, extra JSON whitespace, and a needlessly escaped segment.
+    const spaced = btoa('[ "dash", "alice" ]').replace(/=+$/, '');
+    const variant = `${contract}/${encodeURIComponent(type).replace('d', '%64')}/${index}/${spaced}`;
+    expect(parseRoute(`#/p/${variant}`)).toEqual({ page: 'poll', keyString: key, redirect: true });
+    expect(parseRoute('#/p/garbage')).toEqual({ page: 'poll', keyString: 'garbage' });
   });
 
   it('should redirect v1 username links to the DPNS poll key, normalized', () => {

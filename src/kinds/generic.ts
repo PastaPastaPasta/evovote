@@ -35,5 +35,5 @@ export const genericKind: ContestKind = {
   // The resolution comes from the contract's index definition. If it could
   // not be read, Lock is withheld: offering it on a resolution-1 index only
   // earns a 40307 refusal.
-  choices: (c) => (c.resolution === 0 ? choicesForResolution(0) : choicesForResolution(1)),
+  choices: (c) => choicesForResolution(c.resolution === 0 ? 0 : 1),
 };

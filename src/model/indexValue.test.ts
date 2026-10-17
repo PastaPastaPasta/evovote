@@ -87,12 +87,20 @@ describe('index value JSON form', () => {
     }
   });
 
+  it('should keep -0, NaN and Infinity exact', () => {
+    for (const value of [-0, NaN, Infinity, -Infinity, 0.1]) {
+      const back = indexValueFromJson(JSON.parse(JSON.stringify(indexValueToJson({ type: 'float', value }))));
+      expect(back.type).toBe('float');
+      expect(Object.is((back as { value: number }).value, value)).toBe(true);
+    }
+  });
+
   it('should keep text as a bare string', () => {
     expect(indexValueToJson({ type: 'text', value: 'alice' })).toBe('alice');
   });
 
   it('should reject malformed JSON values', () => {
-    for (const bad of [{ id: 'notbase58!' }, { id: '1111' }, { int: '1.5' }, { bytes: 'abc' }, { x: 1 }, [1], 3, { id: 'a', int: '1' }]) {
+    for (const bad of [{ id: 'notbase58!' }, { id: '1111' }, { int: '1.5' }, { bytes: 'abc' }, { bytes: 'AB' }, { f64: '00' }, { x: 1 }, [1], 3, { id: 'a', int: '1' }]) {
       expect(() => indexValueFromJson(bad)).toThrow();
     }
   });

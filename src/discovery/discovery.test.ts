@@ -84,6 +84,13 @@ describe('fetchActivePolls', () => {
     expect(calls[1]).toMatchObject({ startTimeMs: BigInt(now + 2), startTimeIncluded: true });
   });
 
+  it('should report polls it cannot reach past a full single-timestamp page', async () => {
+    const { sdk } = fakeSdk([entry(now + 1, ['a', 'b', 'c']), entry(now + 2, ['d'])]);
+    const result = await fetchActivePolls(sdk, { now, pageSize: 2 });
+    expect(result.polls.map((p) => (p.key.indexValues[1] as { value: string }).value)).toEqual(['a', 'b', 'd']);
+    expect(result.failures[0].message).toMatch(/more than 2 polls end at/);
+  });
+
   it('should report a cap instead of truncating silently', async () => {
     const all = Array.from({ length: 10 }, (_, i) => entry(now + i + 1, [`n${i}`]));
     const { sdk } = fakeSdk(all);

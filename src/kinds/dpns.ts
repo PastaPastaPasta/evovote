@@ -1,6 +1,6 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { sweepContestedResources } from '../discovery/archive';
-import type { Contest, ContestSummary } from '../model/contest';
+import { choicesForResolution, type Contest, type ContestSummary } from '../model/contest';
 import { text } from '../model/indexValue';
 import { encodePollKey, type PollKey } from '../model/pollKey';
 import type { ContestKind } from './types';
@@ -94,7 +94,7 @@ export const dpnsKind: ContestKind = {
     };
   },
   // DPNS's contested index is resolution 0: contender, abstain or lock.
-  choices: () => ['identity', 'abstain', 'lock'],
+  choices: () => choicesForResolution(0),
   archive: (sdk) =>
     sweepContestedResources(sdk, {
       source: 'DPNS archive',

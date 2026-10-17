@@ -3,7 +3,7 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import { createPump } from '../../discovery/concurrency';
 import { subscribeContests, type StreamReport } from '../../discovery/stream';
 import { fetchContest, peekContest } from '../../discovery/voteState';
-import { ARCHIVE_SOURCES, KINDS, kindFor } from '../../kinds/registry';
+import { ARCHIVE_SOURCES, KINDS, kindById, kindFor } from '../../kinds/registry';
 import type { KindId } from '../../kinds/types';
 import type { Contest, ContestSummary } from '../../model/contest';
 import type { Network } from '../../sdk/network';
@@ -124,7 +124,11 @@ export function OverviewPage({
       ARCHIVE_SOURCES,
       (batch) => {
         if (cancelled) return;
-        const append = (prev: ContestSummary[]) => [...prev, ...batch.list];
+        // Dedupe: a reused run replays its batches, and StrictMode mounts twice in dev.
+        const append = (prev: ContestSummary[]) => {
+          const have = new Set(prev.map((c) => c.keyString));
+          return [...prev, ...batch.list.filter((c) => !have.has(c.keyString))];
+        };
         if (batch.phase === 'active') setActive(append);
         else setArchive(append);
         const seeded: Record<string, StateEntry> = {};
@@ -182,7 +186,7 @@ export function OverviewPage({
   const visibleEnded = [...expired, ...archive].filter(matches);
   const total = active.length + archive.length;
   const streaming = report.status === 'streaming';
-  const heading = kindFilter ? KINDS.find((k) => k.id === kindFilter)?.label : undefined;
+  const heading = kindFilter ? kindById(kindFilter)?.label : undefined;
 
   if (total === 0) {
     if (streaming) {

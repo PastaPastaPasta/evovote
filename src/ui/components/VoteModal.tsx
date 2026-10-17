@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { forEachConcurrent } from '../../discovery/concurrency';
 import { invalidateContest } from '../../discovery/voteState';
 import { kindFor } from '../../kinds/registry';
-import { phaseOf, type Contest, type VoteChoice } from '../../model/contest';
+import { isVotable, type Contest, type VoteChoice } from '../../model/contest';
 import { loadSdk } from '../../sdk/connection';
-import { errorMessage } from '../../sdk/errors';
+import { errorCode, errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
 import { MAX_PARALLEL_MASTERNODES, runBroadcast, type BroadcastJob, type JobStatus } from '../../voting/broadcaster';
-import { castVote, verifyVote } from '../../voting/cast';
+import { castVote, NotBroadcastError, verifyVote } from '../../voting/cast';
 import { readCurrentVotes } from '../../voting/currentVotes';
 import { getLoadedKey, useMasternodes } from '../../voting/keyring';
 import { planVotes, SKIP_TEXT, VOTES_PER_POLL, type PlanItem } from '../../voting/planner';
@@ -101,7 +101,7 @@ export function VoteModal({
           keyString: contest.keyString,
           allowedChoices: kind.choices(contest),
           contenderIds: contest.tally.contenders.map((c) => c.identityId),
-          votable: phaseOf(contest) !== 'decided',
+          votable: isVotable(contest),
         },
       ],
       masternodes: ready.filter((mn) => selected.has(mn.id)),
@@ -145,13 +145,26 @@ export function VoteModal({
       run: async () => {
         const key = getLoadedKey(item.mnId);
         if (!key) throw new Error('The voting key is no longer loaded.');
-        await castVote(handle, {
-          proTxHash: item.proTxHash,
-          key,
-          pollKey: contest.key,
-          keyString: contest.keyString,
-          choice,
-        });
+        try {
+          await castVote(handle, {
+            proTxHash: item.proTxHash,
+            key,
+            pollKey: contest.key,
+            keyString: contest.keyString,
+            choice,
+          });
+        } catch (e) {
+          // No consensus code (a timeout, a dropped connection): the vote may
+          // still have landed, so count it against the budget's lower bound.
+          if (errorCode(e) === undefined && !(e instanceof NotBroadcastError)) {
+            recordReceipt(network, contest.keyString, item.proTxHash, {
+              choice,
+              at: Date.now(),
+              verified: false,
+            });
+          }
+          throw e;
+        }
         const verified = await verifyVote(handle, item.proTxHash, contest.keyString, choice);
         recordReceipt(network, contest.keyString, item.proTxHash, {
           choice,
@@ -166,9 +179,16 @@ export function VoteModal({
     setPhase('done');
   };
 
-  const failed = plan.filter(
-    (item) => item.action === 'cast' && statuses[item.mnId]?.step === 'failed',
-  );
+  // Refusals that cannot change on a retry are not offered again.
+  const final = new Set([40302, 40303, 40304, 40305, 40306, 40307]);
+  const failed = plan.filter((item) => {
+    const status = statuses[item.mnId];
+    return (
+      item.action === 'cast' &&
+      status?.step === 'failed' &&
+      !(status.error.code !== undefined && final.has(status.error.code))
+    );
+  });
 
   return (
     <div className="modal-backdrop" onClick={phase === 'run' ? undefined : onClose}>

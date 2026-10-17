@@ -67,3 +67,20 @@ export function base64ToBytesSafe(b64: string): Uint8Array | undefined {
     return undefined;
   }
 }
+
+/** UTF-8 text to unpadded base64url. */
+export function base64UrlEncode(textValue: string): string {
+  const bytes = new TextEncoder().encode(textValue);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Inverse of base64UrlEncode; throws on anything malformed. */
+export function base64UrlDecode(encoded: string): string {
+  if (!/^[A-Za-z0-9_-]*$/.test(encoded)) throw new Error('bad base64url');
+  const b64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+}

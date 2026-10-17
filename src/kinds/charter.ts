@@ -1,4 +1,5 @@
 import { sweepContestedResources } from '../discovery/archive';
+import { choicesForResolution } from '../model/contest';
 import { indexValueFromJs } from '../model/indexValue';
 import type { PollKey } from '../model/pollKey';
 import type { ContestKind } from './types';
@@ -53,7 +54,7 @@ export const charterKind: ContestKind = {
     return { identityId: contender.identityId, subtitle: 'charter leader' };
   },
   // Resolution 1: no Lock. There is always a winner; ties go to the earliest contender.
-  choices: () => ['identity', 'abstain'],
+  choices: () => choicesForResolution(1),
   archive: (sdk) =>
     sweepContestedResources(sdk, {
       source: 'moderator election archive',

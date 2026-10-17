@@ -1,3 +1,4 @@
+import { base64UrlDecode, base64UrlEncode } from './bytes';
 import {
   asBytes,
   decodeBincodeValue,
@@ -27,21 +28,6 @@ export interface PollKey {
 // so it must be deterministic: the same poll always yields the same string.
 // Segments are URI-component encoded; base58 ids and Platform type/index names
 // never need it in practice, but a hostile contract could name things oddly.
-
-function base64UrlEncode(textValue: string): string {
-  const bytes = new TextEncoder().encode(textValue);
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function base64UrlDecode(encoded: string): string {
-  if (!/^[A-Za-z0-9_-]*$/.test(encoded)) throw new Error('bad base64url');
-  const b64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
-  const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
-  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-}
 
 export function encodePollKey(key: PollKey): string {
   const values = base64UrlEncode(JSON.stringify(key.indexValues.map(indexValueToJson)));

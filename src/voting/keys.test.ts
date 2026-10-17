@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { base58Decode, base58Encode, hexToBytes } from '../model/bytes';
+import { voterKeyMatches } from './keyring';
 import { isProTxHash, p2pkhAddress, voterIdentityId, wifNetwork } from './keys';
 
 describe('base58', () => {
@@ -99,5 +100,23 @@ describe('voterIdentityId', () => {
   it('should reject inputs of the wrong length', async () => {
     await expect(voterIdentityId('ab', 'c88818ac93c56d21cb72c3255e3de33d160674d3')).rejects.toThrow();
     await expect(voterIdentityId('a'.repeat(64), 'abcd')).rejects.toThrow();
+  });
+});
+
+describe('voterKeyMatches', () => {
+  const hash = 'c88818ac93c56d21cb72c3255e3de33d160674d3';
+  // toJSON() of the voter identity's key 0 on testnet.
+  const key0 = { purpose: 5, data: 'yIgYrJPFbSHLcsMlXj3jPRYGdNM=' };
+
+  it('should accept an enabled VOTING key over the hash', () => {
+    expect(voterKeyMatches(key0, hash)).toBe(true);
+    expect(voterKeyMatches({ ...key0, disabledAt: null }, hash)).toBe(true);
+  });
+
+  it('should reject another hash, another purpose, a disabled key, or none', () => {
+    expect(voterKeyMatches(key0, 'd1769a7dd51d17aebb64a38e69042d5aa50a7d31')).toBe(false);
+    expect(voterKeyMatches({ ...key0, purpose: 0 }, hash)).toBe(false);
+    expect(voterKeyMatches({ ...key0, disabledAt: '1700000000000' }, hash)).toBe(false);
+    expect(voterKeyMatches(undefined, hash)).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { base58Decode, base58Encode, bytesToHex } from './bytes';
+import { base58Decode, base58Encode, bytesToHex, hexToBytes } from './bytes';
 
 /**
  * One value of a contested index (e.g. the `"dash"` parent and the label of a
@@ -223,21 +223,14 @@ export function indexValueFromJs(
  */
 export function toQueryValue(v: IndexValue): unknown {
   switch (v.type) {
-    case 'text':
-    case 'identifier':
-      return v.value;
     case 'integer':
       return v.value >= BigInt(Number.MIN_SAFE_INTEGER) &&
         v.value <= BigInt(Number.MAX_SAFE_INTEGER)
         ? Number(v.value)
         : v.value;
-    case 'float':
-    case 'bool':
-      return v.value;
     case 'null':
       return null;
-    case 'bytes':
-    case 'raw':
+    default:
       return v.value;
   }
 }
@@ -284,7 +277,7 @@ export type IndexValueJson =
   | null
   | { id: string }
   | { int: string }
-  | { float: number }
+  | { f64: string }
   | { bytes: string }
   | { raw: string };
 
@@ -296,8 +289,13 @@ export function indexValueToJson(v: IndexValue): IndexValueJson {
       return { id: v.value };
     case 'integer':
       return { int: v.value.toString() };
-    case 'float':
-      return { float: v.value };
+    case 'float': {
+      // The IEEE-754 bits, big-endian: exact for -0, NaN and Infinity,
+      // which JSON numbers cannot carry.
+      const bits = new DataView(new ArrayBuffer(8));
+      bits.setFloat64(0, v.value, false);
+      return { f64: bytesToHex(new Uint8Array(bits.buffer)) };
+    }
     case 'bool':
       return v.value;
     case 'null':
@@ -311,11 +309,10 @@ export function indexValueToJson(v: IndexValue): IndexValueJson {
 
 const HEX = /^(?:[0-9a-f]{2})*$/;
 
+/** Lowercase hex only: the canonical form must have one spelling per value. */
 function hexBytes(hex: unknown): Uint8Array {
   if (typeof hex !== 'string' || !HEX.test(hex)) throw new Error('bad hex');
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  return out;
+  return hexToBytes(hex);
 }
 
 /** Inverse of indexValueToJson. Throws on anything malformed. */
@@ -336,9 +333,11 @@ export function indexValueFromJson(j: unknown): IndexValue {
     case 'int':
       if (typeof value !== 'string' || !/^-?\d+$/.test(value)) throw new Error('bad int');
       return { type: 'integer', value: BigInt(value) };
-    case 'float':
-      if (typeof value !== 'number') throw new Error('bad float');
-      return { type: 'float', value };
+    case 'f64': {
+      const bytes = hexBytes(value);
+      if (bytes.length !== 8) throw new Error('bad float');
+      return { type: 'float', value: new DataView(bytes.buffer).getFloat64(0, false) };
+    }
     case 'bytes':
       return { type: 'bytes', value: hexBytes(value) };
     case 'raw':
@@ -346,8 +345,4 @@ export function indexValueFromJson(j: unknown): IndexValue {
     default:
       throw new Error('bad index value');
   }
-}
-
-export function indexValuesEqual(a: IndexValue, b: IndexValue): boolean {
-  return JSON.stringify(indexValueToJson(a)) === JSON.stringify(indexValueToJson(b));
 }

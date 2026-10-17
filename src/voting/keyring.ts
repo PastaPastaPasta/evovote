@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { base64ToBytesSafe, bytesToHex } from '../model/bytes';
 import { loadSdk } from '../sdk/connection';
 import { errorMessage } from '../sdk/errors';
+import { freeQuietly } from '../sdk/free';
 import type { Network } from '../sdk/network';
 import { isProTxHash, p2pkhAddress, voterIdentityId, wifNetwork } from './keys';
 
@@ -12,8 +13,11 @@ import { isProTxHash, p2pkhAddress, voterIdentityId, wifNetwork } from './keys';
  * (WIFs) live only in the in-memory map below and vanish with the tab;
  * persisting them is not offered. A key is accepted only after its voter
  * identity, SHA256(proTxHash ‖ HASH160(pub)), is read from Platform and its
- * key 0 matches HASH160(pub): that proves the key is this node's voting key
- * before anything is signed with it.
+ * key 0 is an enabled VOTING key over HASH160(pub). That catches a wrong key
+ * or ProTxHash before anything is signed. It cannot prove the key is still
+ * the node's *current* voting key: Platform disables the old identity's key
+ * when the masternode list changes it, but only once that update lands, so a
+ * very recent ProUpRegTx can still end in a 40305 refusal.
  */
 export interface Masternode {
   id: string;
@@ -98,10 +102,6 @@ export function useMasternodes(): Masternode[] {
   return useSyncExternalStore(subscribe, () => snapshot);
 }
 
-export function getMasternodes(): Masternode[] {
-  return snapshot;
-}
-
 export function getLoadedKey(id: string): LoadedKey | undefined {
   return keys.get(id);
 }
@@ -137,12 +137,13 @@ export async function addMasternode(input: {
   return { ok: true };
 }
 
-/** The voting key a voter identity holds: key 0, VOTING, over HASH160(pub). */
+/** The voting key a voter identity holds: key 0, VOTING, enabled, over HASH160(pub). */
 export function voterKeyMatches(
-  key: { purpose?: unknown; data?: unknown } | undefined,
+  key: { purpose?: unknown; data?: unknown; disabledAt?: unknown } | undefined,
   hash160Hex: string,
 ): boolean {
   if (!key) return false;
+  if (key.disabledAt !== undefined && key.disabledAt !== null) return false;
   // toJSON() gives purpose as a number (5 = VOTING) and data as base64.
   if (key.purpose !== 5 && key.purpose !== 'VOTING' && key.purpose !== 'voting') return false;
   const data =
@@ -170,7 +171,7 @@ export async function importKey(id: string, wif: string): Promise<KeyringResult>
     try {
       hash160 = privateKey.getPublicKeyHash().toLowerCase();
     } finally {
-      privateKey.free();
+      freeQuietly(privateKey);
     }
     const voterId = await voterIdentityId(entry.proTxHash, hash160);
     const identity = await sdk.identities.fetch(voterId);
@@ -182,18 +183,21 @@ export async function importKey(id: string, wif: string): Promise<KeyringResult>
           "masternode's voting key (compare votingAddress in protx info), or the ProTxHash is wrong.",
       };
     }
-    let matches: boolean;
+    let matches = false;
+    let key0: ReturnType<typeof identity.getPublicKeyById> | undefined;
     try {
-      const key0 = identity.getPublicKeyById(0);
-      matches = voterKeyMatches(key0?.toJSON() as { purpose?: unknown; data?: unknown }, hash160);
-      key0?.free();
+      key0 = identity.getPublicKeyById(0);
+      matches = voterKeyMatches(key0?.toJSON() as Parameters<typeof voterKeyMatches>[0], hash160);
     } finally {
-      identity.free();
+      freeQuietly(key0);
+      freeQuietly(identity);
     }
     if (!matches) {
       return {
         ok: false,
-        error: "The voter identity's key does not match this private key. Nothing was loaded.",
+        error:
+          "The voter identity's key does not match this private key, or Platform has disabled it " +
+          '(the voting key changed). Nothing was loaded.',
       };
     }
     const address = await p2pkhAddress(hash160, network);
@@ -213,12 +217,6 @@ export function forgetKey(id: string): void {
 export function removeMasternode(id: string): void {
   keys.delete(id);
   entries = entries.filter((e) => e.id !== id);
-  persist();
-  rebuildSnapshot();
-}
-
-export function renameMasternode(id: string, label: string): void {
-  entries = entries.map((e) => (e.id === id ? { ...e, label } : e));
   persist();
   rebuildSnapshot();
 }

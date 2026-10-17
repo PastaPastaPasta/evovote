@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { base58Decode } from '../model/bytes';
+import { decodePollKey, encodePollKey } from '../model/pollKey';
 import { dpnsKeyString, normalizeDpnsLabel } from '../kinds/dpns';
 import { isKindId } from '../kinds/registry';
 import type { KindId } from '../kinds/types';
@@ -65,9 +66,19 @@ export function parseRoute(hash: string): Route {
     return isKindId(kind[1]) ? { page: 'kind', kind: kind[1] } : { page: 'notFound', path };
   }
 
-  // The key string carries its own URI-component encoding; keep it verbatim.
+  // Many spellings decode to the same poll (escapes, base64 padding bits,
+  // JSON whitespace). Everything downstream (live polls, current votes,
+  // receipts) is keyed by the canonical string, so re-encode and redirect.
+  // An undecodable key is passed through for the page to reject.
   const poll = path.match(/^p\/(.+)$/);
-  if (poll) return { page: 'poll', keyString: poll[1] };
+  if (poll) {
+    const key = decodePollKey(poll[1]);
+    if (!key) return { page: 'poll', keyString: poll[1] };
+    const canonical = encodePollKey(key);
+    return canonical === poll[1]
+      ? { page: 'poll', keyString: canonical }
+      : { page: 'poll', keyString: canonical, redirect: true };
+  }
 
   const moderated = path.match(/^m\/([^/]+)(?:\/charter\/([^/]+))?$/);
   if (moderated) {

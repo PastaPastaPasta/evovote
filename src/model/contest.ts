@@ -80,6 +80,8 @@ export interface Contest extends ContestSummary {
   winner?: Winner;
   /** From the contract's index definition; undefined if it could not be read. */
   resolution?: Resolution;
+  /** Contenders the vote state returned but that could not be read: the tally is partial. */
+  unreadableContenders: number;
 }
 
 export function phaseOf(
@@ -89,6 +91,16 @@ export function phaseOf(
   if (c.winner) return 'decided';
   if (c.endsAtMs === undefined) return 'unknown';
   return c.endsAtMs > now ? 'open' : 'closing';
+}
+
+/**
+ * Whether votes can still be cast: open, or no end time known (Platform is
+ * the judge then, refusing with 40302 if it is closed). A poll past its end
+ * but not yet finalized no longer takes votes.
+ */
+export function isVotable(c: { endsAtMs?: number; winner?: Winner }, now = Date.now()): boolean {
+  const phase = phaseOf(c, now);
+  return phase === 'open' || phase === 'unknown';
 }
 
 /** True when the vote state says nobody ever contested this resource. */

@@ -8,7 +8,7 @@ import { kindFor } from '../../kinds/registry';
 import type { ContenderView, ContestKind } from '../../kinds/types';
 import {
   isEmptyContest,
-  phaseOf,
+  isVotable,
   type Contender,
   type Contest,
   type VoteChoice,
@@ -298,8 +298,17 @@ export function ContestPage({
   }
 
   const choices = kind.choices(contest);
-  const phase = phaseOf(contest, now);
-  const votable = phase === 'open' || phase === 'unknown';
+  const votable = isVotable(contest, now);
+  const readIssues: Failure[] =
+    contest.unreadableContenders > 0
+      ? [
+          ...failures,
+          {
+            source: 'the contenders',
+            message: `${contest.unreadableContenders} contender(s) could not be read, so the tally is partial`,
+          },
+        ]
+      : failures;
   const contenders = contest.tally.contenders;
 
   return (
@@ -315,7 +324,7 @@ export function ContestPage({
         )}
         <span className="mono-label">{plural(contest.tally.total, 'vote')} cast</span>
       </div>
-      <ReadIssues failures={failures} caps={[]} />
+      <ReadIssues failures={readIssues} caps={[]} />
 
       <BallotBar state={contest.tally} showLock={choices.includes('lock')} />
 
