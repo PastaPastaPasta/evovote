@@ -38,7 +38,10 @@ export function Composer({
   const session = useIdentitySession();
   const [body, setBody] = useState('');
   const [supports, setSupports] = useState('');
-  const [reviewing, setReviewing] = useState(false);
+  // What "Review and post" froze: the confirm step and the write use this, never
+  // the live fields, so a click elsewhere (another Reply) cannot change them.
+  const [review, setReview] = useState<{ draft: CommentDraft; supportsLabel?: string; replyLabel?: string; replyOwner?: string } | null>(null);
+  const reviewing = review !== null;
   const [writing, setWriting] = useState(false);
   const [outcome, setOutcome] = useState<WriteOutcome<Comment> | null>(null);
 
@@ -66,13 +69,23 @@ export function Composer({
   const length = commentLength(body);
   const problems = validateDraft(draft);
 
+  const startReview = () =>
+    setReview({
+      draft,
+      supportsLabel: supports ? (names.get(supports) ?? supports) : undefined,
+      replyLabel: replyingTo ? (names.get(replyingTo.ownerId) ?? replyingTo.ownerId) : undefined,
+      replyOwner: replyingTo?.ownerId,
+    });
+
   const reset = () => {
     setBody('');
     setSupports('');
-    setReviewing(false);
+    setReview(null);
     setOutcome(null);
     onCancelReply();
   };
+
+  const replyOwner = review ? review.replyOwner : replyingTo?.ownerId;
 
   return (
     <div className="discussion-compose">
@@ -80,9 +93,9 @@ export function Composer({
         Signed in as <PersonName id={session.identityId} name={session.names[0]} />. Comments are public and
         permanent: they cannot be edited or deleted. Plain text only. Official votes are cast with the ballot above.
       </p>
-      {replyingTo && (
+      {replyOwner && (
         <p className="fine-print">
-          Replying to <PersonName id={replyingTo.ownerId} name={names.get(replyingTo.ownerId)} />{' '}
+          Replying to <PersonName id={replyOwner} name={names.get(replyOwner)} />{' '}
           <button type="button" className="link-button" disabled={reviewing} onClick={onCancelReply}>
             Cancel reply
           </button>
@@ -119,36 +132,36 @@ export function Composer({
               {length} / {COMMENT_LIMIT}
             </span>
             {!reviewing ? (
-              <button className="vote-button" disabled={problems.length > 0} onClick={() => setReviewing(true)}>
+              <button className="vote-button" disabled={problems.length > 0} onClick={startReview}>
                 Review and post
               </button>
             ) : (
-              <button className="link-button" disabled={writing} onClick={() => setReviewing(false)}>
+              <button className="link-button" disabled={writing} onClick={() => setReview(null)}>
                 Edit
               </button>
             )}
           </div>
         </>
       )}
-      {reviewing && problems.length === 0 && (
+      {review && (
         <PaidWrite<Comment>
           handle={handle}
           identityId={session.identityId}
           title="Post this comment"
           summary={[
-            ['comment', <span className="comment-body" key="b">{body.trim()}</span>],
-            ...(supports ? ([['supports', names.get(supports) ?? supports]] as Array<[string, string]>) : []),
-            ...(replyingTo ? ([['reply to', names.get(replyingTo.ownerId) ?? replyingTo.ownerId]] as Array<[string, string]>) : []),
+            ['comment', <span className="comment-body" key="b">{review.draft.body.trim()}</span>],
+            ...(review.supportsLabel ? ([['supports', review.supportsLabel]] as Array<[string, string]>) : []),
+            ...(review.replyLabel ? ([['reply to', review.replyLabel]] as Array<[string, string]>) : []),
           ]}
-          estimate={() => estimateComment(handle, contractId, scope, draft)}
-          priceKey={`${body.trim()}|${supports}|${replyingTo?.id ?? ''}`}
+          estimate={() => estimateComment(handle, contractId, scope, review.draft)}
+          priceKey={`${review.draft.body.trim()}|${review.draft.supports ?? ''}|${review.draft.replyTo ?? ''}`}
           confirmLabel="Post comment"
           doneText="Your comment is on Platform."
           run={async () => {
             setWriting(true);
             try {
               return await withDocumentSigner(handle, contractId, (signer) =>
-                postComment(handle, signer, contractId, pollKey, draft),
+                postComment(handle, signer, contractId, pollKey, review.draft),
               );
             } finally {
               setWriting(false);
@@ -171,7 +184,7 @@ export function Composer({
             className="vote-button ghost"
             onClick={() => {
               setOutcome(null);
-              setReviewing(false);
+              setReview(null);
             }}
           >
             Back to editing

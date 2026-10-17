@@ -169,7 +169,7 @@ function Thread({
         }}
       />
       {error && <p className="page-note error" role="alert">Could not load comments: {error}</p>}
-      {!loading && !error && comments.length === 0 && (
+      {!loading && !error && comments.length === 0 && !hasMore && (
         <p className="page-note">No comments yet. Start the conversation.</p>
       )}
       <ol className="comment-list">

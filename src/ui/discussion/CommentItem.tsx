@@ -2,7 +2,7 @@ import type { Comment } from '../../discussion/reads';
 import { displayText } from '../../discussion/text';
 import { shortId } from '../format';
 
-export const commentAnchor = (id: string): string => `comment-${id}`;
+const commentAnchor = (id: string): string => `comment-${id}`;
 
 /** A person as a name (DPNS) or, failing that, a short id. Text only. */
 export function PersonName({ id, name }: { id: string; name?: string }) {
@@ -45,7 +45,14 @@ export function CommentItem({
         )}
         {comment.supports && (
           <span className="comment-supports">
-            supports <PersonName id={comment.supports} name={names.get(comment.supports)} />
+            {/* The field is the author's claim: only a contender of this contest is named. */}
+            {contenderIds.has(comment.supports) ? (
+              <>
+                supports <PersonName id={comment.supports} name={names.get(comment.supports)} />
+              </>
+            ) : (
+              'supports an identity that is not in this contest'
+            )}
           </span>
         )}
         {timeValid && <time dateTime={when.toISOString()}>{when.toLocaleString()}</time>}

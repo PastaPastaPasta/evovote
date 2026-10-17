@@ -5,7 +5,7 @@ import { freeQuietly } from '../sdk/free';
 import { scopeOf, type Scope } from './scope';
 
 export const COMMENT_TYPE = 'comment';
-export const PAGE_SIZE = 30;
+const PAGE_SIZE = 30;
 
 export interface Comment {
   id: string;
@@ -21,6 +21,12 @@ export interface Comment {
 }
 
 export type CommentOrder = 'newest' | 'oldest';
+
+interface PageOptions {
+  order?: CommentOrder;
+  startAfter?: string;
+  pageSize?: number;
+}
 
 export interface CommentPage {
   comments: Comment[];
@@ -45,8 +51,8 @@ export function readComment(
   if (typeof p.body !== 'string' || typeof p.pollKey !== 'string') return undefined;
   if (expectedPollKey !== undefined && p.pollKey !== expectedPollKey) return undefined;
   const createdAt = Number(doc.createdAt ?? 0);
-  const replyTo = p.replyTo === undefined || p.replyTo === null ? undefined : idFromValue(p.replyTo);
-  const supports = p.supports === undefined || p.supports === null ? undefined : idFromValue(p.supports);
+  const replyTo = p.replyTo == null ? undefined : idFromValue(p.replyTo);
+  const supports = p.supports == null ? undefined : idFromValue(p.supports);
   // A present but unreadable id means a malformed document, not "no reply".
   if ((p.replyTo != null && !replyTo) || (p.supports != null && !supports)) return undefined;
   return {
@@ -65,47 +71,60 @@ export async function fetchComments(
   sdk: EvoSDK,
   contractId: string,
   key: PollKey,
-  opts: { order?: CommentOrder; startAfter?: string; pageSize?: number } = {},
+  opts: PageOptions = {},
 ): Promise<CommentPage> {
   const scope = await scopeOf(key);
   return fetchCommentsByScope(sdk, contractId, scope, opts);
 }
 
+/** Further pages read when a page shows nothing (all its documents hidden). */
+const MAX_EMPTY_PAGE_SKIPS = 3;
+
 export async function fetchCommentsByScope(
   sdk: EvoSDK,
   contractId: string,
   scope: Scope,
-  opts: { order?: CommentOrder; startAfter?: string; pageSize?: number } = {},
+  opts: PageOptions = {},
 ): Promise<CommentPage> {
   const limit = opts.pageSize ?? PAGE_SIZE;
-  const page = await sdk.documents.query({
-    dataContractId: contractId,
-    documentTypeName: COMMENT_TYPE,
-    where: [['scope', '==', scope.scope]],
-    orderBy: [
-      ['scope', 'asc'],
-      ['$createdAt', opts.order === 'oldest' ? 'asc' : 'desc'],
-    ],
-    limit,
-    ...(opts.startAfter ? { startAfter: opts.startAfter } : {}),
-  });
-  const comments: Comment[] = [];
-  let read = 0;
-  let cursor: string | undefined;
+  let startAfter = opts.startAfter;
   let hidden = 0;
-  for (const doc of page.values()) {
-    if (!doc) continue;
-    read++;
-    try {
-      cursor = doc.id.toBase58();
-      const comment = readComment(doc, scope.pollKey);
-      if (comment) comments.push(comment);
-      else hidden++;
-    } finally {
-      freeQuietly(doc);
+  for (let skips = 0; ; skips++) {
+    const page = await sdk.documents.query({
+      dataContractId: contractId,
+      documentTypeName: COMMENT_TYPE,
+      where: [['scope', '==', scope.scope]],
+      orderBy: [
+        ['scope', 'asc'],
+        ['$createdAt', opts.order === 'oldest' ? 'asc' : 'desc'],
+      ],
+      limit,
+      ...(startAfter ? { startAfter } : {}),
+    });
+    const comments: Comment[] = [];
+    let read = 0;
+    let cursor: string | undefined;
+    for (const doc of page.values()) {
+      if (!doc) continue;
+      read++;
+      try {
+        cursor = doc.id.toBase58();
+        const comment = readComment(doc, scope.pollKey);
+        if (comment) comments.push(comment);
+        else hidden++;
+      } finally {
+        freeQuietly(doc);
+      }
     }
+    const hasMore = read >= limit;
+    // A page of only hidden documents would read as "no comments" next to a
+    // "load more": keep going (a few pages) until something is shown.
+    if (comments.length === 0 && hasMore && cursor && skips < MAX_EMPTY_PAGE_SKIPS) {
+      startAfter = cursor;
+      continue;
+    }
+    return { comments, hasMore, cursor, hidden };
   }
-  return { comments, hasMore: read >= limit, cursor, hidden };
 }
 
 /** A comment by id, or undefined when absent. */

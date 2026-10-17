@@ -9,7 +9,7 @@ import type { Network } from '../sdk/network';
  * A missing or malformed id means "discussion is not activated on this
  * network": the UI says so and nothing is read or written. It is not an error.
  */
-export interface DiscussionEnv {
+interface DiscussionEnv {
   VITE_DISCUSSION_TESTNET_CONTRACT_ID?: string;
   VITE_DISCUSSION_MAINNET_CONTRACT_ID?: string;
 }

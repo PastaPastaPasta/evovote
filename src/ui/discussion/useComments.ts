@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
-import { fetchCommentsByScope, type Comment, type CommentOrder, type CommentPage } from '../../discussion/reads';
+import { fetchCommentsByScope, type Comment, type CommentOrder } from '../../discussion/reads';
 import type { Scope } from '../../discussion/scope';
 import { errorMessage } from '../../sdk/errors';
 
-export interface CommentsState {
+interface CommentsState {
   comments: Comment[];
   loading: boolean;
   error: string | null;
@@ -33,13 +33,13 @@ interface Loaded {
 export function useComments(sdk: EvoSDK, contractId: string, scope: Scope, order: CommentOrder): CommentsState {
   const [round, setRound] = useState(0);
   const [loaded, setLoaded] = useState<Loaded>();
-  const [morePending, setMorePending] = useState(false);
+  const [morePendingFor, setMorePendingFor] = useState<string | null>(null);
   const queryId = `${contractId}|${scope.scope}|${order}|${round}`;
 
   useEffect(() => {
     let cancelled = false;
     fetchCommentsByScope(sdk, contractId, scope, { order }).then(
-      (page: CommentPage) => {
+      (page) => {
         if (cancelled) return;
         setLoaded({ queryId, comments: page.comments, hasMore: page.hasMore, hidden: page.hidden, cursor: page.cursor, error: null });
       },
@@ -54,12 +54,13 @@ export function useComments(sdk: EvoSDK, contractId: string, scope: Scope, order
   }, [sdk, contractId, scope, order, queryId]);
 
   const here = loaded?.queryId === queryId ? loaded : undefined;
+  const morePending = morePendingFor === queryId;
 
   const loadMore = useCallback(() => {
     if (!here?.cursor || morePending) return;
     const { cursor } = here;
     const asked = queryId;
-    setMorePending(true);
+    setMorePendingFor(asked);
     fetchCommentsByScope(sdk, contractId, scope, { order, startAfter: cursor })
       .then((page) => {
         setLoaded((prev) => {
@@ -78,7 +79,7 @@ export function useComments(sdk: EvoSDK, contractId: string, scope: Scope, order
       .catch((e: unknown) => {
         setLoaded((prev) => (prev && prev.queryId === asked ? { ...prev, error: errorMessage(e) } : prev));
       })
-      .finally(() => setMorePending(false));
+      .finally(() => setMorePendingFor((current) => (current === asked ? null : current)));
   }, [here, morePending, queryId, sdk, contractId, scope, order]);
 
   const reload = useCallback(() => setRound((n) => n + 1), []);

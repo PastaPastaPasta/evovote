@@ -234,6 +234,21 @@ describe('reader', () => {
     expect(result.hasMore).toBe(false);
   });
 
+  it('should read on past a page of only hidden documents', async () => {
+    const key = encodePollKey(dpnsKey);
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce(new Map(Array.from({ length: 2 }, (_, i) => [`h${i}`, commentDoc({ n: i, pollKey: 'elsewhere' })])))
+      .mockResolvedValueOnce(new Map([['v', commentDoc({ n: 5, pollKey: key })]]));
+    const result = await fetchComments(sdkWith({ documents: { query } }), CONTRACT, dpnsKey, { pageSize: 2 });
+    expect(query).toHaveBeenCalledTimes(2);
+    // The second page continues after the first page's last document.
+    expect(query.mock.calls[1][0].startAfter).toBe(base58Encode(new Uint8Array(32).fill(101)));
+    expect(result.comments).toHaveLength(1);
+    expect(result.hidden).toBe(2);
+    expect(result.hasMore).toBe(false);
+  });
+
   it('should reject a document with a non-string body', () => {
     const doc = commentDoc({ n: 1, pollKey: 'k' });
     expect(readComment({ id: doc.id, ownerId: doc.ownerId, createdAt: 1n, properties: { body: 5, pollKey: 'k' } }, 'k')).toBeUndefined();
@@ -244,6 +259,7 @@ describe('reader', () => {
 // ---- writer ------------------------------------------------------------------
 
 describe('writer', () => {
+  const identities = { contractNonce: vi.fn().mockResolvedValue(4n) };
   /** Read-back attempts without the real pauses. */
   const FAST = { attempts: 3, delayMs: 1 };
 
@@ -354,7 +370,7 @@ describe('writer', () => {
       ),
     };
     documents.get.mockImplementationOnce(async () => null); // first read-back: not visible yet
-    const outcome = await postComment(handleWith({ documents }), signer, CONTRACT, dpnsKey, { body: ' Backing alice ', supports: OTHER }, FAST);
+    const outcome = await postComment(handleWith({ documents, identities }), signer, CONTRACT, dpnsKey, { body: ' Backing alice ', supports: OTHER }, FAST);
     expect(documents.create).toHaveBeenCalledOnce();
     expect(outcome.status).toBe('confirmed');
     if (outcome.status === 'confirmed') expect(outcome.value).toMatchObject({ body: 'Backing alice', supports: OTHER, ownerId: AUTHOR });
@@ -369,7 +385,7 @@ describe('writer', () => {
       create: vi.fn().mockResolvedValue({ id: { toBase58: () => id32(150) }, free() {} }),
       get: vi.fn().mockImplementation(async () => commentDoc({ n: 1, pollKey: scope.pollKey, body: 'something else' })),
     };
-    const outcome = await postComment(handleWith({ documents }), signer, id32(2), dpnsKey, { body: 'mine' }, FAST);
+    const outcome = await postComment(handleWith({ documents, identities }), signer, id32(2), dpnsKey, { body: 'mine' }, FAST);
     // Never confirmed: the read-back does not match what was written.
     expect(outcome.status).toBe('pending');
     free();
@@ -383,7 +399,7 @@ describe('writer', () => {
       get: vi.fn().mockResolvedValue(commentDoc({ n: 1, pollKey: 'some other contest' })),
     };
     await expect(
-      postComment(handleWith({ documents }), signer, id32(2), dpnsKey, { body: 'hi', replyTo: id32(101) }),
+      postComment(handleWith({ documents, identities }), signer, id32(2), dpnsKey, { body: 'hi', replyTo: id32(101) }),
     ).rejects.toThrow('not in this discussion');
     expect(documents.create).not.toHaveBeenCalled();
     free();
@@ -397,9 +413,47 @@ describe('writer', () => {
       create: vi.fn().mockRejectedValue(refusal),
       get: vi.fn(),
     };
-    const outcome = await postComment(handleWith({ documents }), signer, id32(2), dpnsKey, { body: 'hi' });
+    const outcome = await postComment(handleWith({ documents, identities }), signer, id32(2), dpnsKey, { body: 'hi' });
     expect(outcome.status).toBe('refused');
     expect(documents.get).not.toHaveBeenCalled();
+    free();
+  });
+
+  it('should find an unanswered create by its exact id, derived from the next nonce', async () => {
+    const CONTRACT = id32(2);
+    const scope = await scopeOf(dpnsKey);
+    const { signer, free } = throwawaySigner(AUTHOR);
+    let sent: InstanceType<typeof mod.Document> | undefined;
+    let landedId = '';
+    const documents = {
+      create: vi.fn().mockImplementation(async (opts: { document: InstanceType<typeof mod.Document> }) => {
+        sent = opts.document;
+        landedId = base58Encode(mod.Document.generateId('comment', AUTHOR, CONTRACT, opts.document.entropy, 5n));
+        throw new Error('timed out waiting for the block'); // no consensus code: it may have landed
+      }),
+      get: vi.fn().mockImplementation(async (_c: string, _t: string, id: string) =>
+        id === landedId ? commentDoc({ n: 60, pollKey: scope.pollKey, scope: scope.scope, body: 'late' }) : null,
+      ),
+    };
+    const outcome = await postComment(handleWith({ documents, identities }), signer, CONTRACT, dpnsKey, { body: 'late' }, FAST);
+    expect(sent).toBeTruthy();
+    expect(documents.get).toHaveBeenCalledWith(CONTRACT, 'comment', landedId);
+    expect(outcome.status).toBe('confirmed');
+    free();
+  });
+
+  it('should not confirm an unanswered create from an earlier identical comment', async () => {
+    const scope = await scopeOf(dpnsKey);
+    const { signer, free } = throwawaySigner(AUTHOR);
+    const documents = {
+      create: vi.fn().mockRejectedValue(new Error('timed out')),
+      // Only an older comment with the same text exists; the derived id is absent.
+      get: vi.fn().mockResolvedValue(null),
+      query: vi.fn().mockResolvedValue(new Map([['x', commentDoc({ n: 1, pollKey: scope.pollKey, body: 'same words' })]])),
+    };
+    const outcome = await postComment(handleWith({ documents, identities }), signer, id32(2), dpnsKey, { body: 'same words' }, FAST);
+    expect(outcome.status).toBe('unknown');
+    expect(documents.query).not.toHaveBeenCalled();
     free();
   });
 

@@ -1,11 +1,11 @@
 import { estimateDocumentCreate, type FieldSize, type WriteCost } from '../charters/writes';
 import { settleWrite, type SettleOptions, type WriteOutcome } from '../identity/outcome';
 import type { DocumentSigner } from '../identity/session';
-import { base58Decode, isBase58Identifier, utf8Length } from '../model/bytes';
+import { base58Decode, base58Encode, isBase58Identifier, utf8Length } from '../model/bytes';
 import type { PollKey } from '../model/pollKey';
 import type { SdkHandle } from '../sdk/connection';
 import { freeQuietly } from '../sdk/free';
-import { COMMENT_TYPE, fetchComment, fetchLatestByAuthor, type Comment } from './reads';
+import { COMMENT_TYPE, fetchComment, type Comment } from './reads';
 import { scopeOf, type Scope } from './scope';
 
 /** The schema's bound on a comment (contracts/discussion.json). */
@@ -36,8 +36,6 @@ export function validateDraft(draft: CommentDraft): string[] {
   return problems;
 }
 
-const idBytes = (id: string): Uint8Array => base58Decode(id);
-
 /** The document's properties; throws on an invalid draft. */
 export function commentProperties(scope: Scope, draft: CommentDraft): Record<string, unknown> {
   const problems = validateDraft(draft);
@@ -46,8 +44,8 @@ export function commentProperties(scope: Scope, draft: CommentDraft): Record<str
     scope: scope.scope,
     pollKey: scope.pollKey,
     body: draft.body.trim(),
-    ...(draft.replyTo ? { replyTo: idBytes(draft.replyTo) } : {}),
-    ...(draft.supports ? { supports: idBytes(draft.supports) } : {}),
+    ...(draft.replyTo ? { replyTo: base58Decode(draft.replyTo) } : {}),
+    ...(draft.supports ? { supports: base58Decode(draft.supports) } : {}),
   };
 }
 
@@ -67,8 +65,8 @@ export function newCommentDocument(
   const object = {
     $formatVersion: '0',
     $id: new Uint8Array(32),
-    $ownerId: idBytes(ownerId),
-    $dataContractId: idBytes(contractId),
+    $ownerId: base58Decode(ownerId),
+    $dataContractId: base58Decode(contractId),
     $type: COMMENT_TYPE,
     $entropy: crypto.getRandomValues(new Uint8Array(32)),
     $createdAt: BigInt(now),
@@ -95,7 +93,7 @@ export function estimateComment(
 }
 
 /** Whether a comment read back is the one that was written. */
-export function sameComment(read: Comment, wrote: { ownerId: string; scope: Scope; draft: CommentDraft }): boolean {
+function sameComment(read: Comment, wrote: { ownerId: string; scope: Scope; draft: CommentDraft }): boolean {
   return (
     read.ownerId === wrote.ownerId &&
     read.pollKey === wrote.scope.pollKey &&
@@ -106,9 +104,35 @@ export function sameComment(read: Comment, wrote: { ownerId: string; scope: Scop
 }
 
 /**
+ * The id `documents.create` will give a comment: from protocol version 14 it
+ * commits to the identity's next contract nonce. Undefined when the nonce
+ * cannot be read (the create's own answer is then the only id).
+ */
+async function expectedCommentId(
+  handle: SdkHandle,
+  contractId: string,
+  ownerId: string,
+  doc: WasmDocument,
+): Promise<string | undefined> {
+  try {
+    const nonce = await handle.sdk.identities.contractNonce(ownerId, contractId);
+    const id = handle.mod.Document.generateId(COMMENT_TYPE, ownerId, contractId, doc.entropy, (nonce ?? 0n) + 1n);
+    return base58Encode(id);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Post a comment and confirm it by reading it back (design §4.5/§4.6). A
  * reply must answer a comment of the same contest. Returns the comment as
  * Platform has it.
+ *
+ * The read-back is of one exact id: the one `create` returned, or, when the
+ * create gave no answer (a timeout), the id derived from the nonce read
+ * before signing. It never scans the author's comments for a look-alike, so
+ * an earlier identical comment cannot be mistaken for this one; an unanswered
+ * create that cannot be found is reported as such, not as posted.
  */
 export async function postComment(
   handle: SdkHandle,
@@ -126,13 +150,9 @@ export async function postComment(
     const parent = await fetchComment(sdk, contractId, draft.replyTo, scope.pollKey);
     if (!parent) throw new Error('The comment you are replying to is not in this discussion.');
   }
-  // The author's latest comments before posting, so the fallback lookup can
-  // only match a new one, never an earlier identical comment.
-  const before = await fetchLatestByAuthor(sdk, contractId, signer.identityId)
-    .then((cs) => new Set(cs.map((c) => c.id)))
-    .catch(() => undefined);
   const doc = newCommentDocument(handle.mod, contractId, signer.identityId, properties);
   try {
+    const expectedId = await expectedCommentId(handle, contractId, signer.identityId, doc);
     return await settleWrite<string, Comment>(
       async () => {
         const created = await sdk.documents.create({ document: doc, identityKey: signer.identityKey, signer: signer.signer });
@@ -143,13 +163,10 @@ export async function postComment(
         }
       },
       async (id) => {
-        if (id) {
-          const read = await fetchComment(sdk, contractId, id, scope.pollKey);
-          return read && sameComment(read, wrote) ? read : undefined;
-        }
-        if (!before) return undefined;
-        const mine = await fetchLatestByAuthor(sdk, contractId, signer.identityId);
-        return mine.find((c) => !before.has(c.id) && sameComment(c, wrote));
+        const wanted = id ?? expectedId;
+        if (!wanted) return undefined;
+        const read = await fetchComment(sdk, contractId, wanted, scope.pollKey);
+        return read && sameComment(read, wrote) ? read : undefined;
       },
       settle,
     );

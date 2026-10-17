@@ -138,21 +138,10 @@ export async function estimateDocumentCreate(
   contractId: string,
   type: string,
   sizes: Record<string, FieldSize> = {},
-  opts: { contestFund?: bigint; contenders?: number } = {},
+  opts: { contestFund?: bigint; contenders?: number; contractName?: string } = {},
 ): Promise<WriteCost> {
   const contract = await fetchContract(handle.sdk, contractId);
-  if (!contract) throw new Error('The contract could not be read.');
-  return priceDocumentCreate(handle, contract, type, sizes, opts);
-}
-
-/** The pure part of `estimateDocumentCreate`, for a contract already in hand. */
-export function priceDocumentCreate(
-  handle: Pick<SdkHandle, 'mod' | 'sdk'>,
-  contract: Parameters<SdkModule['documentCreateCost']>[0],
-  type: string,
-  sizes: Record<string, FieldSize> = {},
-  opts: { contestFund?: bigint; contenders?: number } = {},
-): WriteCost {
+  if (!contract) throw new Error(`The ${opts.contractName ?? 'contract'} could not be read.`);
   const fields: Record<string, { present?: boolean; length?: number }> = {};
   for (const [name, size] of Object.entries(sizes)) {
     fields[name] = size === 'absent' ? { present: false } : { length: size };
@@ -174,7 +163,10 @@ export function estimateCreate(
   sizes: Record<string, FieldSize> = {},
   opts: { contestFund?: bigint; contenders?: number } = {},
 ): Promise<WriteCost> {
-  return estimateDocumentCreate(handle, CHARTERS_CONTRACT_ID, type, sizes, opts);
+  return estimateDocumentCreate(handle, CHARTERS_CONTRACT_ID, type, sizes, {
+    ...opts,
+    contractName: 'moderation charters contract',
+  });
 }
 
 // Text sizes are passed in UTF-8 bytes: never fewer than the characters, so

@@ -59,10 +59,16 @@ describe('comment rendering', () => {
   });
 
   it('should show who the comment supports', () => {
-    const html = render(comment({ supports: BACKED }), new Map([[BACKED, 'bob.dash']]));
+    const html = render(comment({ supports: BACKED }), new Map([[BACKED, 'bob.dash']]), [BACKED]);
     expect(html).toContain('supports');
     expect(html).toContain('bob.dash');
     expect(render(comment())).not.toContain('supports');
+  });
+
+  it('should not name a supported identity that is not a contender of this contest', () => {
+    const html = render(comment({ supports: BACKED }), new Map([[BACKED, 'bob.dash']]), [AUTHOR]);
+    expect(html).toContain('supports an identity that is not in this contest');
+    expect(html).not.toContain('bob.dash');
   });
 
   it('should show a reply as such, with the parent when it is on screen', () => {

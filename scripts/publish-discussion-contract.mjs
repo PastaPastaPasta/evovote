@@ -144,13 +144,17 @@ async function main() {
     signer.addKey(privateKey);
     console.log('\nLIVE: publishing...');
     published = await sdk.contracts.publish({ dataContract: contract, identityKey: publishKey, signer });
-    const onChain = await sdk.contracts.fetch(contractId);
-    if (!onChain) throw new Error('Published, but the contract could not be read back yet. Check the id before retrying.');
-    const readBack = onChain.toJSON(sdk.version()).documentSchemas;
+    // The id the SDK reports is the contract that exists; it equals the dry-run id
+    // unless the owner's nonce moved in between.
+    const actualId = published.id.toString();
+    if (actualId !== contractId) console.warn(`WARNING: published id ${actualId} differs from the dry-run id ${contractId}.`);
+    const onChain = await sdk.contracts.fetch(actualId);
+    if (!onChain) throw new Error(`Published as ${actualId}, but the contract could not be read back yet. Check that id before retrying.`);
+    const readBack = JSON.stringify(onChain.toJSON(sdk.version()).documentSchemas);
+    const expected = JSON.stringify(contract.toJSON(sdk.version()).documentSchemas);
     free(onChain);
-    const same = JSON.stringify(Object.keys(readBack).sort()) === JSON.stringify(Object.keys(schemas).sort());
-    console.log(`published and read back (${same ? 'same document types' : 'DOCUMENT TYPES DIFFER'}).`);
-    console.log(`\nSet the repository variable VITE_DISCUSSION_${args.network.toUpperCase()}_CONTRACT_ID=${contractId}`);
+    console.log(`published ${actualId}; schemas read back ${readBack === expected ? 'identical to what was sent' : 'DIFFER from what was sent: inspect the contract before using it'}.`);
+    console.log(`\nSet the repository variable VITE_DISCUSSION_${args.network.toUpperCase()}_CONTRACT_ID=${actualId}`);
   } finally {
     free(published); free(signer); free(contract); free(privateKey);
     keys.forEach(free); free(identity);
