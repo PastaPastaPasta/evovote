@@ -3,6 +3,7 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import { getActivePolls } from '../../discovery/activePolls';
 import type { Failure } from '../../discovery/types';
 import { fetchContest, fetchVoters } from '../../discovery/voteState';
+import { charterTarget, moderatedHref } from '../../charters/pollKey';
 import { dpnsDisplayLabel, dpnsLabel } from '../../kinds/dpns';
 import { kindFor } from '../../kinds/registry';
 import type { ContenderView, ContestKind } from '../../kinds/types';
@@ -17,6 +18,7 @@ import { displayIndexValue } from '../../model/indexValue';
 import { decodePollKey, type PollKey } from '../../model/pollKey';
 import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
+import { CharterNotices } from '../charters/CharterNotices';
 import { ABSTAIN_COLOR, BallotBar, contenderColor, LOCK_COLOR } from '../components/BallotBar';
 import { ContestedName } from '../components/ContestedName';
 import { KindTitle } from '../components/KindTitle';
@@ -133,6 +135,11 @@ function ContenderRow({
             ))}
           </dl>
         )}
+        {view.link && (
+          <a className="link-button" href={view.link.href}>
+            {view.link.label} →
+          </a>
+        )}
         <Voters sdk={sdk} pollKey={contest.key} contenderId={contender.identityId} />
       </div>
       <div className="contender-tally">
@@ -185,6 +192,7 @@ function StatusChip({ contest, now }: { contest: Contest; now: number }) {
 
 function ContestHeader({ pollKey, contest }: { pollKey: PollKey; contest?: Contest }) {
   const label = dpnsLabel(pollKey);
+  const target = charterTarget(pollKey);
   const summary = contest ?? { key: pollKey, keyString: '' };
   const shown = label !== undefined ? dpnsDisplayLabel(summary) : undefined;
   return (
@@ -197,6 +205,11 @@ function ContestHeader({ pollKey, contest }: { pollKey: PollKey; contest?: Conte
       </h1>
       {label !== undefined && shown && shown.toLowerCase() !== label.toLowerCase() && (
         <p className="mono-label">registers as {label}.dash</p>
+      )}
+      {target !== undefined && (
+        <p>
+          <a href={moderatedHref(target)}>Election hub for this contract →</a>
+        </p>
       )}
       {label === undefined && (
         <p className="mono-label poll-meta">
@@ -325,6 +338,7 @@ export function ContestPage({
         <span className="mono-label">{plural(contest.tally.total, 'vote')} cast</span>
       </div>
       <ReadIssues failures={readIssues} caps={[]} />
+      {kind.id === 'charter' && <CharterNotices />}
 
       <BallotBar state={contest.tally} showLock={choices.includes('lock')} />
 

@@ -52,6 +52,7 @@ describe('parseRoute', () => {
   });
 
   it('should parse moderated contract routes', () => {
+    expect(parseRoute('#/m')).toEqual({ page: 'moderatedDirectory' });
     expect(parseRoute(`#/m/${CONTRACT}`)).toEqual({ page: 'moderated', target: CONTRACT });
     expect(parseRoute(`#/m/${CONTRACT}/charter/abc`)).toEqual({
       page: 'moderated',

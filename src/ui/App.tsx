@@ -3,11 +3,16 @@ import type { Contest, VoteChoice } from '../model/contest';
 import { loadSdk, type SdkHandle } from '../sdk/connection';
 import { errorMessage } from '../sdk/errors';
 import { currentNetwork, switchNetwork, type Network } from '../sdk/network';
+import { useIdentitySession } from '../identity/session';
 import { initKeyring, useMasternodes } from '../voting/keyring';
 import { KeyringPanel, MnDrawer } from './components/KeyringPanel';
 import { VoteModal } from './components/VoteModal';
 import { AboutPage } from './pages/AboutPage';
 import { ContestPage } from './pages/ContestPage';
+import { ElectionHubPage } from './pages/ElectionHubPage';
+import { IdentityPage } from './pages/IdentityPage';
+import { ModeratedDirectoryPage } from './pages/ModeratedDirectoryPage';
+import { ProposalPage } from './pages/ProposalPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { useRoute, type Route } from './router';
@@ -88,11 +93,13 @@ function Page({
       );
     case 'about':
       return <AboutPage />;
+    case 'moderatedDirectory':
+      return <ModeratedDirectoryPage sdk={handle.sdk} network={network} />;
     case 'moderated':
-      return (
-        <PlaceholderPage title={`Moderator election · ${shortId(route.target, 6)}`}>
-          <p>The election hub for moderated contracts arrives in a later release.</p>
-        </PlaceholderPage>
+      return route.charterId ? (
+        <ProposalPage key={route.charterId} handle={handle} target={route.target} charterId={route.charterId} />
+      ) : (
+        <ElectionHubPage key={route.target} handle={handle} target={route.target} />
       );
     case 'contract':
       return (
@@ -101,11 +108,7 @@ function Page({
         </PlaceholderPage>
       );
     case 'me':
-      return (
-        <PlaceholderPage title="My identity">
-          <p>Identity sign-in for candidates arrives in a later release.</p>
-        </PlaceholderPage>
-      );
+      return <IdentityPage network={network} />;
     case 'notFound':
       return (
         <PlaceholderPage title="Not found">
@@ -126,6 +129,8 @@ export function App() {
   const [voteRound, setVoteRound] = useState(0);
   const route = useRoute();
   const masternodes = useMasternodes();
+  const session = useIdentitySession();
+  const identityLabel = session ? (session.names[0] ?? shortId(session.identityId, 4)) : 'Sign in';
   const { pref: themePref, cycle: cycleTheme } = useTheme();
 
   useEffect(() => {
@@ -154,6 +159,8 @@ export function App() {
           <span className="brand-tag">contested resources on Dash Platform</span>
         </a>
         <nav className="topbar-nav">
+          <a href="#/m">Moderators</a>
+          <a href="#/me">{identityLabel}</a>
           <a href="#/about">About</a>
           <button
             className="theme-toggle"
