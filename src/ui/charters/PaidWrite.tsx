@@ -20,6 +20,14 @@ export function OutcomeNote<T>({ outcome, done }: { outcome: WriteOutcome<T>; do
       </div>
     );
   }
+  if (outcome.status === 'pending') {
+    return (
+      <p className="page-note warn">
+        Platform accepted it, but the node read back does not show it yet. Reload this page in a minute; do not
+        file it again.
+      </p>
+    );
+  }
   return (
     <div className="page-note error">
       <p>

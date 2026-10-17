@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { knownContractById } from '../../config/knownContracts';
 import { durationText, INTERIM_TEXT } from '../../charters/declaration';
@@ -6,6 +6,7 @@ import {
   addContract,
   collectDirectoryIds,
   fetchDirectoryEntry,
+  mergeDirectory,
   removeContract,
   useAddedContracts,
   type DirectoryEntryState,
@@ -42,12 +43,16 @@ function EntryStatus({ state }: { state: DirectoryEntryState | undefined }) {
 /** `#/m`: every contract with a moderator election this site knows of. */
 export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network: Network }) {
   const added = useAddedContracts(network);
-  const ids = useAsync(() => collectDirectoryIds(sdk, network), [sdk, network, added]);
+  // The sweep does not depend on the user's list, so adding an id does not re-run it.
+  const ids = useAsync(() => collectDirectoryIds(sdk, network), [sdk, network]);
   const [states, setStates] = useState<Record<string, DirectoryEntryState>>({});
   const [input, setInput] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
 
-  const entries = ids.status === 'ok' ? ids.value.entries : [];
+  const entries = useMemo(
+    () => (ids.status === 'ok' ? mergeDirectory(ids.value.known, ids.value.contested, added) : []),
+    [ids, added],
+  );
   useEffect(() => {
     let cancelled = false;
     void forEachConcurrent(entries, 4, async ({ id }) => {

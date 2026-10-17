@@ -169,7 +169,7 @@ export function ElectionHubPage({ handle, target }: { handle: SdkHandle; target:
         </section>
       )}
 
-      {elected && !s.team && (
+      {elected && !s.team && s.timing.phase !== 'decided' && (
         <section className="charter-card">
           <h2 className="section-title">Propose a moderation team</h2>
           {!session ? (

@@ -4,7 +4,7 @@ import { CHARTERS_CONTRACT_ID, splitText, type RewardSplit } from '../../charter
 import { proposalHref } from '../../charters/pollKey';
 import { fetchReasonsByOwner } from '../../charters/reads';
 import { shareNote, validateCharter, validateReason } from '../../charters/validate';
-import { estimateCreate, fileCharter, fileReason } from '../../charters/writes';
+import { estimateCharter, estimateReason, fileCharter, fileReason } from '../../charters/writes';
 import { existingBoundKey } from '../../identity/update';
 import { documentSigningProblem, heldPrivateKeyFor, withDocumentSigner, type IdentitySession } from '../../identity/session';
 import type { SdkHandle } from '../../sdk/connection';
@@ -42,7 +42,7 @@ function NewReason({
           ['label', label.trim()],
           ['description', description.trim() || '(none)'],
         ]}
-        estimate={() => estimateCreate(handle, 'reason', { label: label.trim().length, description: description.trim().length })}
+        estimate={() => estimateReason(handle, input)}
         blockers={problems}
         confirmLabel="Sign and file the reason"
         doneText={`Reason ${code} is filed.`}
@@ -121,7 +121,9 @@ export function CharterWizard({
     rewardSplit: split,
   };
   const problems = validateCharter(input);
-  const ownReasons = reasons.status === 'ok' ? reasons.value : [];
+  const ownReasons = reasons.status === 'ok' ? reasons.value.reasons : [];
+  // A code must be unique per identity: filing needs the full list of the ones taken.
+  const codesKnown = reasons.status === 'ok' && !reasons.value.capped;
   const toggle = (id: string) =>
     setChosen((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
@@ -162,9 +164,13 @@ export function CharterWizard({
           </li>
         ))}
       </ul>
+      {reasons.status === 'ok' && reasons.value.capped && (
+        <p className="mono-label">Showing your first {ownReasons.length} reasons; filing another is turned off here.</p>
+      )}
       <details>
         <summary>File a new reason</summary>
-        <NewReason
+        {!codesKnown && <p className="mono-label">Your existing reasons must be read first, so a code is not filed twice.</p>}
+        {codesKnown && <NewReason
           handle={handle}
           session={session}
           existingCodes={ownReasons.map((r) => r.code)}
@@ -172,7 +178,7 @@ export function CharterWizard({
             setChosen((prev) => [...prev, id]);
             reasons.reload();
           }}
-        />
+        />}
       </details>
 
       <h3>2. Your decryption key</h3>
@@ -230,7 +236,7 @@ export function CharterWizard({
             ['reward split', splitText(split)],
             ['description', `${description.trim().slice(0, 160)}${description.trim().length > 160 ? '…' : ''}`],
           ]}
-          estimate={() => estimateCreate(handle, 'submittedCharter', { description: description.trim().length, reasons: chosen.length })}
+          estimate={() => estimateCharter(handle, input)}
           blockers={[...problems, ...(keyReady ? [] : ['Add or load your decryption key first (step 2).'])]}
           confirmLabel="Sign and file the charter"
           doneText="Your charter is filed."

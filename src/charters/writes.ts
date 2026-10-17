@@ -10,6 +10,7 @@ import { freeQuietly } from '../sdk/free';
 import { settleWrite, type WriteOutcome } from '../identity/outcome';
 import type { DocumentSigner } from '../identity/session';
 import { electedOf } from './declaration';
+import { encryptedSize } from './boundKeys';
 import { CHARTERS_CONTRACT_ID, idFromValue, type RewardSplit } from './documents';
 import { canApply, type ApplyCheck } from './phase';
 import {
@@ -18,6 +19,7 @@ import {
   fetchJoinRequests,
   fetchProposal,
   fetchProposalsByLeader,
+  fetchTeam,
   forEachJoinRequest,
   type ElectionStatus,
 } from './reads';
@@ -123,6 +125,9 @@ export interface WriteCost {
   total: bigint;
 }
 
+/** A field's size for the estimator: its length, or 'absent' for an optional field left out. */
+export type FieldSize = number | 'absent';
+
 /**
  * Price a create with Drive's own estimator (`documentCreateCost`, no
  * network): the document's variable sizes are passed in, so the estimate is
@@ -131,16 +136,48 @@ export interface WriteCost {
 export async function estimateCreate(
   handle: SdkHandle,
   type: CharterDocType,
-  sizes: Record<string, number> = {},
-  contestFund = 0n,
+  sizes: Record<string, FieldSize> = {},
+  opts: { contestFund?: bigint; contenders?: number } = {},
 ): Promise<WriteCost> {
   const contract = await fetchContract(handle.sdk, CHARTERS_CONTRACT_ID);
   if (!contract) throw new Error('The moderation charters contract could not be read.');
   const fields: Record<string, { present?: boolean; length?: number }> = {};
-  for (const [name, length] of Object.entries(sizes)) fields[name] = { length };
-  const cost = handle.mod.documentCreateCost(contract, type, { fields }, handle.sdk.version());
+  for (const [name, size] of Object.entries(sizes)) {
+    fields[name] = size === 'absent' ? { present: false } : { length: size };
+  }
+  const cost = handle.mod.documentCreateCost(
+    contract,
+    type,
+    { fields, ...(opts.contenders !== undefined ? { contenders: opts.contenders } : {}) },
+    handle.sdk.version(),
+  );
   const fees = BigInt(Math.ceil(Math.max(cost.totalCredits.newValues, cost.totalCredits.knownValues)));
+  const contestFund = opts.contestFund ?? 0n;
   return { fees, contestFund, total: fees + contestFund };
+}
+
+// Text sizes are passed in UTF-8 bytes: never fewer than the characters, so
+// the estimate errs high.
+const utf8Bytes = (s: string) => new TextEncoder().encode(s).length;
+
+export function estimateReason(handle: SdkHandle, input: ReasonInput): Promise<WriteCost> {
+  const description = input.description?.trim() ?? '';
+  return estimateCreate(handle, 'reason', {
+    label: utf8Bytes(input.label.trim()),
+    description: description ? utf8Bytes(description) : 'absent',
+  });
+}
+
+export function estimateCharter(handle: SdkHandle, input: CharterInput): Promise<WriteCost> {
+  return estimateCreate(handle, 'submittedCharter', {
+    description: utf8Bytes(input.description.trim()),
+    reasons: input.reasonIds.length,
+    ...(input.moderatorsShare === undefined ? { moderatorsShare: 'absent' as const } : {}),
+  });
+}
+
+export function estimateJoinRequest(handle: SdkHandle, message: string): Promise<WriteCost> {
+  return estimateCreate(handle, 'joinRequest', { encryptedMessage: encryptedSize(utf8Bytes(message)) });
 }
 
 /** The identity's balance, read fresh before a confirm step. */
@@ -236,10 +273,18 @@ export async function fileCharter(
     submittedCharterProperties(targetContractId, input),
   );
   try {
+    // Snapshot the leader's proposals so the fallback lookup can only match
+    // a new one, never an older proposal with the same text.
+    const before = await fetchProposalsByLeader(handle.sdk, signer.identityId)
+      .then((ps) => new Set(ps.map((p) => p.id)))
+      .catch(() => undefined);
     const description = input.description.trim();
     return await createAndConfirm(handle, signer, doc, 'submittedCharter', async () => {
+      if (!before) return undefined;
       const mine = await fetchProposalsByLeader(handle.sdk, signer.identityId);
-      return mine.find((p) => p.targetContractId === targetContractId && p.description === description)?.id;
+      return mine.find(
+        (p) => !before.has(p.id) && p.targetContractId === targetContractId && p.description === description,
+      )?.id;
     });
   } finally {
     freeQuietly(doc);
@@ -318,9 +363,12 @@ export async function decryptJoinRequests(
       };
       requests.push(entry);
       const senderKeyId = Number(json.senderKeyId);
-      const sender = await sdk.identities.fetch(memberId);
-      const senderKey = sender?.getPublicKeyById(senderKeyId);
+      let sender: Awaited<ReturnType<typeof sdk.identities.fetch>>;
+      let senderKey: ReturnType<NonNullable<typeof sender>['getPublicKeyById']>;
+      // One bad request must not stop the others from being read.
       try {
+        sender = Number.isInteger(senderKeyId) && memberId ? await sdk.identities.fetch(memberId) : undefined;
+        senderKey = sender?.getPublicKeyById(senderKeyId);
         if (!senderKey) {
           entry.error = "The member's encryption key could not be read.";
           return;
@@ -414,7 +462,12 @@ export async function preflightApply(
   } finally {
     freeQuietly(application);
   }
-  const cost = await estimateCreate(handle, 'electedCharter', { members: args.members.length }, contestFund);
+  const cost = await estimateCreate(
+    handle,
+    'electedCharter',
+    { members: args.members.length },
+    { contestFund, contenders: status.contest?.tally.contenders.length ?? 0 },
+  );
   if (balance < cost.total) {
     blockers.push(`The balance (${dashText(balance)}) does not cover the fund and fees (${dashText(cost.total)}).`);
   }
@@ -429,11 +482,6 @@ export async function preflightApply(
     joinWindowSeconds: elected?.joinWindowSeconds,
     voteWindowSeconds: elected?.voteWindowSeconds,
   };
-}
-
-/** Re-check a preflight's timing at the moment of signing. */
-export function canApplyNow(pre: ApplyPreflight, now = Date.now()): ApplyCheck {
-  return canApply(pre.status.timing, now);
 }
 
 /**
@@ -480,9 +528,11 @@ export async function applyForSeat(
     async () => {
       invalidateContest(keyString);
       const contest = await fetchCharterContest(sdk, targetContractId, true);
-      return contest?.tally.contenders.some((c) => c.identityId === signer.identityId)
-        ? signer.identityId
-        : undefined;
+      if (contest?.tally.contenders.some((c) => c.identityId === signer.identityId)) return signer.identityId;
+      // With a 0-second join window (allowed off mainnet) a lone applicant
+      // is seated at once and may already have left the contender list.
+      const team = await fetchTeam(sdk, targetContractId);
+      return team?.leaderId === signer.identityId ? signer.identityId : undefined;
     },
     { attempts: 6, delayMs: 3000 },
   );

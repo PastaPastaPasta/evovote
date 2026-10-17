@@ -6,7 +6,6 @@ import { MAX_ELECTED_MEMBERS } from '../../charters/validate';
 import {
   applyForSeat,
   buildApplication,
-  canApplyNow,
   decryptJoinRequests,
   documentSummary,
   preflightApply,
@@ -29,7 +28,12 @@ const APPLY_ACK =
 
 /** What the application document says, read back from the built document. */
 function applicationRows(handle: SdkHandle, args: Parameters<typeof buildApplication>[1]): Array<[string, string]> {
-  const doc = buildApplication(handle.mod, args);
+  let doc: ReturnType<typeof buildApplication>;
+  try {
+    doc = buildApplication(handle.mod, args);
+  } catch (e) {
+    return [['application', `could not be built: ${errorMessage(e)}`]];
+  }
   try {
     const s = documentSummary(doc);
     const members = Array.isArray(s.members) ? (s.members as string[]) : [];
@@ -202,12 +206,20 @@ export function LeaderDashboard({
           doneText="You are a contender for the seat. Masternodes can now vote; share the contest page."
           run={() =>
             withDocumentSigner(handle, CHARTERS_CONTRACT_ID, async (signer) => {
-              // The join window may have closed since the check.
-              const still = canApplyNow(preflight);
-              if (!still.ok) throw new Error(still.reason);
+              // The election may have moved since the check (a rival applied
+              // or won, the window closed): read it again right before signing.
+              const fresh = await preflightApply(handle, args);
+              if (fresh.blockers.length > 0) {
+                setPreflight(fresh);
+                throw new Error(`Not applied: ${fresh.blockers.join(' ')}`);
+              }
+              if (fresh.cost.total > preflight.cost.total) {
+                setPreflight(fresh);
+                throw new Error('The price changed since the check. Review the new total and confirm again.');
+              }
               const application = buildApplication(handle.mod, args);
               try {
-                return await applyForSeat(handle, signer, application, args.targetContractId, preflight.cost.contestFund);
+                return await applyForSeat(handle, signer, application, args.targetContractId, fresh.cost.contestFund);
               } finally {
                 freeQuietly(application);
               }

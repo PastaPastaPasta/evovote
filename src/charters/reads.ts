@@ -37,20 +37,50 @@ interface DocLike {
   free?: () => void;
 }
 
-/** Map a page of documents (freeing them) through `map`. */
-function mapDocs<T>(sdk: EvoSDK, page: Map<string, unknown>, map: (json: Record<string, unknown>, id: string) => T): T[] {
+/**
+ * Map a page of documents through `map`, freeing every one of them even
+ * when a mapping throws (the first error is rethrown afterwards).
+ */
+function mapDocs<T>(
+  sdk: EvoSDK,
+  docs: Iterable<[string, unknown]>,
+  map: (json: Record<string, unknown>, id: string) => T,
+): T[] {
   const version = sdk.version();
   const out: T[] = [];
-  for (const [id, raw] of page) {
+  let failure: unknown;
+  for (const [id, raw] of docs) {
     const doc = raw as DocLike | undefined;
     if (!doc) continue;
     try {
-      out.push(map(doc.toJSON(version) as Record<string, unknown>, id));
+      if (failure === undefined) out.push(map(doc.toJSON(version) as Record<string, unknown>, id));
+    } catch (e) {
+      failure = e;
     } finally {
       freeQuietly(doc);
     }
   }
+  if (failure !== undefined) throw failure;
   return out;
+}
+
+/** Query documents of the charters contract page by page, up to `max`. */
+async function queryAll<T>(
+  sdk: EvoSDK,
+  query: Omit<Parameters<EvoSDK['documents']['query']>[0], 'limit' | 'startAfter'>,
+  map: (json: Record<string, unknown>, id: string) => T,
+  max: number,
+): Promise<{ items: T[]; capped: boolean }> {
+  const items: T[] = [];
+  let startAfter: string | undefined;
+  while (items.length < max) {
+    const page = await sdk.documents.query({ ...query, limit: CHARTER_PAGE, ...(startAfter ? { startAfter } : {}) });
+    items.push(...mapDocs(sdk, page, map));
+    if (page.size < CHARTER_PAGE) return { items, capped: false };
+    startAfter = [...page.keys()].pop();
+    if (!startAfter) break;
+  }
+  return { items: items.slice(0, max), capped: true };
 }
 
 /** A contract's moderation, or undefined when the contract does not exist. Throws when the read fails. */
@@ -139,48 +169,48 @@ export async function fetchReasons(
   const docs = await Promise.all(
     reasonIds.map((id) => sdk.documents.get(CHARTERS_CONTRACT_ID, 'reason', id)),
   );
-  const reasons: CharterReason[] = [];
-  const missing: string[] = [];
-  const version = sdk.version();
-  docs.forEach((doc, i) => {
-    if (!doc) {
-      missing.push(reasonIds[i]);
-      return;
-    }
-    try {
-      reasons.push(toReason(doc.toJSON(version) as Record<string, unknown>, reasonIds[i]));
-    } finally {
-      freeQuietly(doc);
-    }
-  });
+  const missing = reasonIds.filter((_, i) => !docs[i]);
+  const reasons = mapDocs(
+    sdk,
+    docs.map((doc, i): [string, unknown] => [reasonIds[i], doc]),
+    (json, id) => toReason(json, id),
+  );
   return { reasons, missing };
 }
 
-/** The reasons an identity has filed (for reuse), by code. Throws when the read fails. */
-export async function fetchReasonsByOwner(sdk: EvoSDK, ownerId: string): Promise<CharterReason[]> {
-  const page = await sdk.documents.query({
-    dataContractId: CHARTERS_CONTRACT_ID,
-    documentTypeName: 'reason',
-    where: [['$ownerId', '==', ownerId]],
-    orderBy: [
-      ['$ownerId', 'asc'],
-      ['code', 'asc'],
-    ],
-    limit: 100,
-  });
-  return mapDocs(sdk, page, (json, id) => toReason(json, id));
+/** The reasons an identity has filed (for reuse), by code, up to 500. Throws when the read fails. */
+export async function fetchReasonsByOwner(sdk: EvoSDK, ownerId: string): Promise<{ reasons: CharterReason[]; capped: boolean }> {
+  const { items, capped } = await queryAll(
+    sdk,
+    {
+      dataContractId: CHARTERS_CONTRACT_ID,
+      documentTypeName: 'reason',
+      where: [['$ownerId', '==', ownerId]],
+      orderBy: [
+        ['$ownerId', 'asc'],
+        ['code', 'asc'],
+      ],
+    },
+    (json, id) => toReason(json, id),
+    500,
+  );
+  return { reasons: items, capped };
 }
 
-/** The proposals an identity leads (newest last). Throws when the read fails. */
+/** The proposals an identity leads, up to 500. Throws when the read fails. */
 export async function fetchProposalsByLeader(sdk: EvoSDK, leaderId: string): Promise<CharterProposal[]> {
-  const page = await sdk.documents.query({
-    dataContractId: CHARTERS_CONTRACT_ID,
-    documentTypeName: 'submittedCharter',
-    where: [['$ownerId', '==', leaderId]],
-    orderBy: [['$ownerId', 'asc']],
-    limit: 100,
-  });
-  return mapDocs(sdk, page, (json, id) => toProposal(json, id));
+  const { items } = await queryAll(
+    sdk,
+    {
+      dataContractId: CHARTERS_CONTRACT_ID,
+      documentTypeName: 'submittedCharter',
+      where: [['$ownerId', '==', leaderId]],
+      orderBy: [['$ownerId', 'asc']],
+    },
+    (json, id) => toProposal(json, id),
+    500,
+  );
+  return items;
 }
 
 /**
@@ -264,10 +294,26 @@ export async function fetchCharterContest(
 export async function fetchCharterContestEnd(
   sdk: EvoSDK,
   targetContractId: string,
+  force = false,
 ): Promise<{ endsAtMs?: number; failures: Failure[] }> {
   const keyString = encodePollKey(charterPollKey(targetContractId));
-  const active = await getActivePolls(sdk);
-  return { endsAtMs: active.polls.find((p) => p.keyString === keyString)?.endsAtMs, failures: active.failures };
+  // Forced with the contest: an end cached from before a second applicant
+  // joined, paired with the fresh contender count, would misplace the join close.
+  const active = await getActivePolls(sdk, force);
+  const endsAtMs = active.polls.find((p) => p.keyString === keyString)?.endsAtMs;
+  const failures = [...active.failures];
+  if (endsAtMs === undefined && active.caps.length > 0) {
+    failures.push({ source: 'active polls', message: 'the end-date walk stopped at its cap before finding this contest' });
+  }
+  return { endsAtMs, failures };
+}
+
+/** The earliest application's time, from the contenders' documents. */
+export function firstAppliedAt(contest: Contest | undefined): number | undefined {
+  const times = (contest?.tally.contenders ?? [])
+    .map((c) => Number(c.document?.$createdAt))
+    .filter((t) => Number.isFinite(t) && t > 0);
+  return times.length > 0 ? Math.min(...times) : undefined;
 }
 
 export interface ElectionStatus {
@@ -302,7 +348,7 @@ export async function fetchElectionStatus(
     attempt('the seated team', fetchTeam(sdk, targetContractId)),
     attempt('the contest for the seat', fetchCharterContest(sdk, targetContractId, opts.force)),
     attempt('the filed proposals', fetchProposals(sdk, targetContractId)),
-    attempt('when voting ends', fetchCharterContestEnd(sdk, targetContractId)),
+    attempt('when voting ends', fetchCharterContestEnd(sdk, targetContractId, opts.force)),
   ]);
   if (end !== 'failed') failures.push(...end.failures.map((f) => ({ ...f, source: 'when voting ends' })));
 
@@ -315,6 +361,7 @@ export async function fetchElectionStatus(
           ? 'failed'
           : contest && { contenders: contest.tally.contenders.length, hasWinner: !!contest.winner },
       endsAtMs: end === 'failed' ? undefined : end.endsAtMs,
+      firstAppliedAtMs: contest === 'failed' ? undefined : firstAppliedAt(contest),
       proposals: proposals === 'failed' ? 'failed' : proposals.proposals.length,
     },
     opts.now,

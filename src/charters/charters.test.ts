@@ -259,11 +259,27 @@ describe('election phase', () => {
     expect(late.ok && late.warning).toMatch(/40111/);
   });
 
-  it('should warn, not refuse, when an open contest\'s end is unknown', () => {
+  it('should refuse when an open contest\'s timing is unknown', () => {
     const t = electionTiming({ ...base, contest: { contenders: 1, hasWinner: false } }, NOW);
     expect(t.phase).toBe('voting');
-    const check = canApply(t, NOW);
-    expect(check.ok && check.warning).toMatch(/unknown/);
+    expect(canApply(t, NOW)).toMatchObject({ ok: false, reason: expect.stringMatching(/unknown/) });
+  });
+
+  it('should time the contest from the first application when the end-date index lacks it', () => {
+    const lone = electionTiming({ ...base, contest: { contenders: 1, hasWinner: false }, firstAppliedAtMs: NOW - 3_600_000 }, NOW);
+    expect(lone).toMatchObject({ phase: 'join-window', joinClosesAtMs: NOW - 3_600_000 + 86_400_000 });
+    const two = electionTiming({ ...base, contest: { contenders: 2, hasWinner: false }, firstAppliedAtMs: NOW - 90_000_000 }, NOW);
+    expect(two).toMatchObject({ phase: 'voting', endsAtMs: NOW - 90_000_000 + 2 * 86_400_000 });
+    // The end-date index wins when it has the poll.
+    expect(
+      electionTiming({ ...base, contest: { contenders: 1, hasWinner: false }, firstAppliedAtMs: 0, endsAtMs: NOW + 1 }, NOW).endsAtMs,
+    ).toBe(NOW + 1);
+  });
+
+  it('should warn right after the election opens (block time vs this clock)', () => {
+    const check = canApply({ phase: 'no-election', opensAtMs: NOW - 60_000 }, NOW);
+    expect(check.ok && check.warning).toMatch(/40135/);
+    expect(canApply({ phase: 'no-election', opensAtMs: NOW - LATE_APPLY_MARGIN_MS - 1 }, NOW)).toEqual({ ok: true });
   });
 });
 

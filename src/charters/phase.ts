@@ -39,6 +39,11 @@ export interface PhaseInput {
   contest: Read<{ contenders: number; hasWinner: boolean } | undefined>;
   /** The contest's end from the end-date index, when it is there. */
   endsAtMs?: number;
+  /**
+   * When the first application was made (the earliest contender document's
+   * `$createdAt`), used when the end-date index does not have the poll.
+   */
+  firstAppliedAtMs?: number;
   proposals: Read<number>;
 }
 
@@ -80,7 +85,7 @@ export function joinClosesAt(
 
 /** Pure: the phase and its times. A phase is only claimed when its reads succeeded. */
 export function electionTiming(input: PhaseInput, now = Date.now()): ElectionTiming {
-  const { moderation, seated, contest, proposals, endsAtMs } = input;
+  const { moderation, seated, contest, proposals, firstAppliedAtMs } = input;
   if (moderation === 'failed') return { phase: 'unknown' };
   const elected = moderation ? electedOf(moderation) : undefined;
   if (!moderation || !elected) return { phase: 'not-elected' };
@@ -92,6 +97,14 @@ export function electionTiming(input: PhaseInput, now = Date.now()): ElectionTim
   if (contest === 'failed') return { phase: 'unknown', opensAtMs };
   if (contest && contest.hasWinner) return { phase: 'decided', opensAtMs };
   if (contest && contest.contenders > 0) {
+    // The join window runs from the first application; a second applicant
+    // adds the vote window to the end.
+    const endsAtMs =
+      input.endsAtMs ??
+      (firstAppliedAtMs === undefined
+        ? undefined
+        : firstAppliedAtMs +
+          (elected.joinWindowSeconds + (contest.contenders >= 2 ? elected.voteWindowSeconds : 0)) * 1000);
     if (endsAtMs === undefined) return { phase: 'voting', opensAtMs };
     const close = joinClosesAt(endsAtMs, contest.contenders, elected.voteWindowSeconds);
     const phase: ElectionPhase =
@@ -113,7 +126,11 @@ export type ApplyCheck =
   | { ok: true; warning?: string }
   | { ok: false; reason: string; code?: number };
 
-/** Applications closer than this to the join window's close get a warning. */
+/**
+ * Applications closer than this to the join window's close, or to the
+ * election's opening, get a warning: Platform judges both by block time,
+ * which can differ from this computer's clock.
+ */
 export const LATE_APPLY_MARGIN_MS = 10 * 60_000;
 
 export function canApply(timing: ElectionTiming, now = Date.now()): ApplyCheck {
@@ -147,11 +164,11 @@ export function canApply(timing: ElectionTiming, now = Date.now()): ApplyCheck {
       };
     case 'voting':
     case 'closing':
-      if (timing.joinClosesAtMs === undefined && timing.phase === 'voting') {
+      if (timing.joinClosesAtMs === undefined) {
         return {
-          ok: true,
-          warning:
-            'A contest is open but its end time could not be read, so it is unknown whether the join window is still open. A late application is refused (40111) and still pays its fees.',
+          ok: false,
+          reason:
+            'A contest is open but its timing could not be read, so it is unknown whether the join window is still open. A late application is refused (40111) and still pays its fees. Reload and try again.',
         };
       }
       return {
@@ -170,6 +187,13 @@ export function canApply(timing: ElectionTiming, now = Date.now()): ApplyCheck {
     }
     case 'no-election':
     case 'proposals':
+      if (timing.opensAtMs !== undefined && now < timing.opensAtMs + LATE_APPLY_MARGIN_MS) {
+        return {
+          ok: true,
+          warning:
+            'The election opened only minutes ago. Platform checks the opening against block time; if that is behind this computer\'s clock, the application is refused (40135) and still pays its fees.',
+        };
+      }
       return { ok: true };
   }
 }

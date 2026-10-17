@@ -231,6 +231,10 @@ export async function withDocumentSigner<T>(
     const identityKey = identity.getPublicKeyById(s.loginKey.keyId);
     if (!identityKey) throw new Error(`The identity no longer has key #${s.loginKey.keyId}.`);
     owned.push(identityKey);
+    // The key as it is now, not as it was at sign-in (it may have been disabled since).
+    if (!canSignDocumentsFor(keyInfoFrom(identityKey), contractId)) {
+      throw new Error(`Key #${s.loginKey.keyId} can no longer sign documents here. Sign in again.`);
+    }
     const privateKey = handle.mod.PrivateKey.fromWIF(loginWif);
     owned.push(privateKey);
     if (identityKey.getPublicKeyHash().toLowerCase() !== privateKey.getPublicKeyHash().toLowerCase()) {

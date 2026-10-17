@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { encryptedSize, JOIN_ENCRYPTION } from '../../charters/boundKeys';
+import { JOIN_ENCRYPTION } from '../../charters/boundKeys';
 import { CHARTERS_CONTRACT_ID, type CharterProposal, type JoinRequestMeta } from '../../charters/documents';
 import { leaderCanReceive } from '../../charters/reads';
 import { validateJoinMessage } from '../../charters/validate';
-import { estimateCreate, fileJoinRequest } from '../../charters/writes';
+import { estimateJoinRequest, fileJoinRequest } from '../../charters/writes';
 import { existingBoundKey } from '../../identity/update';
 import { documentSigningProblem, heldPrivateKeyFor, withDocumentSigner, type IdentitySession } from '../../identity/session';
 import type { SdkHandle } from '../../sdk/connection';
@@ -87,7 +87,7 @@ export function JoinPanel({
             ['proposal', proposal.id],
             ['message', `${bytes} bytes, encrypted to the leader`],
           ]}
-          estimate={() => estimateCreate(handle, 'joinRequest', { encryptedMessage: encryptedSize(bytes) })}
+          estimate={() => estimateJoinRequest(handle, message)}
           blockers={[...problems, ...(privateKeyHex ? [] : ['Add or load your encryption key first (step 1).'])]}
           confirmLabel="Sign and send the join request"
           doneText="Your join request is filed. The leader can now list you as a member."

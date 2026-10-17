@@ -150,7 +150,15 @@ export function BoundKeySetup({
           </button>
         </div>
         <label className="ack">
-          <input type="checkbox" checked={backedUp} onChange={(e) => setBackedUp(e.target.checked)} /> I saved this
+          <input
+            type="checkbox"
+            checked={backedUp}
+            onChange={(e) => {
+              setBackedUp(e.target.checked);
+              if (!e.target.checked) setMasterWif('');
+            }}
+          />{' '}
+          I saved this
           private key somewhere safe.
         </label>
       </div>

@@ -145,6 +145,12 @@ describe('settleWrite', () => {
     expect(lost).toMatchObject({ status: 'unknown', error: { message: 'connection reset' } });
   });
 
+  it('should say pending, not unknown, when the SDK accepted the write but the read-back lags', async () => {
+    expect(await settleWrite(async () => 'id', async () => undefined, { attempts: 2, delayMs: 0 })).toEqual({
+      status: 'pending',
+    });
+  });
+
   it('should treat a failing read-back as no verdict yet', async () => {
     const readBack = vi.fn().mockRejectedValueOnce(new Error('node down')).mockResolvedValueOnce(true);
     expect(await settleWrite(async () => undefined, readBack, { delayMs: 0 })).toEqual({ status: 'confirmed', value: true });

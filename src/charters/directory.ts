@@ -17,8 +17,15 @@ import { fetchModeration, fetchTeam, type TeamView } from './reads';
  */
 export type DirectorySource = 'known' | 'contested' | 'added';
 
+export interface DirectoryEntry {
+  id: string;
+  sources: DirectorySource[];
+}
+
+/** The network-derived part of the directory; user-added ids are merged in by the page. */
 export interface DirectoryIds {
-  entries: Array<{ id: string; sources: DirectorySource[] }>;
+  known: string[];
+  contested: string[];
   failures: Failure[];
   caps: Cap[];
 }
@@ -87,7 +94,7 @@ export function useAddedContracts(network: Network): string[] {
 // ---- the union ---------------------------------------------------------------
 
 /** Pure: merge the three sources, known first, keeping each id once. */
-export function mergeDirectory(known: string[], contested: string[], added: string[]): DirectoryIds['entries'] {
+export function mergeDirectory(known: string[], contested: string[], added: string[]): DirectoryEntry[] {
   const byId = new Map<string, DirectorySource[]>();
   const put = (id: string, source: DirectorySource) => {
     const sources = byId.get(id) ?? [];
@@ -100,7 +107,7 @@ export function mergeDirectory(known: string[], contested: string[], added: stri
   return [...byId].map(([id, sources]) => ({ id, sources }));
 }
 
-/** Every contract the directory lists. Never throws. */
+/** The known and contested contracts of the directory. Never throws. */
 export async function collectDirectoryIds(sdk: EvoSDK, network: Network): Promise<DirectoryIds> {
   const failures: Failure[] = [];
   const caps: Cap[] = [];
@@ -117,15 +124,7 @@ export async function collectDirectoryIds(sdk: EvoSDK, network: Network): Promis
   } catch (e) {
     failures.push({ source: 'contested moderation seats', message: errorMessage(e) });
   }
-  return {
-    entries: mergeDirectory(
-      knownContracts(network).map((c) => c.id),
-      contested,
-      addedContracts(network),
-    ),
-    failures,
-    caps,
-  };
+  return { known: knownContracts(network).map((c) => c.id), contested, failures, caps };
 }
 
 export interface DirectoryEntryState {

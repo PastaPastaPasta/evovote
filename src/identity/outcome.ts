@@ -7,12 +7,15 @@ import { describeWriteError, type DescribedError } from '../voting/refusals';
  * - confirmed: read back
  * - refused: Platform refused it with a consensus code (a refusal in a block
  *   still pays its fees)
+ * - pending: the SDK reported it executed, but the read-back has not seen it
+ *   yet (a lagging node); it should appear, and must not be filed again
  * - unknown: no verdict (a timeout, a dropped connection) and the read-back
  *   did not find it; it may still land, so the user must check before retrying
  */
 export type WriteOutcome<T = undefined> =
   | { status: 'confirmed'; value: T }
   | { status: 'refused'; error: DescribedError }
+  | { status: 'pending' }
   | { status: 'unknown'; error?: DescribedError };
 
 export interface SettleOptions {
@@ -53,5 +56,5 @@ export async function settleWrite<W, T>(
     }
     if (i < attempts - 1) await pause(delayMs);
   }
-  return { status: 'unknown', error: failure };
+  return failure ? { status: 'unknown', error: failure } : { status: 'pending' };
 }

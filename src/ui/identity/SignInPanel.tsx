@@ -40,7 +40,11 @@ export function SignInPanel({ network }: { network: Network }) {
             spellCheck={false}
             placeholder={network === 'testnet' ? 'c… (testnet WIF)' : 'X… (mainnet WIF)'}
             value={wif}
-            onChange={(e) => setWif(e.target.value)}
+            onChange={(e) => {
+              setWif(e.target.value);
+              // A new key replaces the one waiting for an identity choice.
+              setChoices(null);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && wif.trim() && !busy) void submit(wif);
             }}
@@ -58,6 +62,9 @@ export function SignInPanel({ network }: { network: Network }) {
       {choices && (
         <div className="choose-identity">
           <p>Several identities share this key. Which one is yours?</p>
+          <button className="link-button" onClick={() => setChoices(null)}>
+            Cancel
+          </button>
           {choices.ids.map((id) => (
             <button key={id} className="vote-button ghost mono" disabled={busy} onClick={() => void submit(choices.wif, id)}>
               {shortId(id, 8)}
