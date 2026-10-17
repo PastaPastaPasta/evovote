@@ -20,10 +20,15 @@ const SYSTEM_ORDER = ['$id', '$ownerId', '$revision', '$createdAt', '$updatedAt'
 const IDENTIFIER_SYSTEM_FIELDS = new Set(['$id', '$ownerId', '$dataContractId']);
 const IDENTIFIER_MEDIA_TYPE = 'application/x.dash.dpp.identifier';
 
-interface PropertySchema {
+export interface PropertySchema {
   type?: unknown;
   byteArray?: unknown;
   contentMediaType?: unknown;
+}
+
+/** Whether the schema marks a byte array as a Platform identifier. */
+export function declaresIdentifier(schema: PropertySchema | undefined): boolean {
+  return schema?.byteArray === true && schema.contentMediaType === IDENTIFIER_MEDIA_TYPE;
 }
 
 function isIdentifierText(value: string): boolean {
@@ -62,7 +67,7 @@ function toBytes(value: unknown): Uint8Array | undefined {
  */
 export function fieldValue(name: string, value: unknown, schema?: PropertySchema): FieldValue {
   const byteArray = schema?.byteArray === true;
-  const schemaSaysIdentifier = byteArray && schema?.contentMediaType === IDENTIFIER_MEDIA_TYPE;
+  const schemaSaysIdentifier = declaresIdentifier(schema);
   if (typeof value === 'string') {
     if (IDENTIFIER_SYSTEM_FIELDS.has(name) || schemaSaysIdentifier) {
       if (isIdentifierText(value)) return { kind: 'identifier', id: value };

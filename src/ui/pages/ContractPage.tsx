@@ -3,6 +3,8 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import {
   BROWSE_MAX_CONTESTS,
   browseContract,
+  emptyContractView,
+  indexSource,
   type BrowsedContest,
   type BrowsedType,
   type ContractView,
@@ -147,14 +149,7 @@ export function ContractPage({
   contractId: string;
 }) {
   const [limit, setLimit] = useState(BROWSE_MAX_CONTESTS);
-  const [view, setView] = useState<ContractView>({
-    contractId,
-    load: 'loading',
-    documentTypes: [],
-    types: [],
-    failures: [],
-    caps: [],
-  });
+  const [view, setView] = useState<ContractView>(() => emptyContractView(contractId));
   const now = useNow();
 
   const showedList = useRef(false);
@@ -224,9 +219,7 @@ export function ContractPage({
             <TypeSection
               key={`${type.index.documentTypeName}/${type.index.indexName}`}
               type={type}
-              failed={view.failures.some(
-                (f) => f.source === `${type.index.documentTypeName} · ${type.index.indexName}`,
-              )}
+              failed={view.failures.some((f) => f.source === indexSource(type.index))}
               now={now}
             />
           ))}

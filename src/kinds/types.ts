@@ -13,7 +13,7 @@ export interface ContenderView {
   title?: string;
   /** One line of context, e.g. "also holds alice, bob". */
   subtitle?: string;
-  /** Key/value rows (the generic kind shows the document's fields). */
+  /** Plain key/value rows. */
   fields?: Array<[string, string]>;
   /** Typed key/value rows (identifiers with copy buttons, bytes as hex). */
   rows?: FieldRow[];

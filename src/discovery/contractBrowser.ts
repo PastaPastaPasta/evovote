@@ -1,5 +1,6 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import type { Contest, ContestSummary } from '../model/contest';
+import { declaresIdentifier, type PropertySchema } from '../kinds/fields';
 import { base58Decode, base64ToBytesSafe } from '../model/bytes';
 import { displayIndexValue, indexValueFromJs, type IndexValue } from '../model/indexValue';
 import { encodePollKey, type PollKey } from '../model/pollKey';
@@ -37,12 +38,6 @@ const SYSTEM_INTEGER_FIELDS = new Set([
   '$transferredAtCoreBlockHeight',
 ]);
 
-interface PropertySchema {
-  type?: unknown;
-  byteArray?: unknown;
-  contentMediaType?: unknown;
-}
-
 function isIdentifierText(value: string): boolean {
   try {
     return base58Decode(value).length === 32;
@@ -74,12 +69,7 @@ export function indexValueForProperty(
   docSchema: unknown,
 ): IndexValue | undefined {
   const schema = propertySchema(docSchema, property);
-  const identifierField =
-    property === '$ownerId' ||
-    property === '$id' ||
-    (schema?.byteArray === true &&
-      schema.contentMediaType === 'application/x.dash.dpp.identifier');
-  if (identifierField) {
+  if (property === '$ownerId' || property === '$id' || declaresIdentifier(schema)) {
     const asString =
       typeof raw === 'object' && raw !== null && 'toBase58' in raw
         ? (raw as { toBase58(): string }).toBase58()
@@ -106,6 +96,11 @@ export function indexValueForProperty(
 
 // ---- sweeping one contested index -----------------------------------------------
 
+/** How failures and caps name one index; pages match on it. */
+export function indexSource(index: ContestedIndex): string {
+  return `${index.documentTypeName} · ${index.indexName}`;
+}
+
 export interface IndexSweepOptions {
   pageSize?: number;
   maxPages?: number;
@@ -128,7 +123,7 @@ export async function* sweepContestedIndex(
   docSchema: unknown,
   opts: IndexSweepOptions = {},
 ): AsyncGenerator<ArchivePage> {
-  const source = `${index.documentTypeName} · ${index.indexName}`;
+  const source = indexSource(index);
   const max = opts.maxContests ?? BROWSE_MAX_CONTESTS;
   const depth = index.properties.length;
   if (depth === 0) {
@@ -243,6 +238,17 @@ export interface ContractView {
   caps: Cap[];
 }
 
+export function emptyContractView(contractId: string): ContractView {
+  return {
+    contractId,
+    load: 'loading',
+    documentTypes: [],
+    types: [],
+    failures: [],
+    caps: [],
+  };
+}
+
 export interface BrowseOptions extends IndexSweepOptions {
   tallyConcurrency?: number;
   onUpdate?: (view: ContractView) => void;
@@ -264,14 +270,7 @@ export async function browseContract(
   contractId: string,
   opts: BrowseOptions = {},
 ): Promise<ContractView> {
-  const view: ContractView = {
-    contractId,
-    load: 'loading',
-    documentTypes: [],
-    types: [],
-    failures: [],
-    caps: [],
-  };
+  const view = emptyContractView(contractId);
   const emit = () =>
     opts.onUpdate?.({
       ...view,
@@ -355,10 +354,7 @@ export async function browseContract(
         emit();
       }
     } catch (e) {
-      view.failures.push({
-        source: `${type.index.documentTypeName} · ${type.index.indexName}`,
-        message: errorMessage(e),
-      });
+      view.failures.push({ source: indexSource(type.index), message: errorMessage(e) });
     }
     type.sweeping = false;
     emit();
