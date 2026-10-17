@@ -14,10 +14,12 @@ export const ACTIVE_PAGE = 100;
 /** 20 pages = 2000 polls before the walk stops and reports a cap. */
 export const ACTIVE_MAX_PAGES = 20;
 /**
- * The latest end a live poll can have from now: mainnet's two-week window
- * plus a day of slack (testnet windows are 90 minutes).
+ * The latest end a live poll can have from now. Generic polls end within
+ * two weeks on mainnet (90 minutes on testnet), but a moderator election
+ * runs on its target's own windows, each up to four weeks, so its end can be
+ * eight weeks out. Plus a day of slack.
  */
-export const ACTIVE_HORIZON_MS = 15 * 24 * 3_600_000;
+export const ACTIVE_HORIZON_MS = (2 * 28 + 1) * 24 * 3_600_000;
 
 export interface ActivePolls {
   /** Ascending by end time; deduplicated by key. */
