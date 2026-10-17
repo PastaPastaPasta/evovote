@@ -10,9 +10,6 @@ import type { LoadedKey } from './keyring';
 
 type VotePollInstance = InstanceType<SdkHandle['mod']['VotePoll']>;
 
-/** A vote that failed before anything was sent: it cannot have landed. */
-export class NotBroadcastError extends Error {}
-
 /**
  * The VotePoll to sign over. Platform keys a poll (and its contest fund) by
  * a hash of its typed index values, so a poll is rebuilt locally only when
@@ -28,7 +25,7 @@ export function votePollFor(
   const live = livePollFor(keyString);
   if (live) return { poll: live as VotePollInstance, owned: false };
   if (!key.indexValues.every(isConstructible)) {
-    throw new NotBroadcastError(
+    throw new Error(
       'This contest is not in the current list of open polls, so it cannot be voted on from here. Reload the contest and try again.',
     );
   }

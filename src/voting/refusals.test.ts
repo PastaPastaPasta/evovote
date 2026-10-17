@@ -13,9 +13,10 @@ describe('errorMessage / errorCode', () => {
   });
 
   it('should fall back to a code in the message, and ignore -1', () => {
-    expect(errorCode(wasmError('state error 40303: too many votes'))).toBe(40303);
+    expect(errorCode(wasmError('too many votes [code 40303]'))).toBe(40303);
     expect(errorCode(wasmError('timeout'))).toBeUndefined();
-    expect(errorCode(new Error('code 10422 here'))).toBe(10422);
+    expect(errorCode(wasmError('timed out after 10000 ms'))).toBeUndefined();
+    expect(errorCode(new Error('Code: 10422 here'))).toBe(10422);
   });
 
   it('should survive odd inputs', () => {

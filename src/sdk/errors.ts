@@ -24,12 +24,13 @@ export function errorMessage(e: unknown): string {
 
 /**
  * The consensus error code of a refusal, when there is one: the `code`
- * property if it looks like a consensus code, else a 5-digit 1xxxx/4xxxx
- * code found in the message (older SDK paths only put it there).
+ * property if it looks like a consensus code, else "code NNNNN" in the
+ * message (older SDK paths only put it there). A bare number is not taken:
+ * "timed out after 10000 ms" is not a refusal.
  */
 export function errorCode(e: unknown): number | undefined {
   const code = safeGet(e, 'code');
   if (typeof code === 'number' && code >= 10000) return code;
-  const match = errorMessage(e).match(/\b([14]\d{4})\b/);
+  const match = errorMessage(e).match(/\bcode\W{0,3}([1-4]\d{4})\b/i);
   return match ? Number(match[1]) : undefined;
 }
