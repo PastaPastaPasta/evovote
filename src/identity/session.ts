@@ -5,7 +5,8 @@ import { errorMessage } from '../sdk/errors';
 import { freeQuietly } from '../sdk/free';
 import type { Network } from '../sdk/network';
 import { wifNetwork } from '../voting/keys';
-import { canSignDocumentsFor, isMasterKey, keyInfoFrom, keyMatching, type KeyInfo } from './keys';
+import { canSignDocumentsFor, isMasterKey, keyInfoFrom, keyInfosOf, keyMatching, type KeyInfo } from './keys';
+import { existingBoundKey, type BoundKeySpec } from './update';
 
 /**
  * The identity session (`#/me`): sign in by pasting a private key (WIF).
@@ -34,7 +35,7 @@ export interface IdentitySession {
   loginKey: KeyInfo;
 }
 
-export type SignInResult =
+type SignInResult =
   | { ok: true }
   | { ok: false; error: string }
   /** The key hash is shared by several identities: pick one and sign in again. */
@@ -59,22 +60,6 @@ function subscribe(listener: () => void): () => void {
 /** The signed-in identity, or null. Re-renders on sign-in, refresh and sign-out. */
 export function useIdentitySession(): IdentitySession | null {
   return useSyncExternalStore(subscribe, () => session);
-}
-
-export function currentSession(): IdentitySession | null {
-  return session;
-}
-
-type Identity = NonNullable<Awaited<ReturnType<SdkHandle['sdk']['identities']['fetch']>>>;
-
-function keysOf(identity: Identity): KeyInfo[] {
-  return identity.publicKeys.map((k) => {
-    try {
-      return keyInfoFrom(k);
-    } finally {
-      freeQuietly(k);
-    }
-  });
 }
 
 async function namesOf(handle: SdkHandle, identityId: string): Promise<string[]> {
@@ -140,7 +125,8 @@ export async function signIn(
     if (ids.length === 0) {
       return { ok: false, error: `No identity on ${network} holds this key.` };
     }
-    const identityId = chosenId && ids.includes(chosenId) ? chosenId : ids.length === 1 ? ids[0] : undefined;
+    let identityId = ids.length === 1 ? ids[0] : undefined;
+    if (chosenId && ids.includes(chosenId)) identityId = chosenId;
     if (!identityId) return { ok: false, choose: ids };
 
     const loaded = await readIdentity(handle, identityId);
@@ -171,7 +157,7 @@ async function readIdentity(
   const identity = await handle.sdk.identities.fetch(identityId);
   if (!identity) return undefined;
   try {
-    return { balance: identity.balance, revision: identity.revision, keys: keysOf(identity) };
+    return { balance: identity.balance, revision: identity.revision, keys: keyInfosOf(identity) };
   } finally {
     freeQuietly(identity);
   }
@@ -261,9 +247,8 @@ export function heldPrivateKeyFor(key: KeyInfo): string | undefined {
   return heldKeys.get(key.hash160);
 }
 
-/** Test hook: reset module state. */
-export function resetSessionForTests(next: { session: IdentitySession | null; wif?: string } = { session: null }): void {
-  loginWif = next.wif ?? null;
-  heldKeys.clear();
-  publish(next.session);
+/** The held private key (hex) of the identity's key bound per `spec`, if that key is on chain and loaded. */
+export function heldBoundKeyHex(session: IdentitySession, spec: BoundKeySpec): string | undefined {
+  const key = existingBoundKey(session.keys, spec);
+  return key ? heldPrivateKeyFor(key) : undefined;
 }

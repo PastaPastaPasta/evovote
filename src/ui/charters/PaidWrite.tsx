@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import type { WriteCost } from '../../charters/writes';
-import { readBalance } from '../../charters/writes';
+import { readBalance, type WriteCost } from '../../charters/writes';
 import type { WriteOutcome } from '../../identity/outcome';
 import { refreshIdentity } from '../../identity/session';
 import { dashText } from '../../model/credits';
@@ -8,7 +7,7 @@ import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
 import { useAsync } from '../useAsync';
 
-export function OutcomeNote<T>({ outcome, done }: { outcome: WriteOutcome<T>; done: string }) {
+function OutcomeNote<T>({ outcome, done }: { outcome: WriteOutcome<T>; done: string }) {
   if (outcome.status === 'confirmed') return <p className="page-note ok">{done}</p>;
   if (outcome.status === 'refused') {
     return (

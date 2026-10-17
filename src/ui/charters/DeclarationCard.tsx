@@ -3,24 +3,41 @@ import {
   electionOpensAtMs,
   INTERIM_TEXT,
   type ContractModeration,
+  type ModerationDeclaration,
 } from '../../charters/declaration';
+
+function notElectedText(declaration: Exclude<ModerationDeclaration, { kind: 'elected' }>): string {
+  switch (declaration.kind) {
+    case 'none':
+      return 'This contract declares no moderation.';
+    case 'contractOwner':
+      return 'Its owner moderates it.';
+    case 'appointedModerators':
+      return `${declaration.identities.length} appointed moderator(s) moderate it.`;
+    case 'unknown':
+      return `It declares a moderation kind this site does not know (${declaration.rawType}).`;
+  }
+}
+
+function electionDelayText(delaySeconds: number | undefined, opensAt: number | undefined): string {
+  if (!delaySeconds) return 'none: teams can apply at once';
+  const base = `${durationText(delaySeconds)} after the contract was created`;
+  if (opensAt === Number.POSITIVE_INFINITY) return `${base} (no creation time recorded: the election never opens)`;
+  if (opensAt) return `${base} (applications open ${new Date(opensAt).toLocaleString()})`;
+  return base;
+}
 
 /** What a contract's elected declaration says, in plain words. */
 export function DeclarationCard({ moderation }: { moderation: ContractModeration }) {
   const { declaration, lists } = moderation;
   if (declaration.kind !== 'elected') {
-    const who =
-      declaration.kind === 'none'
-        ? 'This contract declares no moderation.'
-        : declaration.kind === 'contractOwner'
-          ? 'Its owner moderates it.'
-          : declaration.kind === 'appointedModerators'
-            ? `${declaration.identities.length} appointed moderator(s) moderate it.`
-            : `It declares a moderation kind this site does not know (${declaration.rawType}).`;
     return (
       <section className="charter-card">
         <h2 className="section-title">Not an elected contract</h2>
-        <p>{who} Moderator elections only exist for contracts that declare elected moderation, so no team can apply here.</p>
+        <p>
+          {notElectedText(declaration)} Moderator elections only exist for contracts that declare elected
+          moderation, so no team can apply here.
+        </p>
       </section>
     );
   }
@@ -41,17 +58,7 @@ export function DeclarationCard({ moderation }: { moderation: ContractModeration
         </div>
         <div>
           <dt className="mono-label">election delay</dt>
-          <dd>
-            {e.electionDelaySeconds
-              ? `${durationText(e.electionDelaySeconds)} after the contract was created${
-                  opensAt === Number.POSITIVE_INFINITY
-                    ? ' (no creation time recorded: the election never opens)'
-                    : opensAt
-                      ? ` (applications open ${new Date(opensAt).toLocaleString()})`
-                      : ''
-                }`
-              : 'none: teams can apply at once'}
-          </dd>
+          <dd>{electionDelayText(e.electionDelaySeconds, opensAt)}</dd>
         </div>
         <div>
           <dt className="mono-label">until seated</dt>

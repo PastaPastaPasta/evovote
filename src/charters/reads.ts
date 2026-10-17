@@ -8,7 +8,7 @@ import { isEmptyContest, type Contest } from '../model/contest';
 import { encodePollKey } from '../model/pollKey';
 import { errorMessage } from '../sdk/errors';
 import { freeQuietly } from '../sdk/free';
-import { isBoundKey, keyInfoFrom } from '../identity/keys';
+import { isBoundKey, keyInfosOf } from '../identity/keys';
 import { parseContractModeration, type ContractModeration } from './declaration';
 import {
   CHARTERS_CONTRACT_ID,
@@ -27,10 +27,9 @@ import { electionTiming, type ElectionTiming, type Read } from './phase';
  * a read that failed is reported, never shown as "none".
  */
 
-/** Pages of 100, up to this many items, before a read stops and says so. */
-export const CHARTER_PAGE = 100;
-export const MAX_PROPOSALS = 500;
-export const MAX_JOIN_REQUESTS = 500;
+const PAGE_SIZE = 100;
+/** Most items a paged read collects before it stops and says so. */
+const MAX_ITEMS = 500;
 
 interface DocLike {
   toJSON(version: unknown): unknown;
@@ -64,23 +63,38 @@ function mapDocs<T>(
   return out;
 }
 
-/** Query documents of the charters contract page by page, up to `max`. */
-async function queryAll<T>(
+/**
+ * Walk a paged read. `onPage` handles one page and returns false once it has
+ * enough. Resolves to whether the walk stopped before the last page, so the
+ * result is capped.
+ */
+async function walkPages(
+  fetchPage: (cursor: { limit: number; startAfter?: string }) => Promise<Map<string, unknown>>,
+  onPage: (page: Map<string, unknown>) => Promise<boolean> | boolean,
+): Promise<boolean> {
+  let startAfter: string | undefined;
+  for (;;) {
+    const page = await fetchPage({ limit: PAGE_SIZE, ...(startAfter ? { startAfter } : {}) });
+    const wantMore = await onPage(page);
+    if (page.size < PAGE_SIZE) return false;
+    startAfter = [...page.keys()].pop();
+    if (!wantMore || !startAfter) return true;
+  }
+}
+
+/** Map a paged read's documents, up to `max`; every document is freed. */
+async function collectDocs<T>(
   sdk: EvoSDK,
-  query: Omit<Parameters<EvoSDK['documents']['query']>[0], 'limit' | 'startAfter'>,
+  fetchPage: (cursor: { limit: number; startAfter?: string }) => Promise<Map<string, unknown>>,
   map: (json: Record<string, unknown>, id: string) => T,
   max: number,
 ): Promise<{ items: T[]; capped: boolean }> {
   const items: T[] = [];
-  let startAfter: string | undefined;
-  while (items.length < max) {
-    const page = await sdk.documents.query({ ...query, limit: CHARTER_PAGE, ...(startAfter ? { startAfter } : {}) });
+  const capped = await walkPages(fetchPage, (page) => {
     items.push(...mapDocs(sdk, page, map));
-    if (page.size < CHARTER_PAGE) return { items, capped: false };
-    startAfter = [...page.keys()].pop();
-    if (!startAfter) break;
-  }
-  return { items: items.slice(0, max), capped: true };
+    return items.length < max;
+  });
+  return { items: items.slice(0, max), capped };
 }
 
 /** A contract's moderation, or undefined when the contract does not exist. Throws when the read fails. */
@@ -129,23 +143,15 @@ export async function fetchTeam(sdk: EvoSDK, targetContractId: string): Promise<
 export async function fetchProposals(
   sdk: EvoSDK,
   targetContractId: string,
-  max = MAX_PROPOSALS,
+  max = MAX_ITEMS,
 ): Promise<{ proposals: CharterProposal[]; capped: boolean }> {
-  const proposals: CharterProposal[] = [];
-  let startAfter: string | undefined;
-  while (proposals.length < max) {
-    const page = await sdk.moderationCharters.submittedCharters({
-      targetContractId,
-      limit: CHARTER_PAGE,
-      ...(startAfter ? { startAfter } : {}),
-    });
-    const docs = mapDocs(sdk, page, (json, id) => toProposal(json, id));
-    proposals.push(...docs);
-    if (page.size < CHARTER_PAGE) return { proposals, capped: false };
-    startAfter = [...page.keys()].pop();
-    if (!startAfter) break;
-  }
-  return { proposals: proposals.slice(0, max), capped: true };
+  const { items, capped } = await collectDocs(
+    sdk,
+    (cursor) => sdk.moderationCharters.submittedCharters({ targetContractId, ...cursor }),
+    toProposal,
+    max,
+  );
+  return { proposals: items, capped };
 }
 
 export async function fetchProposal(sdk: EvoSDK, submittedCharterId: string): Promise<CharterProposal | undefined> {
@@ -173,42 +179,46 @@ export async function fetchReasons(
   const reasons = mapDocs(
     sdk,
     docs.map((doc, i): [string, unknown] => [reasonIds[i], doc]),
-    (json, id) => toReason(json, id),
+    toReason,
   );
   return { reasons, missing };
 }
 
 /** The reasons an identity has filed (for reuse), by code, up to 500. Throws when the read fails. */
 export async function fetchReasonsByOwner(sdk: EvoSDK, ownerId: string): Promise<{ reasons: CharterReason[]; capped: boolean }> {
-  const { items, capped } = await queryAll(
+  const { items, capped } = await collectDocs(
     sdk,
-    {
-      dataContractId: CHARTERS_CONTRACT_ID,
-      documentTypeName: 'reason',
-      where: [['$ownerId', '==', ownerId]],
-      orderBy: [
-        ['$ownerId', 'asc'],
-        ['code', 'asc'],
-      ],
-    },
-    (json, id) => toReason(json, id),
-    500,
+    (cursor) =>
+      sdk.documents.query({
+        dataContractId: CHARTERS_CONTRACT_ID,
+        documentTypeName: 'reason',
+        where: [['$ownerId', '==', ownerId]],
+        orderBy: [
+          ['$ownerId', 'asc'],
+          ['code', 'asc'],
+        ],
+        ...cursor,
+      }),
+    toReason,
+    MAX_ITEMS,
   );
   return { reasons: items, capped };
 }
 
 /** The proposals an identity leads, up to 500. Throws when the read fails. */
 export async function fetchProposalsByLeader(sdk: EvoSDK, leaderId: string): Promise<CharterProposal[]> {
-  const { items } = await queryAll(
+  const { items } = await collectDocs(
     sdk,
-    {
-      dataContractId: CHARTERS_CONTRACT_ID,
-      documentTypeName: 'submittedCharter',
-      where: [['$ownerId', '==', leaderId]],
-      orderBy: [['$ownerId', 'asc']],
-    },
-    (json, id) => toProposal(json, id),
-    500,
+    (cursor) =>
+      sdk.documents.query({
+        dataContractId: CHARTERS_CONTRACT_ID,
+        documentTypeName: 'submittedCharter',
+        where: [['$ownerId', '==', leaderId]],
+        orderBy: [['$ownerId', 'asc']],
+        ...cursor,
+      }),
+    toProposal,
+    MAX_ITEMS,
   );
   return items;
 }
@@ -221,31 +231,26 @@ export async function forEachJoinRequest(
   sdk: EvoSDK,
   submittedCharterId: string,
   visit: (doc: unknown, id: string) => Promise<void> | void,
-  max = MAX_JOIN_REQUESTS,
+  max = MAX_ITEMS,
 ): Promise<{ count: number; capped: boolean }> {
   let count = 0;
-  let startAfter: string | undefined;
-  while (count < max) {
-    const page = await sdk.moderationCharters.joinRequests({
-      submittedCharterId,
-      limit: CHARTER_PAGE,
-      ...(startAfter ? { startAfter } : {}),
-    });
-    for (const [id, doc] of page) {
-      try {
-        if (doc && count < max) {
-          count++;
-          await visit(doc, id);
+  const capped = await walkPages(
+    (cursor) => sdk.moderationCharters.joinRequests({ submittedCharterId, ...cursor }),
+    async (page) => {
+      for (const [id, doc] of page) {
+        try {
+          if (doc && count < max) {
+            count++;
+            await visit(doc, id);
+          }
+        } finally {
+          freeQuietly(doc);
         }
-      } finally {
-        freeQuietly(doc);
       }
-    }
-    if (page.size < CHARTER_PAGE) return { count, capped: false };
-    startAfter = [...page.keys()].pop();
-    if (!startAfter) break;
-  }
-  return { count, capped: true };
+      return count < max;
+    },
+  );
+  return { count, capped };
 }
 
 /** Who asked to join a proposal and when: metadata only, never the messages. */
@@ -266,14 +271,7 @@ export async function leaderCanReceive(sdk: EvoSDK, leaderId: string): Promise<b
   const identity = await sdk.identities.fetch(leaderId);
   if (!identity) return false;
   try {
-    const keys = identity.publicKeys.map((k) => {
-      try {
-        return keyInfoFrom(k);
-      } finally {
-        freeQuietly(k);
-      }
-    });
-    return keys.some((k) => isBoundKey(k, 'DECRYPTION', CHARTERS_CONTRACT_ID, 'submittedCharter'));
+    return keyInfosOf(identity).some((k) => isBoundKey(k, 'DECRYPTION', CHARTERS_CONTRACT_ID, 'submittedCharter'));
   } finally {
     freeQuietly(identity);
   }
@@ -291,7 +289,7 @@ export async function fetchCharterContest(
 }
 
 /** The contest's end from the end-date index; undefined when it is not there. */
-export async function fetchCharterContestEnd(
+async function fetchCharterContestEnd(
   sdk: EvoSDK,
   targetContractId: string,
   force = false,
@@ -309,7 +307,7 @@ export async function fetchCharterContestEnd(
 }
 
 /** The earliest application's time, from the contenders' documents. */
-export function firstAppliedAt(contest: Contest | undefined): number | undefined {
+function firstAppliedAt(contest: Contest | undefined): number | undefined {
   const times = (contest?.tally.contenders ?? [])
     .map((c) => Number(c.document?.$createdAt))
     .filter((t) => Number.isFinite(t) && t > 0);

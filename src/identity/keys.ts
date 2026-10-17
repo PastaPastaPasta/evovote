@@ -1,6 +1,9 @@
+import { freeQuietly } from '../sdk/free';
+
 /**
- * Identity keys as the session shows and checks them. Pure: built from the
- * SDK's `IdentityPublicKey` getters by `keyInfoFrom`, then checked here.
+ * Identity keys as the session shows and checks them. Built from the SDK's
+ * `IdentityPublicKey` getters by `keyInfoFrom` (or `keyInfosOf`), then checked
+ * by pure functions here.
  *
  * Getter values on rc.4: purpose `AUTHENTICATION|ENCRYPTION|DECRYPTION|
  * TRANSFER|SYSTEM|VOTING|OWNER`, securityLevel `MASTER|CRITICAL|HIGH|MEDIUM`,
@@ -8,7 +11,7 @@
  * `contractBounds.toJSON()` `{ $type, id, documentTypeName? }`.
  */
 
-export interface KeyBounds {
+interface KeyBounds {
   contractId: string;
   /** Set for a document-type bound (`SingleContractDocumentType`). */
   documentTypeName?: string;
@@ -29,7 +32,7 @@ export interface KeyInfo {
 }
 
 /** The structural shape of a wasm IdentityPublicKey this module reads. */
-export interface SdkKeyLike {
+interface SdkKeyLike {
   keyId: number;
   purpose: string;
   securityLevel: string;
@@ -66,6 +69,17 @@ export function keyInfoFrom(k: SdkKeyLike): KeyInfo {
     dataHex: String(k.data).toLowerCase(),
     hash160: k.getPublicKeyHash().toLowerCase(),
   };
+}
+
+/** Read every key of a fetched identity, freeing each wasm key object. */
+export function keyInfosOf(identity: { publicKeys: SdkKeyLike[] }): KeyInfo[] {
+  return identity.publicKeys.map((k) => {
+    try {
+      return keyInfoFrom(k);
+    } finally {
+      freeQuietly(k);
+    }
+  });
 }
 
 export function isMasterKey(k: KeyInfo): boolean {

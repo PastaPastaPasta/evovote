@@ -3,14 +3,20 @@ import { CHARTER_DECRYPTION } from '../../charters/boundKeys';
 import { CHARTERS_CONTRACT_ID, splitText, type RewardSplit } from '../../charters/documents';
 import { proposalHref } from '../../charters/pollKey';
 import { fetchReasonsByOwner } from '../../charters/reads';
-import { shareNote, validateCharter, validateReason } from '../../charters/validate';
+import {
+  MAX_REASON_DESCRIPTION,
+  MAX_REASON_LABEL,
+  shareNote,
+  validateCharter,
+  validateReason,
+} from '../../charters/validate';
 import { estimateCharter, estimateReason, fileCharter, fileReason } from '../../charters/writes';
-import { existingBoundKey } from '../../identity/update';
-import { documentSigningProblem, heldPrivateKeyFor, withDocumentSigner, type IdentitySession } from '../../identity/session';
+import { documentSigningProblem, heldBoundKeyHex, withDocumentSigner, type IdentitySession } from '../../identity/session';
 import type { SdkHandle } from '../../sdk/connection';
 import { shortId } from '../format';
 import { BoundKeySetup } from '../identity/BoundKeySetup';
 import { useAsync } from '../useAsync';
+import { FieldProblems } from './FieldProblems';
 import { PaidWrite } from './PaidWrite';
 
 function NewReason({
@@ -66,18 +72,14 @@ function NewReason({
         </label>
         <label className="field">
           <span className="mono-label">Label</span>
-          <input value={label} maxLength={64} placeholder="Spam" onChange={(e) => setLabel(e.target.value)} />
+          <input value={label} maxLength={MAX_REASON_LABEL} placeholder="Spam" onChange={(e) => setLabel(e.target.value)} />
         </label>
       </div>
       <label className="field">
         <span className="mono-label">Description (optional)</span>
-        <textarea rows={2} maxLength={1024} value={description} onChange={(e) => setDescription(e.target.value)} />
+        <textarea rows={2} maxLength={MAX_REASON_DESCRIPTION} value={description} onChange={(e) => setDescription(e.target.value)} />
       </label>
-      {(code || label) && problems.map((p) => (
-        <p key={p} className="mono-label error">
-          {p}
-        </p>
-      ))}
+      {(code || label) && <FieldProblems problems={problems} />}
       <button className="vote-button ghost" disabled={problems.length > 0} onClick={() => setReview(true)}>
         Review
       </button>
@@ -111,8 +113,7 @@ export function CharterWizard({
   const signing = documentSigningProblem(session, CHARTERS_CONTRACT_ID);
   if (signing) return <p className="page-note error">{signing}</p>;
 
-  const decryptionKey = existingBoundKey(session.keys, CHARTER_DECRYPTION);
-  const keyReady = !!decryptionKey && !!heldPrivateKeyFor(decryptionKey);
+  const keyReady = !!heldBoundKeyHex(session, CHARTER_DECRYPTION);
   const shareValue = share.trim() === '' ? undefined : Number(share);
   const input = {
     description,
@@ -214,11 +215,7 @@ export function CharterWizard({
         It must add up to 100.
       </p>
       {shareNote(shareValue) && <p className="fine-print">{shareNote(shareValue)}</p>}
-      {description.trim() !== '' && problems.map((p) => (
-        <p key={p} className="mono-label error">
-          {p}
-        </p>
-      ))}
+      {description.trim() !== '' && <FieldProblems problems={problems} />}
       {!review ? (
         <button className="vote-button" disabled={problems.length > 0 || !keyReady} onClick={() => setReview(true)}>
           Review the charter

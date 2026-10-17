@@ -2,7 +2,7 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import { fetchContract } from '../discovery/contracts';
 import { invalidateContest } from '../discovery/voteState';
 import { charterPollKey } from './pollKey';
-import { base58Decode } from '../model/bytes';
+import { base58Decode, utf8Length } from '../model/bytes';
 import { dashText } from '../model/credits';
 import { encodePollKey } from '../model/pollKey';
 import type { SdkHandle } from '../sdk/connection';
@@ -11,7 +11,7 @@ import { settleWrite, type WriteOutcome } from '../identity/outcome';
 import type { DocumentSigner } from '../identity/session';
 import { electedOf } from './declaration';
 import { encryptedSize } from './boundKeys';
-import { CHARTERS_CONTRACT_ID, idFromValue, type RewardSplit } from './documents';
+import { CHARTERS_CONTRACT_ID, idFromValue } from './documents';
 import { canApply, type ApplyCheck } from './phase';
 import {
   fetchCharterContest,
@@ -72,7 +72,7 @@ export function newCharterDocument(
   return mod.Document.fromObject(object as unknown as Parameters<SdkModule['Document']['fromObject']>[0], mod.PlatformVersion.latest());
 }
 
-export function reasonProperties(input: ReasonInput): Record<string, unknown> {
+function reasonProperties(input: ReasonInput): Record<string, unknown> {
   const description = input.description?.trim();
   return {
     code: input.code,
@@ -91,7 +91,7 @@ export function submittedCharterProperties(targetContractId: string, input: Char
   };
 }
 
-export function electedCharterProperties(
+function electedCharterProperties(
   targetContractId: string,
   submittedCharterId: string,
   members: readonly string[],
@@ -126,7 +126,7 @@ export interface WriteCost {
 }
 
 /** A field's size for the estimator: its length, or 'absent' for an optional field left out. */
-export type FieldSize = number | 'absent';
+type FieldSize = number | 'absent';
 
 /**
  * Price a create with Drive's own estimator (`documentCreateCost`, no
@@ -158,26 +158,25 @@ export async function estimateCreate(
 
 // Text sizes are passed in UTF-8 bytes: never fewer than the characters, so
 // the estimate errs high.
-const utf8Bytes = (s: string) => new TextEncoder().encode(s).length;
 
 export function estimateReason(handle: SdkHandle, input: ReasonInput): Promise<WriteCost> {
   const description = input.description?.trim() ?? '';
   return estimateCreate(handle, 'reason', {
-    label: utf8Bytes(input.label.trim()),
-    description: description ? utf8Bytes(description) : 'absent',
+    label: utf8Length(input.label.trim()),
+    description: description ? utf8Length(description) : 'absent',
   });
 }
 
 export function estimateCharter(handle: SdkHandle, input: CharterInput): Promise<WriteCost> {
   return estimateCreate(handle, 'submittedCharter', {
-    description: utf8Bytes(input.description.trim()),
+    description: utf8Length(input.description.trim()),
     reasons: input.reasonIds.length,
     ...(input.moderatorsShare === undefined ? { moderatorsShare: 'absent' as const } : {}),
   });
 }
 
 export function estimateJoinRequest(handle: SdkHandle, message: string): Promise<WriteCost> {
-  return estimateCreate(handle, 'joinRequest', { encryptedMessage: encryptedSize(utf8Bytes(message)) });
+  return estimateCreate(handle, 'joinRequest', { encryptedMessage: encryptedSize(utf8Length(message)) });
 }
 
 /** The identity's balance, read fresh before a confirm step. */
@@ -396,6 +395,13 @@ export async function decryptJoinRequests(
 
 // ---- applying for the seat ---------------------------------------------------
 
+export interface ApplicationArgs {
+  targetContractId: string;
+  leaderId: string;
+  submittedCharterId: string;
+  members: readonly string[];
+}
+
 export interface ApplyPreflight {
   status: ElectionStatus;
   check: ApplyCheck;
@@ -417,7 +423,7 @@ export interface ApplyPreflight {
  */
 export async function preflightApply(
   handle: SdkHandle,
-  args: { targetContractId: string; leaderId: string; submittedCharterId: string; members: readonly string[] },
+  args: ApplicationArgs,
   now = Date.now(),
 ): Promise<ApplyPreflight> {
   const { sdk } = handle;
@@ -488,10 +494,7 @@ export async function preflightApply(
  * Build the application, for the confirm step to show what will be signed.
  * The caller frees it (or passes it to `applyForSeat`).
  */
-export function buildApplication(
-  mod: SdkModule,
-  args: { targetContractId: string; leaderId: string; submittedCharterId: string; members: readonly string[] },
-): WasmDocument {
+export function buildApplication(mod: SdkModule, args: ApplicationArgs): WasmDocument {
   return newCharterDocument(
     mod,
     'electedCharter',
@@ -550,5 +553,3 @@ export async function contestFundToJoin(handle: SdkHandle, application: WasmDocu
     freeQuietly(fund);
   }
 }
-
-export type { RewardSplit };

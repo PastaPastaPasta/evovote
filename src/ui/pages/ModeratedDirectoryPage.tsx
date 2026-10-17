@@ -25,6 +25,11 @@ const SOURCE_TEXT: Record<DirectorySource, string> = {
   added: 'added by you',
 };
 
+function seatText({ team, failures }: DirectoryEntryState): string {
+  if (team) return 'team seated';
+  return failures.some((f) => f.source === 'the seated team') ? 'seat unknown' : 'seat open';
+}
+
 function EntryStatus({ state }: { state: DirectoryEntryState | undefined }) {
   if (!state) return <span className="mono-label">…</span>;
   if (state.found === false) return <span className="mono-label error">no such contract on this network</span>;
@@ -34,8 +39,7 @@ function EntryStatus({ state }: { state: DirectoryEntryState | undefined }) {
   const e = d.elected;
   return (
     <span className="mono-label">
-      {state.team ? 'team seated' : state.failures.some((f) => f.source === 'the seated team') ? 'seat unknown' : 'seat open'} · join{' '}
-      {durationText(e.joinWindowSeconds)} · vote {durationText(e.voteWindowSeconds)} · {INTERIM_TEXT[e.interim.kind]}
+      {seatText(state)} · join {durationText(e.joinWindowSeconds)} · vote {durationText(e.voteWindowSeconds)} · {INTERIM_TEXT[e.interim.kind]}
     </span>
   );
 }

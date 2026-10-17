@@ -10,7 +10,7 @@ import { freeQuietly } from '../sdk/free';
 import { fetchUsernames } from './dpns';
 import type { ContenderView, ContestKind } from './types';
 
-export { CHARTERS_CONTRACT_ID, charterPollKey, charterTarget };
+export { CHARTERS_CONTRACT_ID, charterPollKey };
 
 const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id);
 

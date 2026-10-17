@@ -3,7 +3,7 @@ import type { SdkHandle } from '../sdk/connection';
 import { freeQuietly } from '../sdk/free';
 import type { Network } from '../sdk/network';
 import { wifNetwork } from '../voting/keys';
-import { isBoundKey, isMasterKey, keyInfoFrom, nextKeyId, type KeyInfo } from './keys';
+import { isBoundKey, isMasterKey, keyInfosOf, nextKeyId, type KeyInfo } from './keys';
 import { settleWrite, type WriteOutcome } from './outcome';
 
 /**
@@ -137,7 +137,7 @@ export async function addBoundKey(
   try {
     const identity = own(await sdk.identities.fetch(args.identityId));
     if (!identity) throw new Error('The identity could not be read.');
-    const keys = identity.publicKeys.map((k) => keyInfoFrom(own(k)));
+    const keys = keyInfosOf(identity);
     const master = own(mod.PrivateKey.fromWIF(args.masterWif.trim()));
     const masterHash = master.getPublicKeyHash().toLowerCase();
     if (!keys.some((k) => isMasterKey(k) && k.hash160 === masterHash)) {
@@ -158,16 +158,10 @@ export async function addBoundKey(
         const fresh = await sdk.identities.fetch(args.identityId);
         if (!fresh) return undefined;
         try {
-          const found = fresh.publicKeys
-            .map((k) => {
-              try {
-                return keyInfoFrom(k);
-              } finally {
-                freeQuietly(k);
-              }
-            })
-            .find((k) => k.dataHex === args.newKey.publicKeyHex && isBoundKey(k, args.spec.purpose, args.spec.contractId, args.spec.documentTypeName));
-          return found;
+          const { purpose, contractId, documentTypeName } = args.spec;
+          return keyInfosOf(fresh).find(
+            (k) => k.dataHex === args.newKey.publicKeyHex && isBoundKey(k, purpose, contractId, documentTypeName),
+          );
         } finally {
           freeQuietly(fresh);
         }

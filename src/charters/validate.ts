@@ -1,3 +1,4 @@
+import { utf8Length } from '../model/bytes';
 import type { RewardSplit } from './documents';
 
 /**
@@ -7,16 +8,14 @@ import type { RewardSplit } from './documents';
  * Each returns a list of plain-language problems; empty means valid.
  */
 
-export const REASON_CODE = /^[A-Z]{3}$/;
+const REASON_CODE = /^[A-Z]{3}$/;
 export const MAX_REASON_LABEL = 64;
 export const MAX_REASON_DESCRIPTION = 1024;
-export const MAX_CHARTER_DESCRIPTION_BYTES = 4096;
-export const MAX_CHARTER_REASONS = 64;
+const MAX_CHARTER_DESCRIPTION_BYTES = 4096;
+const MAX_CHARTER_REASONS = 64;
 /** `electedCharter.members.maxItems`: the team besides the leader. */
 export const MAX_ELECTED_MEMBERS = 15;
 export const MAX_JOIN_MESSAGE_BYTES = 1023;
-
-const utf8Length = (s: string) => new TextEncoder().encode(s).length;
 
 export interface ReasonInput {
   code: string;
@@ -84,12 +83,12 @@ export function validateCharter(input: CharterInput): string[] {
 }
 
 /**
- * Notes (not errors) about a split given the team actually chosen: the
- * equal share goes to the leader when there are no other members.
+ * Notes (not errors) on a split given the team actually chosen: with no
+ * other members, the equal share goes to the leader.
  */
-export function splitNotes(split: RewardSplit, memberCount: number): string[] {
-  if (memberCount === 0 && split.equal > 0) {
-    return [`With no members, the ${split.equal}% equal share goes to the leader.`];
+export function splitNotes(split: RewardSplit | undefined, memberCount: number): string[] {
+  if (split && memberCount === 0 && split.equal > 0) {
+    return [`With no members, the ${split.equal}% equal share of every claim goes to the leader.`];
   }
   return [];
 }
@@ -101,7 +100,7 @@ export function shareNote(share: number | undefined): string | undefined {
   return `The team takes ${share}% of each declared moderators fee; actions may agree to that discount once the team is seated.`;
 }
 
-export interface MembersInput {
+interface MembersInput {
   leaderId: string;
   members: readonly string[];
   /** Identities that filed a join request for this proposal. */

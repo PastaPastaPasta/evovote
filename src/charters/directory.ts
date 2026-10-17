@@ -5,8 +5,9 @@ import { knownContracts } from '../config/knownContracts';
 import { isBase58Identifier as isContractId } from '../model/bytes';
 import { errorMessage } from '../sdk/errors';
 import type { Network } from '../sdk/network';
-import { charterKind, charterTarget } from '../kinds/charter';
+import { charterKind } from '../kinds/charter';
 import type { ContractModeration } from './declaration';
+import { charterTarget } from './pollKey';
 import { fetchModeration, fetchTeam, type TeamView } from './reads';
 
 /**
@@ -45,7 +46,7 @@ function readAdded(network: Network): string[] {
   }
 }
 
-export function addedContracts(network: Network): string[] {
+function addedContracts(network: Network): string[] {
   let snapshot = addedSnapshots.get(network);
   if (!snapshot) {
     snapshot = readAdded(network);

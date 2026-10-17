@@ -2,18 +2,18 @@ import { useMemo, useState } from 'react';
 import { CHARTER_DECRYPTION } from '../../charters/boundKeys';
 import { durationText } from '../../charters/declaration';
 import { CHARTERS_CONTRACT_ID, type CharterProposal, type JoinRequestMeta } from '../../charters/documents';
-import { MAX_ELECTED_MEMBERS } from '../../charters/validate';
+import { MAX_ELECTED_MEMBERS, splitNotes } from '../../charters/validate';
 import {
   applyForSeat,
   buildApplication,
   decryptJoinRequests,
   documentSummary,
   preflightApply,
+  type ApplicationArgs,
   type ApplyPreflight,
   type DecryptedJoinRequest,
 } from '../../charters/writes';
-import { existingBoundKey } from '../../identity/update';
-import { documentSigningProblem, heldPrivateKeyFor, withDocumentSigner, type IdentitySession } from '../../identity/session';
+import { documentSigningProblem, heldBoundKeyHex, withDocumentSigner, type IdentitySession } from '../../identity/session';
 import { dashText } from '../../model/credits';
 import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
@@ -27,7 +27,7 @@ const APPLY_ACK =
   'I understand: if this team wins, it holds the seat permanently (protocol 14 has no challenges); the contest fund is not refunded, win or lose; a tie goes to the earliest application; and an application Platform refuses still pays its fees.';
 
 /** What the application document says, read back from the built document. */
-function applicationRows(handle: SdkHandle, args: Parameters<typeof buildApplication>[1]): Array<[string, string]> {
+function applicationRows(handle: SdkHandle, args: ApplicationArgs): Array<[string, string]> {
   let doc: ReturnType<typeof buildApplication>;
   try {
     doc = buildApplication(handle.mod, args);
@@ -96,8 +96,7 @@ export function LeaderDashboard({
   const [preflight, setPreflight] = useState<ApplyPreflight | 'loading' | { error: string } | null>(null);
 
   const signing = documentSigningProblem(session, CHARTERS_CONTRACT_ID);
-  const decryptionKey = existingBoundKey(session.keys, CHARTER_DECRYPTION);
-  const decryptionHex = decryptionKey ? heldPrivateKeyFor(decryptionKey) : undefined;
+  const decryptionHex = heldBoundKeyHex(session, CHARTER_DECRYPTION);
   const joiners = joinRequests.filter((r) => r.memberId !== session.identityId);
   const args = useMemo(
     () => ({
@@ -200,7 +199,7 @@ export function LeaderDashboard({
           summary={[...appRows, ...timingRows(preflight), ['tie rule', 'a tie goes to the earliest application']]}
           estimate={async () => preflight.cost}
           blockers={preflight.blockers}
-          warnings={preflight.warnings}
+          warnings={[...preflight.warnings, ...splitNotes(proposal.rewardSplit, members.length)]}
           ack={APPLY_ACK}
           confirmLabel={`Sign and apply (${dashText(preflight.cost.total)})`}
           doneText="You are a contender for the seat. Masternodes can now vote; share the contest page."

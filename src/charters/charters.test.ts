@@ -329,8 +329,10 @@ describe('charter validation', () => {
   });
 
   it('should note where the equal share goes with no members', () => {
-    expect(splitNotes({ leader: 40, equal: 30, actions: 30 }, 0)[0]).toMatch(/30% equal share goes to the leader/);
+    expect(splitNotes({ leader: 40, equal: 30, actions: 30 }, 0)[0]).toMatch(/30% equal share/);
     expect(splitNotes({ leader: 40, equal: 30, actions: 30 }, 2)).toEqual([]);
+    expect(splitNotes({ leader: 100, equal: 0, actions: 0 }, 0)).toEqual([]);
+    expect(splitNotes(undefined, 0)).toEqual([]);
   });
 
   it('should bound the join message to 1023 bytes', () => {

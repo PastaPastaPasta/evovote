@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { JOIN_ENCRYPTION } from '../../charters/boundKeys';
 import { CHARTERS_CONTRACT_ID, type CharterProposal, type JoinRequestMeta } from '../../charters/documents';
 import { leaderCanReceive } from '../../charters/reads';
-import { validateJoinMessage } from '../../charters/validate';
+import { MAX_JOIN_MESSAGE_BYTES, validateJoinMessage } from '../../charters/validate';
 import { estimateJoinRequest, fileJoinRequest } from '../../charters/writes';
-import { existingBoundKey } from '../../identity/update';
-import { documentSigningProblem, heldPrivateKeyFor, withDocumentSigner, type IdentitySession } from '../../identity/session';
+import { documentSigningProblem, heldBoundKeyHex, withDocumentSigner, type IdentitySession } from '../../identity/session';
+import { utf8Length } from '../../model/bytes';
 import type { SdkHandle } from '../../sdk/connection';
 import { BoundKeySetup } from '../identity/BoundKeySetup';
 import { useAsync } from '../useAsync';
+import { FieldProblems } from './FieldProblems';
 import { PaidWrite } from './PaidWrite';
 
 /** Ask to join a proposal's team: an encrypted message only the leader can read. */
@@ -53,10 +54,9 @@ export function JoinPanel({
     );
   }
 
-  const encryptionKey = existingBoundKey(session.keys, JOIN_ENCRYPTION);
-  const privateKeyHex = encryptionKey ? heldPrivateKeyFor(encryptionKey) : undefined;
+  const privateKeyHex = heldBoundKeyHex(session, JOIN_ENCRYPTION);
   const problems = validateJoinMessage(message);
-  const bytes = new TextEncoder().encode(message).length;
+  const bytes = utf8Length(message);
 
   return (
     <div className="wizard">
@@ -65,14 +65,10 @@ export function JoinPanel({
       <BoundKeySetup handle={handle} session={session} spec={JOIN_ENCRYPTION} what="encryption key for join requests" />
       <h3>2. Your message to the leader</h3>
       <label className="field">
-        <span className="mono-label">Why you want to join (only the leader can read it; at most 1023 bytes)</span>
+        <span className="mono-label">Why you want to join (only the leader can read it; at most {MAX_JOIN_MESSAGE_BYTES} bytes)</span>
         <textarea rows={4} value={message} onChange={(e) => setMessage(e.target.value)} />
       </label>
-      {message && problems.map((p) => (
-        <p key={p} className="mono-label error">
-          {p}
-        </p>
-      ))}
+      {message && <FieldProblems problems={problems} />}
       {!review ? (
         <button className="vote-button" disabled={problems.length > 0 || !privateKeyHex} onClick={() => setReview(true)}>
           Review
