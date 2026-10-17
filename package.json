@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:live": "vitest run --config vitest.live.config.ts",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "discussion:publish": "node scripts/publish-discussion-contract.mjs"
   },
   "dependencies": {
     "@dashevo/evo-sdk": "5.0.0-rc.4",

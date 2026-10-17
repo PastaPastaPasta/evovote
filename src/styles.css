@@ -1267,3 +1267,22 @@ a:focus-visible {
     display: none;
   }
 }
+
+/* Contest discussion */
+.discussion { border-top: 2px solid var(--ink); margin-top: 40px; padding-top: 24px; }
+.discussion h2 { margin: 2px 0 8px; font-size: 26px; }
+.discussion-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.discussion-compose { display: grid; gap: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: 20px; margin: 20px 0; }
+.discussion-compose textarea, .discussion-compose select { width: 100%; min-width: 0; font: inherit; }
+.discussion-compose textarea { resize: vertical; }
+.discussion-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.segmented { display: inline-flex; gap: 4px; }
+.segmented button[aria-pressed='true'] { background: var(--blue-tint); border-radius: var(--radius); font-weight: 600; }
+.comment-list { list-style: none; padding: 0; margin: 0; }
+.comment { border-bottom: 1px solid var(--line); padding: 18px 0; }
+.comment-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.comment-head time { color: var(--ink-2); font-size: 12px; margin-left: auto; }
+.comment-supports { color: var(--ink-2); font-size: 13px; }
+.comment-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
+.comment-reply-to { margin: 6px 0 0; }
+.discussion button:disabled { cursor: default; opacity: .55; }

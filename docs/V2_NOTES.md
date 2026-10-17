@@ -88,3 +88,37 @@ after seating → 40105). Also check that integer properties built as JS numbers
 ## Ops notes
 
 - Some testnet evonodes (`85.209.243.x`) answer browser requests without CORS headers. The SDK fails over to other nodes, but the browser console logs the failures.
+
+## Discussions (WP4)
+
+Checked on 2026-10-17, offline except where marked. Nothing was signed or broadcast; the contract is **not published** yet
+(`npm run discussion:publish` is a dry run unless `--live`, and the owner runs it).
+
+### Contract design: `scope` is a hash, `pollKey` is the readable key
+
+| Fact | How verified | Result |
+|---|---|---|
+| An indexed string is at most 63 characters; an indexed byte array at most 255 | rs-dpp `MAX_INDEXED_STRING_PROPERTY_LENGTH` / `MAX_INDEXED_BYTE_ARRAY_PROPERTY_LENGTH` at `v5.1-dev`; rc.4 `DataContract` validation in the unit tests | ✅ A canonical poll key (`contractId/docType/index/<base64url>`) is always longer than 63 (the contract id alone is 44), so it **cannot be the indexed scope**. |
+| Decision | | `scope` = base64url(SHA-256(UTF-8 of the canonical key)), always 43 characters, `pattern ^[A-Za-z0-9_-]{43}$`, indexed as `(scope, $createdAt)`. `pollKey` = the canonical key itself, **not indexed**, `maxLength` 1280. A string (not a 32-byte array) so queries pass a plain string and the value is human-checkable. Other clients can derive the scope with any SHA-256. |
+| `pollKey` bound | unit test | ✅ Worst case is a contract id (44), a document type name (<= 64), an index name (<= 32, meta schema) and 10 index properties (the meta schema's max) of 63-character strings: 1026 characters. 1280 leaves margin. A longer key makes discussion unavailable for that one contest, with a message; it is not an error elsewhere. |
+| Why keep `pollKey` | | The hash alone cannot say which contest a comment is about. The reader also drops any comment whose `pollKey` differs from the key asked for, so a document cannot carry a scope hash for one contest and a readable key for another. |
+| `supports` | | Optional identifier (a contender the author backs), no index. `replyTo` is kept. |
+| Immutable, undeletable, HIGH signature level | | As on the v1 branch. Bound AUTHENTICATION keys need no contract opt-in. |
+
+### Queries and cost
+
+| Fact | How verified | Result |
+|---|---|---|
+| `where [prop ==]`, `orderBy [[prop asc], [$createdAt desc]]` and `startAfter <document id>` | testnet, DashPay `contactRequest.ownerIdCreatedAt` = `($ownerId, $createdAt)`, the same shape as the comment indices | ✅ `desc` is exactly the reverse of `asc`; `startAfter` works in `desc`. **[live test]** |
+| Comment create cost | `documentCreateCost` from the local contract | ~0.00065 DASH (a 50-character comment, first of its contest) and ~0.00126 DASH (2000 characters); ~0.00037 / ~0.00098 once the contest has comments. The compose box prices each draft with this estimator. |
+
+### Not verified: WP6 must check on a published testnet contract
+
+- Publish with `npm run discussion:publish -- --network testnet --owner <id> --key-file <path> --live`; the contract validates offline, and the
+  dry run against testnet printed an id for an existing owner.
+- `documents.create` for a `comment`: the placeholder `$id` is replaced (as for charters), `$createdAt` set from the browser clock is
+  accepted (the schema requires it), and no `$revision` is needed on an immutable type.
+- Reading back: identifier properties (`replyTo`, `supports`) render as base58 from chain; `readComment` accepts every form.
+- The scope hash computed in the browser matches what a second client computes (same canonical key string).
+- A charter contest and a generic one get their own discussion (the DPNS key is the only one exercised in unit tests).
+- Fee estimate vs the actual balance drop.

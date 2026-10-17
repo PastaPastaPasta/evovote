@@ -30,12 +30,16 @@ Platform — plus in-browser masternode voting.
   documents never enter the render path (the class of bug that garbled
   dash.vote).
 
-## Why there are no comments on contests
+## Discussion
 
-Masternode voter identities are created automatically by Platform with a
-single read-only `VOTING` key and no credits — they cannot create documents,
-so they cannot post comments. Campaigning happens off-chain (Dash forum /
-Discord).
+Masternode voter identities hold a single read-only `VOTING` key and no
+credits, so they cannot post. v2 lets any Platform identity comment on a
+contest through a small, immutable discussion contract (`contracts/discussion.json`),
+signed in the browser with the identity session (`#/me`). Comments are scoped
+to a contest by the SHA-256 of its canonical poll key. The contract id is a
+build variable (`VITE_DISCUSSION_TESTNET_CONTRACT_ID` /
+`VITE_DISCUSSION_MAINNET_CONTRACT_ID`); where it is unset the page says
+discussion is not activated. See `docs/V2_NOTES.md`.
 
 ## Development
 

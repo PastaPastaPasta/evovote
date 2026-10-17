@@ -126,21 +126,33 @@ export interface WriteCost {
 }
 
 /** A field's size for the estimator: its length, or 'absent' for an optional field left out. */
-type FieldSize = number | 'absent';
+export type FieldSize = number | 'absent';
 
 /**
  * Price a create with Drive's own estimator (`documentCreateCost`, no
- * network): the document's variable sizes are passed in, so the estimate is
- * of this document, not of an average one.
+ * network) from the contract: the document's variable sizes are passed in,
+ * so the estimate is of this document, not of an average one.
  */
-export async function estimateCreate(
+export async function estimateDocumentCreate(
   handle: SdkHandle,
-  type: CharterDocType,
+  contractId: string,
+  type: string,
   sizes: Record<string, FieldSize> = {},
   opts: { contestFund?: bigint; contenders?: number } = {},
 ): Promise<WriteCost> {
-  const contract = await fetchContract(handle.sdk, CHARTERS_CONTRACT_ID);
-  if (!contract) throw new Error('The moderation charters contract could not be read.');
+  const contract = await fetchContract(handle.sdk, contractId);
+  if (!contract) throw new Error('The contract could not be read.');
+  return priceDocumentCreate(handle, contract, type, sizes, opts);
+}
+
+/** The pure part of `estimateDocumentCreate`, for a contract already in hand. */
+export function priceDocumentCreate(
+  handle: Pick<SdkHandle, 'mod' | 'sdk'>,
+  contract: Parameters<SdkModule['documentCreateCost']>[0],
+  type: string,
+  sizes: Record<string, FieldSize> = {},
+  opts: { contestFund?: bigint; contenders?: number } = {},
+): WriteCost {
   const fields: Record<string, { present?: boolean; length?: number }> = {};
   for (const [name, size] of Object.entries(sizes)) {
     fields[name] = size === 'absent' ? { present: false } : { length: size };
@@ -154,6 +166,15 @@ export async function estimateCreate(
   const fees = BigInt(Math.ceil(Math.max(cost.totalCredits.newValues, cost.totalCredits.knownValues)));
   const contestFund = opts.contestFund ?? 0n;
   return { fees, contestFund, total: fees + contestFund };
+}
+
+export function estimateCreate(
+  handle: SdkHandle,
+  type: CharterDocType,
+  sizes: Record<string, FieldSize> = {},
+  opts: { contestFund?: bigint; contenders?: number } = {},
+): Promise<WriteCost> {
+  return estimateDocumentCreate(handle, CHARTERS_CONTRACT_ID, type, sizes, opts);
 }
 
 // Text sizes are passed in UTF-8 bytes: never fewer than the characters, so
