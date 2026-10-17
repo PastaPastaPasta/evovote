@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  base58Decode,
-  base58Encode,
-  hexToBytes,
-  isProTxHash,
-  p2pkhAddress,
-  wifNetwork,
-} from './keys';
+import { base58Decode, base58Encode, hexToBytes } from '../model/bytes';
+import { isProTxHash, p2pkhAddress, voterIdentityId, wifNetwork } from './keys';
 
 describe('base58', () => {
   it('should round-trip arbitrary bytes', () => {
@@ -81,5 +75,29 @@ describe('isProTxHash', () => {
     expect(isProTxHash('a'.repeat(63))).toBe(false);
     expect(isProTxHash('g'.repeat(64))).toBe(false);
     expect(isProTxHash('')).toBe(false);
+  });
+});
+
+describe('voterIdentityId', () => {
+  // Testnet evonodes: the derived ids exist on Platform with key 0 matching
+  // the ProRegTx voting key hash (docs/V2_NOTES.md, 2026-10-17).
+  it('should derive SHA256(proTxHash ‖ votingKeyHash160) in Core display order', async () => {
+    await expect(
+      voterIdentityId(
+        'f37de98bcd094e33307c6705204bccdf4d7ad10eb08999c1c9281847b5ef22b0',
+        'c88818ac93c56d21cb72c3255e3de33d160674d3',
+      ),
+    ).resolves.toBe('hC53djK5X6R9C18FxF4U1nxfJW2eFuevudHWRYFJXow');
+    await expect(
+      voterIdentityId(
+        'f647566c779b1a91f7c9d1869019c29a0171df7d368d96a3c4fad84d742bbe49',
+        'd1769a7dd51d17aebb64a38e69042d5aa50a7d31',
+      ),
+    ).resolves.toBe('596BJxM4nZankD3KQuvEBhzD7RfCErbYaX7CV7hJexAP');
+  });
+
+  it('should reject inputs of the wrong length', async () => {
+    await expect(voterIdentityId('ab', 'c88818ac93c56d21cb72c3255e3de33d160674d3')).rejects.toThrow();
+    await expect(voterIdentityId('a'.repeat(64), 'abcd')).rejects.toThrow();
   });
 });

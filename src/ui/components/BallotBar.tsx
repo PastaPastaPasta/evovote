@@ -1,4 +1,4 @@
-import type { ContestState } from '../lib/dpns';
+import type { Tally } from '../../model/contest';
 
 // The leader is Dash blue; the first challenger gets a clearly different hue
 // (teal) so a real fight is visible at a glance, not a blue-on-blue guess.
@@ -23,11 +23,14 @@ export function contenderColor(rank: number): string {
 export function BallotBar({
   state,
   mini = false,
+  showLock = true,
 }: {
-  state: ContestState;
+  state: Tally;
   mini?: boolean;
+  /** False for resolution-1 contests, which have no Lock. */
+  showLock?: boolean;
 }) {
-  const total = state.totalVotes;
+  const total = state.total;
   const segments: { key: string; share: number; color: string; hatched?: boolean; title: string }[] = [];
   if (total > 0) {
     state.contenders.forEach((c, rank) => {
@@ -48,7 +51,7 @@ export function BallotBar({
         title: `Abstain: ${state.abstain}`,
       });
     }
-    if (state.lock > 0) {
+    if (showLock && state.lock > 0) {
       segments.push({
         key: 'lock',
         share: state.lock / total,

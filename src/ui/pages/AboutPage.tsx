@@ -4,22 +4,31 @@ export function AboutPage() {
       <h1>About EvoVote</h1>
 
       <section>
-        <h2>What a username contest is</h2>
+        <h2>What a contest is</h2>
         <p>
-          Dash Platform usernames (DPNS names) normalize look-alike characters:
-          <code>0</code> and <code>o</code>, <code>1</code>/<code>l</code>/
-          <code>i</code>, and hyphens all collapse to the same normalized name.
-          Short or premium names, and any name whose normalized form is
-          requested by more than one identity, are not handed out automatically
-          — masternodes vote on who gets the name. That vote is what you see
-          here, read live from Platform with cryptographic proofs.
+          Any Dash Platform contract can mark one unique index per document type as
+          contested. When two identities want the same value, or a value is premium,
+          masternodes vote on who gets it. EvoVote shows every such contest it can find:
+          usernames, moderator elections, and any other contract&apos;s contested index.
+          Everything is read live from Platform with cryptographic proofs.
         </p>
         <p>
-          A contest runs for about two weeks. Masternodes can vote for a
-          contender, <strong>abstain</strong>, or vote <strong>lock</strong>,
-          which awards the name to no one. Regular masternodes vote with weight
-          1, evonodes with weight 4, and each masternode may cast up to 5 votes
-          per contest — the most recent vote is the one that counts.
+          Usernames (DPNS names) are the familiar case: look-alike characters
+          (<code>0</code>/<code>o</code>, <code>1</code>/<code>l</code>/<code>i</code>)
+          normalize to the same name, so a collision is decided by vote. Masternodes can
+          vote for a contender, <strong>abstain</strong>, or, where the contract allows it,
+          vote <strong>lock</strong>, which awards the resource to no one. Moderator
+          elections have no lock: there is always a winner, and a tie goes to the earliest
+          contender.
+        </p>
+        <p>
+          Regular masternodes vote with weight 1, evonodes with weight 4, and each
+          masternode may cast up to 5 votes per contest, counting the first. The most
+          recent vote is the one that counts.
+        </p>
+        <p>
+          This version targets <strong>testnet</strong> (protocol 14). Mainnet support
+          arrives once mainnet runs protocol 14.
         </p>
       </section>
 
@@ -42,8 +51,9 @@ export function AboutPage() {
           <li>
             The vote transition is signed locally and broadcast directly to
             Platform nodes. Platform derives your voter identity from the
-            ProTxHash plus the voting key hash — no Platform identity or
-            credits are needed.
+            ProTxHash plus the voting key hash, and EvoVote checks that
+            identity's key against yours before accepting it. No Platform identity
+            or credits of your own are needed.
           </li>
         </ol>
         <p>

@@ -986,3 +986,93 @@ a:focus-visible {
     animation-duration: 2s;
   }
 }
+
+/* ---- v2: networks, kinds, read issues ---- */
+
+/* Testnet gets its own accent so the network is obvious at a glance. */
+.network-testnet .network-select {
+  border: 2px solid var(--amber);
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.network-banner {
+  background: var(--amber-tint);
+  color: var(--amber);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 24px;
+  font-size: 14px;
+  text-align: center;
+}
+
+.kind-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin-bottom: 14px;
+  font-size: 14px;
+}
+
+.kind-tabs a {
+  color: var(--ink-2);
+  text-decoration: none;
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
+}
+
+.kind-tabs a.current {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--blue);
+}
+
+.kind-chip {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+
+.kind-title {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.poll-meta {
+  overflow-wrap: anywhere;
+}
+
+.read-issues {
+  margin: 8px 0 14px;
+}
+
+.read-issues p {
+  margin: 2px 0;
+}
+
+.plan-skip {
+  color: var(--amber);
+}
+
+.kv-table {
+  margin: 6px 0;
+  display: grid;
+  gap: 2px;
+}
+
+.kv-table div {
+  display: flex;
+  gap: 10px;
+}
+
+.kv-table dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mn-status.unverified .mn-status-text {
+  color: var(--amber);
+}
