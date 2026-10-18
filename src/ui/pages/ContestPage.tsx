@@ -16,11 +16,13 @@ import {
 } from '../../model/contest';
 import { displayIndexValue } from '../../model/indexValue';
 import { decodePollKey, type PollKey } from '../../model/pollKey';
+import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
 import { CharterNotices } from '../charters/CharterNotices';
 import { ABSTAIN_COLOR, BallotBar, contenderColor, LOCK_COLOR } from '../components/BallotBar';
 import { ContestedName } from '../components/ContestedName';
+import { Discussion } from '../discussion/Discussion';
 import { KindTitle } from '../components/KindTitle';
 import { ReadIssues } from '../components/ReadIssues';
 import { countdown, endDate, plural, shortId } from '../format';
@@ -222,16 +224,17 @@ function ContestHeader({ pollKey, contest }: { pollKey: PollKey; contest?: Conte
 }
 
 export function ContestPage({
-  sdk,
+  handle,
   network,
   keyString,
   onVote,
 }: {
-  sdk: EvoSDK;
+  handle: SdkHandle;
   network: Network;
   keyString: string;
   onVote: (contest: Contest, choice: VoteChoice) => void;
 }) {
+  const sdk = handle.sdk;
   const pollKey = decodePollKey(keyString);
   const [state, setState] = useState<Contest | 'loading' | { error: string }>('loading');
   const [endsAtMs, setEndsAtMs] = useState<number | undefined>();
@@ -244,6 +247,12 @@ export function ContestPage({
         ? { ...state, endsAtMs: endsAtMs ?? state.endsAtMs }
         : undefined,
     [state, endsAtMs],
+  );
+
+  // The identities in the contest: a charter's are its leaders.
+  const contenderIds = useMemo(
+    () => loaded?.tally.contenders.map((c) => c.identityId) ?? [],
+    [loaded],
   );
 
   useEffect(() => {
@@ -306,6 +315,7 @@ export function ContestPage({
         <ContestHeader pollKey={pollKey} />
         <ReadIssues failures={failures} caps={[]} />
         <p className="page-note">Nobody contests this on {network}.</p>
+        <Discussion handle={handle} network={network} pollKey={pollKey} contenders={contenderIds} />
       </div>
     );
   }
@@ -391,6 +401,8 @@ export function ContestPage({
         Each masternode can cast up to 5 votes on a contest, counting the first; the latest
         vote counts. Regular masternodes vote with weight 1, evonodes with weight 4.
       </p>
+
+      <Discussion handle={handle} network={network} pollKey={pollKey} contenders={contenderIds} />
     </div>
   );
 }

@@ -78,7 +78,7 @@ function Page({
       return (
         <ContestPage
           key={route.keyString}
-          sdk={handle.sdk}
+          handle={handle}
           network={network}
           keyString={route.keyString}
           onVote={onVote}

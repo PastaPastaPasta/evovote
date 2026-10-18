@@ -25,6 +25,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+        env:
+          VITE_DISCUSSION_TESTNET_CONTRACT_ID: ${{ vars.VITE_DISCUSSION_TESTNET_CONTRACT_ID }}
+          VITE_DISCUSSION_MAINNET_CONTRACT_ID: ${{ vars.VITE_DISCUSSION_MAINNET_CONTRACT_ID }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

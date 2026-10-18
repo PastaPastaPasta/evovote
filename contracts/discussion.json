@@ -1,0 +1,21 @@
+{
+  "comment": {
+    "type": "object",
+    "documentsMutable": false,
+    "canBeDeleted": false,
+    "signatureSecurityLevelRequirement": 2,
+    "indices": [
+      {"name": "scope", "properties": [{"scope": "asc"}, {"$createdAt": "asc"}]},
+      {"name": "author", "properties": [{"$ownerId": "asc"}, {"$createdAt": "asc"}]}
+    ],
+    "properties": {
+      "scope": {"type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$", "position": 0},
+      "pollKey": {"type": "string", "minLength": 1, "maxLength": 1280, "position": 1},
+      "body": {"type": "string", "minLength": 1, "maxLength": 2000, "position": 2},
+      "replyTo": {"type": "array", "byteArray": true, "minItems": 32, "maxItems": 32, "contentMediaType": "application/x.dash.dpp.identifier", "position": 3},
+      "supports": {"type": "array", "byteArray": true, "minItems": 32, "maxItems": 32, "contentMediaType": "application/x.dash.dpp.identifier", "position": 4}
+    },
+    "required": ["scope", "pollKey", "body", "$createdAt"],
+    "additionalProperties": false
+  }
+}
