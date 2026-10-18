@@ -1,10 +1,36 @@
 import { errorCode, errorMessage } from '../sdk/errors';
 
 /**
- * Consensus refusal codes a vote (or, later, a contest write) can earn, in
+ * Consensus refusal codes a vote or a moderator-election write can earn, in
  * plain words. Codes from rs-dpp `errors/consensus/codes.rs` at v5.0.0-rc.4.
  */
 export const REFUSALS: Readonly<Record<number, string>> = {
+  10421: 'A text is longer than Platform allows (counted in bytes).',
+  10422: 'The reward split does not add up to 100.',
+  11000: 'A charter field is missing or has the wrong type.',
+  20004: 'This key cannot sign this: its security level is not allowed here.',
+  20005: 'This key cannot sign this: it has the wrong purpose. Use an authentication key.',
+  20007: 'This key cannot sign this: use a HIGH or CRITICAL authentication key.',
+  30000: 'The identity does not have enough credits to pay for this.',
+  40100: 'That document already exists.',
+  40112: 'This identity has already applied in this contest; each identity can apply once.',
+  40114: 'The application did not carry the contest fund it must pay.',
+  40120:
+    'Something it refers to does not exist: the target contract, a reason, the proposal, or a member who has not asked to join.',
+  40123:
+    'A key it refers to does not exist: the leader has no decryption key for join requests, or you have no encryption key for them.',
+  40124: 'A key it refers to is disabled.',
+  40135:
+    'The target contract does not qualify: it does not declare elected moderation, or its election delay has not passed yet.',
+  40136:
+    'A key it refers to is the wrong kind: the leader needs a decryption key bound to submittedCharter, a member an encryption key bound to joinRequest.',
+  40141: 'This contest already has the most contenders it can hold.',
+  40205: 'This identity already holds the most keys Platform allows.',
+  40206: 'That key is already on an identity.',
+  40207: 'That key id is already used on this identity.',
+  40210: "The identity's balance is too low for this.",
+  40211: 'This identity already has a key with exactly these contract bounds.',
+  41203: "A moderation action must cite a reason the seated team's charter lists.",
   40111:
     'The contest is no longer accepting new contenders: its join window has closed.',
   40105: 'That resource is already taken. A moderator seat is permanent once awarded.',
@@ -36,16 +62,23 @@ export interface DescribedError {
   detail: string;
 }
 
-/** Turn any SDK error into plain words plus the raw detail. */
-export function describeVoteError(e: unknown): DescribedError {
+function describe(e: unknown, what: string): DescribedError {
   const detail = errorMessage(e);
   const code = errorCode(e);
   const known = code !== undefined ? REFUSALS[code] : undefined;
   return {
     code,
-    message:
-      known ??
-      (code !== undefined ? `Platform refused the vote (code ${code}).` : detail),
+    message: known ?? (code !== undefined ? `Platform refused the ${what} (code ${code}).` : detail),
     detail,
   };
+}
+
+/** Turn any SDK error from a vote into plain words plus the raw detail. */
+export function describeVoteError(e: unknown): DescribedError {
+  return describe(e, 'vote');
+}
+
+/** The same, for a document or identity write. */
+export function describeWriteError(e: unknown): DescribedError {
+  return describe(e, 'write');
 }

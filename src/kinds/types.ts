@@ -14,6 +14,8 @@ export interface ContenderView {
   subtitle?: string;
   /** Key/value rows (the generic kind shows the document's fields). */
   fields?: Array<[string, string]>;
+  /** A page with more about this contender (a charter's proposal page). */
+  link?: { href: string; label: string };
 }
 
 /**

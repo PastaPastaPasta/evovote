@@ -84,3 +84,18 @@ export function base64UrlDecode(encoded: string): string {
   const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
+
+/** The length of a string in UTF-8 bytes (what Platform's size limits count). */
+export function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** Whether a string is a base58 Platform identifier (32 bytes). */
+export function isBase58Identifier(value: string): boolean {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(value)) return false;
+  try {
+    return base58Decode(value).length === 32;
+  } catch {
+    return false;
+  }
+}
