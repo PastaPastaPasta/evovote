@@ -11,11 +11,12 @@ import type { KindId } from '../kinds/types';
  *   #/                         overview of every kind
  *   #/k/<kind>                 the list for one kind (dpns | charter | generic)
  *   #/p/<pollKey>              one contest (canonical PollKey string)
- *   #/m/<target>[/charter/<id>] moderator election hub / proposal  (WP2)
+ *   #/m                        moderated-contract directory
+ *   #/m/<target>[/charter/<id>] moderator election hub / proposal
  *   #/c/<contractId>           generic browser for one contract     (WP5)
  *   #/c/<label>                v1 link: redirects to the DPNS poll key
  *   #/mn                       masternode keyring
- *   #/me                       identity session                     (WP3)
+ *   #/me                       identity session
  *   #/about
  *
  * `#/c/<x>` is shared by v1 username links and the contract browser. A
@@ -28,6 +29,7 @@ export type Route =
   | { page: 'home' }
   | { page: 'kind'; kind: KindId }
   | { page: 'poll'; keyString: string; redirect?: boolean }
+  | { page: 'moderatedDirectory' }
   | { page: 'moderated'; target: string; charterId?: string }
   | { page: 'contract'; contractId: string }
   | { page: 'mn' }
@@ -60,6 +62,7 @@ export function parseRoute(hash: string): Route {
   if (path === 'about') return { page: 'about' };
   if (path === 'mn') return { page: 'mn' };
   if (path === 'me') return { page: 'me' };
+  if (path === 'm') return { page: 'moderatedDirectory' };
 
   const kind = path.match(/^k\/([^/]+)$/);
   if (kind) {

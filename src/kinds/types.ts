@@ -17,6 +17,8 @@ export interface ContenderView {
   fields?: Array<[string, string]>;
   /** Typed key/value rows (identifiers with copy buttons, bytes as hex). */
   rows?: FieldRow[];
+  /** A page with more about this contender (a charter's proposal page). */
+  link?: { href: string; label: string };
 }
 
 /**

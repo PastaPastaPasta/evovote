@@ -3,6 +3,7 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import { getActivePolls } from '../../discovery/activePolls';
 import type { Failure } from '../../discovery/types';
 import { fetchContest, fetchVoters } from '../../discovery/voteState';
+import { charterTarget, moderatedHref } from '../../charters/pollKey';
 import { dpnsDisplayLabel, dpnsLabel } from '../../kinds/dpns';
 import { kindFor } from '../../kinds/registry';
 import type { ContenderView, ContestKind } from '../../kinds/types';
@@ -16,11 +17,14 @@ import {
 import { displayIndexValue } from '../../model/indexValue';
 import { decodePollKey, type PollKey } from '../../model/pollKey';
 import { canVoteOnPoll } from '../../voting/cast';
+import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
+import { CharterNotices } from '../charters/CharterNotices';
 import { ABSTAIN_COLOR, BallotBar, contenderColor, LOCK_COLOR } from '../components/BallotBar';
 import { ContestedName } from '../components/ContestedName';
 import { FieldTable } from '../components/FieldTable';
+import { Discussion } from '../discussion/Discussion';
 import { KindTitle } from '../components/KindTitle';
 import { PollIndexInfo } from '../components/PollIndexInfo';
 import { ReadIssues } from '../components/ReadIssues';
@@ -137,6 +141,11 @@ function ContenderRow({
           </dl>
         )}
         {view.rows && view.rows.length > 0 && <FieldTable rows={view.rows} />}
+        {view.link && (
+          <a className="link-button" href={view.link.href}>
+            {view.link.label} →
+          </a>
+        )}
         <Voters sdk={sdk} pollKey={contest.key} contenderId={contender.identityId} />
       </div>
       <div className="contender-tally">
@@ -197,6 +206,7 @@ function ContestHeader({
   contest?: Contest;
 }) {
   const label = dpnsLabel(pollKey);
+  const target = charterTarget(pollKey);
   const summary = contest ?? { key: pollKey, keyString: '' };
   const shown = label !== undefined ? dpnsDisplayLabel(summary) : undefined;
   return (
@@ -210,6 +220,11 @@ function ContestHeader({
       {label !== undefined && shown && shown.toLowerCase() !== label.toLowerCase() && (
         <p className="mono-label">registers as {label}.dash</p>
       )}
+      {target !== undefined && (
+        <p>
+          <a href={moderatedHref(target)}>Election hub for this contract →</a>
+        </p>
+      )}
       {label === undefined && (
         <p className="mono-label poll-meta">
           contract {shortId(pollKey.contractId, 6)} · {pollKey.documentTypeName} ·{' '}
@@ -222,16 +237,17 @@ function ContestHeader({
 }
 
 export function ContestPage({
-  sdk,
+  handle,
   network,
   keyString,
   onVote,
 }: {
-  sdk: EvoSDK;
+  handle: SdkHandle;
   network: Network;
   keyString: string;
   onVote: (contest: Contest, choice: VoteChoice) => void;
 }) {
+  const sdk = handle.sdk;
   const pollKey = decodePollKey(keyString);
   const [state, setState] = useState<Contest | 'loading' | { error: string }>('loading');
   const [endsAtMs, setEndsAtMs] = useState<number | undefined>();
@@ -247,6 +263,12 @@ export function ContestPage({
         ? { ...state, endsAtMs: endsAtMs ?? state.endsAtMs }
         : undefined,
     [state, endsAtMs],
+  );
+
+  // The identities in the contest: a charter's are its leaders.
+  const contenderIds = useMemo(
+    () => loaded?.tally.contenders.map((c) => c.identityId) ?? [],
+    [loaded],
   );
 
   useEffect(() => {
@@ -310,6 +332,7 @@ export function ContestPage({
         <ContestHeader sdk={sdk} pollKey={pollKey} />
         <ReadIssues failures={failures} caps={[]} />
         <p className="page-note">Nobody contests this on {network}.</p>
+        <Discussion handle={handle} network={network} pollKey={pollKey} contenders={contenderIds} />
       </div>
     );
   }
@@ -353,6 +376,7 @@ export function ContestPage({
               : 'This poll is not in the list of open polls read from Platform, so it cannot be voted on from here. Reload to try again.'}
         </p>
       )}
+      {kind.id === 'charter' && <CharterNotices />}
 
       <BallotBar state={contest.tally} showLock={choices.includes('lock')} />
 
@@ -405,6 +429,8 @@ export function ContestPage({
         Each masternode can cast up to 5 votes on a contest, counting the first; the latest
         vote counts. Regular masternodes vote with weight 1, evonodes with weight 4.
       </p>
+
+      <Discussion handle={handle} network={network} pollKey={pollKey} contenders={contenderIds} />
     </div>
   );
 }

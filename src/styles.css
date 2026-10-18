@@ -1135,3 +1135,213 @@ a:focus-visible {
   flex-wrap: wrap;
   margin: 8px 0 0;
 }
+
+/* ---- moderator elections and the identity session (WP2/WP3) ---- */
+
+.charter-card,
+.paid-write {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 16px 18px;
+  margin: 16px 0;
+}
+.paid-write {
+  border-top: 3px solid var(--blue);
+}
+.paid-write h3,
+.wizard h3 {
+  margin: 18px 0 6px;
+  font-size: 15px;
+}
+.paid-write h3 {
+  margin-top: 0;
+}
+.charter-card .section-title {
+  margin-top: 0;
+}
+.charter-card .fine-print,
+.wizard .fine-print,
+.signin .fine-print,
+.paid-write .fine-print {
+  border-top: 0;
+  padding-top: 0;
+  margin: 4px 0 8px;
+}
+.charter-card .page-note,
+.wizard .page-note,
+.paid-write .page-note,
+.contest-page .page-note.ok,
+.contest-page .page-note.warn {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  margin: 8px 0;
+}
+.page-note.ok {
+  color: var(--win);
+  background: var(--win-tint);
+}
+.page-note.warn {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+.page-note.error {
+  background: var(--lock-tint);
+}
+.charter-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.charter-notices {
+  margin: 10px 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.charter-notices li + li {
+  margin-top: 4px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+  flex: 1;
+}
+.field.narrow {
+  flex: 0 1 120px;
+}
+.field input,
+.field textarea,
+.key-field input {
+  font: inherit;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+}
+.field textarea {
+  resize: vertical;
+}
+.form-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ack {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 10px 0;
+  font-size: 14px;
+}
+.ack input {
+  margin-top: 3px;
+}
+.reason-list,
+.joiner-list {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.join-message {
+  margin: 4px 0 0 24px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--line-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+.key-backup {
+  border: 1px dashed var(--amber);
+  background: var(--amber-tint);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: 8px 0;
+}
+.key-wif {
+  overflow-wrap: anywhere;
+  user-select: all;
+  background: var(--surface);
+  padding: 6px 8px;
+  border-radius: var(--radius);
+}
+.key-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.key-table th,
+.key-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.key-table tr.current td {
+  background: var(--blue-tint);
+}
+.choose-identity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.identity-name strong {
+  font-weight: 600;
+}
+.directory-row,
+.proposal-row {
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 2fr) auto auto;
+}
+.proposal-excerpt {
+  color: var(--ink-2);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.contenders.compact .contender {
+  padding: 6px 0;
+}
+.wizard details,
+.charter-card details {
+  margin: 8px 0;
+}
+.wizard summary,
+.charter-card summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .directory-row,
+  .proposal-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .key-table th:nth-child(3),
+  .key-table td:nth-child(3) {
+    display: none;
+  }
+}
+
+/* Contest discussion */
+.discussion { border-top: 2px solid var(--ink); margin-top: 40px; padding-top: 24px; }
+.discussion h2 { margin: 2px 0 8px; font-size: 26px; }
+.discussion-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.discussion-compose { display: grid; gap: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: 20px; margin: 20px 0; }
+.discussion-compose textarea, .discussion-compose select { width: 100%; min-width: 0; font: inherit; }
+.discussion-compose textarea { resize: vertical; }
+.discussion-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.segmented { display: inline-flex; gap: 4px; }
+.segmented button[aria-pressed='true'] { background: var(--blue-tint); border-radius: var(--radius); font-weight: 600; }
+.comment-list { list-style: none; padding: 0; margin: 0; }
+.comment { border-bottom: 1px solid var(--line); padding: 18px 0; }
+.comment-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.comment-head time { color: var(--ink-2); font-size: 12px; margin-left: auto; }
+.comment-supports { color: var(--ink-2); font-size: 13px; }
+.comment-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
+.comment-reply-to { margin: 6px 0 0; }
+.discussion button:disabled { cursor: default; opacity: .55; }

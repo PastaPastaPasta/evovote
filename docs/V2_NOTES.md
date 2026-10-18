@@ -54,6 +54,31 @@ Legend: ✅ confirmed · ⚠️ differs from design §3 (the code follows the ve
 | Weight 1 / 4 | ❔ | Not checked in WP1 (no browser-side masternode-type source). The keyring does not show weight yet. |
 | Consensus codes used by the refusal map | rs-dpp `errors/consensus/codes.rs` @ rc.4 | ✅ 40105, 40110, 40111, 40204, 40300–40307, 40400, 40401. |
 
+## Moderator elections and the identity session (WP2/WP3)
+
+Checked on 2026-10-17 against testnet (rc.4), read-only. **[live test]** marks the facts `npm run test:live` re-checks.
+
+| Fact | How verified | Result |
+|---|---|---|
+| No charter activity on testnet yet | `documents.query` on every charters type; `contestedResources` sweep | ✅ 0 `reason`, `submittedCharter`, `joinRequest` and `electedCharter` documents, and no contested target. The directory (`#/m`) is empty unless a contract is configured or added. **[live test]** |
+| Contract JSON carries `createdAt` | `contract.toJSON(14)` | ✅ A top-level `createdAt` (ms), `null` on system contracts. `electionDelay` is measured from it; a contract with no `createdAt` never opens an election that declares a delay. |
+| Elected declaration shape | wasm-sdk `ContractModerators` typings + Platform book | ⚠️ Not seen live (no elected contract on testnet). `charters/declaration.ts` reads `config.moderation.moderators` with `$type: 'elected'` and defaults missing windows to one week, as the book says. |
+| The fund to join a moderator election | `documents.contestFundToJoin(electedCharter)` | ✅ 50,000,000,000 credits (0.5 DASH) for a contest with no contenders. **[live test]** `documents.create({ contestFund })` states it; no hand-built `$prefundedVotingBalance` is needed. |
+| Fee estimates | wasm `documentCreateCost(contract, type, opts, 14)` | ✅ Works offline from the contract. Defaults (newValues): `reason` 0.00046, `submittedCharter` 0.00148, `joinRequest` 0.00066, `electedCharter` 0.00043 DASH plus the 0.5 DASH fund (reported in `contractCharges`). **[live test]** Identity updates have no estimator; the app uses 0.001 DASH. |
+| Identifier properties in document JSON | probes | ⚠️ A document read from chain renders identifiers as base58 (and `properties` holds strings); one built with `Document.fromObject` without its contract renders them as base64. Integers in a built document come back as `bigint`. `charters/documents.ts` `idFromValue` accepts every form. |
+| Identity by key hash | `identities.byPublicKeyHash` | ✅ Finds an identity by the HASH160 of an ECDSA_SECP256K1 key. The session falls back to `byNonUniquePublicKeyHash` (ECDSA_HASH160 keys) and asks the user to pick when several share it. **[live test]** |
+| Key getters | `IdentityPublicKey` probe | ✅ `purpose`/`securityLevel`/`keyType` are upper-case strings (`DECRYPTION`, `MEDIUM`, `ECDSA_SECP256K1`), `data` is hex, `contractBounds.toJSON()` is `{ $type: 'documentType', id, documentTypeName }`. |
+
+### Write paths not verified live
+
+Nothing was signed or broadcast in WP2/WP3. Unit tests build and sign with throwaway keys against a mocked SDK. WP6 must
+run each of these on a throwaway elected contract: `reason` create, the identity update adding a DECRYPTION key bound to
+`submittedCharter` (MASTER-signed, the new key signing its own proof), `submittedCharter` create, the identity update adding
+an ENCRYPTION key bound to `joinRequest`, `buildJoinRequest` + create, `encryptedFor.decrypt` of a join request by the
+leader, and the `electedCharter` create with `contestFund` (first applicant, second applicant, late applicant → 40111,
+after seating → 40105). Also check that integer properties built as JS numbers are accepted on rc.4 (they were on the
+5.0 betas).
+
 ## Not verified in WP1
 
 - **Live voting**: by design, there were no keys and no broadcasts. The full sign → broadcast → read-back path needs testnet masternode keys (WP6 QA).
@@ -63,3 +88,37 @@ Legend: ✅ confirmed · ⚠️ differs from design §3 (the code follows the ve
 ## Ops notes
 
 - Some testnet evonodes (`85.209.243.x`) answer browser requests without CORS headers. The SDK fails over to other nodes, but the browser console logs the failures.
+
+## Discussions (WP4)
+
+Checked on 2026-10-17, offline except where marked. Nothing was signed or broadcast; the contract is **not published** yet
+(`npm run discussion:publish` is a dry run unless `--live`, and the owner runs it).
+
+### Contract design: `scope` is a hash, `pollKey` is the readable key
+
+| Fact | How verified | Result |
+|---|---|---|
+| An indexed string is at most 63 characters; an indexed byte array at most 255 | rs-dpp `MAX_INDEXED_STRING_PROPERTY_LENGTH` / `MAX_INDEXED_BYTE_ARRAY_PROPERTY_LENGTH` at `v5.1-dev`; rc.4 `DataContract` validation in the unit tests | ✅ A canonical poll key (`contractId/docType/index/<base64url>`) is always longer than 63 (the contract id alone is 44), so it **cannot be the indexed scope**. |
+| Decision | | `scope` = base64url(SHA-256(UTF-8 of the canonical key)), always 43 characters, `pattern ^[A-Za-z0-9_-]{43}$`, indexed as `(scope, $createdAt)`. `pollKey` = the canonical key itself, **not indexed**, `maxLength` 1280. A string (not a 32-byte array) so queries pass a plain string and the value is human-checkable. Other clients can derive the scope with any SHA-256. |
+| `pollKey` bound | unit test | ✅ Worst case is a contract id (44), a document type name (<= 64), an index name (<= 32, meta schema) and 10 index properties (the meta schema's max) of 63-character strings: 1026 characters, **assuming ASCII values**. Non-ASCII characters take 2-4 UTF-8 bytes each before the base64url step, so a key of many long non-ASCII values can exceed 1280; `scopeOf` then throws and discussion is unavailable for that one contest, with a message (not an error elsewhere). Realistic keys (DPNS, charters) are under 200. |
+| Why keep `pollKey` | | The hash alone cannot say which contest a comment is about. The reader also drops any comment whose `pollKey` differs from the key asked for, so a document cannot carry a scope hash for one contest and a readable key for another. |
+| `supports` | | Optional identifier (a contender the author backs), no index. `replyTo` is kept. |
+| Immutable, undeletable, HIGH signature level | | As on the v1 branch. Bound AUTHENTICATION keys need no contract opt-in. |
+
+### Queries and cost
+
+| Fact | How verified | Result |
+|---|---|---|
+| `where [prop ==]`, `orderBy [[prop asc], [$createdAt desc]]` and `startAfter <document id>` | testnet, DashPay `contactRequest.ownerIdCreatedAt` = `($ownerId, $createdAt)`, the same shape as the comment indices | ✅ `desc` is exactly the reverse of `asc`; `startAfter` works in `desc`. **[live test]** |
+| Comment create cost | `documentCreateCost` from the local contract | ~0.00065 DASH (a 50-character comment, first of its contest) and ~0.00126 DASH (2000 characters); ~0.00037 / ~0.00098 once the contest has comments. The compose box prices each draft with this estimator. |
+
+### Not verified: WP6 must check on a published testnet contract
+
+- Publish with `npm run discussion:publish -- --network testnet --owner <id> --key-file <path> --live`; the contract validates offline, and the
+  dry run against testnet printed an id for an existing owner.
+- `documents.create` for a `comment`: the placeholder `$id` is replaced (as for charters), `$createdAt` set from the browser clock is
+  accepted (the schema requires it), and no `$revision` is needed on an immutable type.
+- Reading back: identifier properties (`replyTo`, `supports`) render as base58 from chain; `readComment` accepts every form.
+- The scope hash computed in the browser matches what a second client computes (same canonical key string).
+- A charter contest and a generic one get their own discussion (the DPNS key is the only one exercised in unit tests).
+- Fee estimate vs the actual balance drop.
