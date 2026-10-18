@@ -13,7 +13,8 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
-    // The WASM SDK chunk is ~9 MB by design; silence the default 500 kB nag.
-    chunkSizeWarningLimit: 12000,
+    // The WASM SDK chunk is ~12.6 MB (5.0.0-rc.4) by design; silence the
+    // default 500 kB nag but still warn if it balloons further.
+    chunkSizeWarningLimit: 14000,
   },
 });
