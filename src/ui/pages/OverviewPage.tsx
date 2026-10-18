@@ -9,6 +9,7 @@ import type { Contest, ContestSummary } from '../../model/contest';
 import type { Network } from '../../sdk/network';
 import { ABSTAIN_COLOR, BallotBar, contenderColor, LOCK_COLOR } from '../components/BallotBar';
 import { KindTitle } from '../components/KindTitle';
+import { OpenContractForm } from '../components/OpenContractForm';
 import { ReadIssues } from '../components/ReadIssues';
 import { countdown, plural } from '../format';
 import { useNow } from '../hooks';
@@ -210,7 +211,12 @@ export function OverviewPage({
         </div>
       );
     }
-    return <p className="page-note">Nothing is contested on {network} right now.</p>;
+    return (
+      <>
+        <p className="page-note">Nothing is contested on {network} right now.</p>
+        <OpenContractForm network={network} />
+      </>
+    );
   }
 
   const soonest = visibleOpen[0];
@@ -273,6 +279,7 @@ export function OverviewPage({
     <div className="contest-list">
       <KindTabs active={kindFilter} counts={counts} />
       {heading && <h1 className="section-title">{heading}</h1>}
+      {(!kindFilter || kindFilter === 'generic') && <OpenContractForm network={network} />}
       <div className="status-strip">
         <span className="mono-label">{plural(visibleOpen.length, 'open contest')}</span>
         {soonest?.endsAtMs && (

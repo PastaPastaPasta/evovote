@@ -16,14 +16,17 @@ import {
 } from '../../model/contest';
 import { displayIndexValue } from '../../model/indexValue';
 import { decodePollKey, type PollKey } from '../../model/pollKey';
+import { canVoteOnPoll } from '../../voting/cast';
 import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
 import { CharterNotices } from '../charters/CharterNotices';
 import { ABSTAIN_COLOR, BallotBar, contenderColor, LOCK_COLOR } from '../components/BallotBar';
 import { ContestedName } from '../components/ContestedName';
+import { FieldTable } from '../components/FieldTable';
 import { Discussion } from '../discussion/Discussion';
 import { KindTitle } from '../components/KindTitle';
+import { PollIndexInfo } from '../components/PollIndexInfo';
 import { ReadIssues } from '../components/ReadIssues';
 import { countdown, endDate, plural, shortId } from '../format';
 import { useNow } from '../hooks';
@@ -137,6 +140,7 @@ function ContenderRow({
             ))}
           </dl>
         )}
+        {view.rows && view.rows.length > 0 && <FieldTable rows={view.rows} />}
         {view.link && (
           <a className="link-button" href={view.link.href}>
             {view.link.label} →
@@ -192,7 +196,15 @@ function StatusChip({ contest, now }: { contest: Contest; now: number }) {
   return <span className="chip">active contest</span>;
 }
 
-function ContestHeader({ pollKey, contest }: { pollKey: PollKey; contest?: Contest }) {
+function ContestHeader({
+  sdk,
+  pollKey,
+  contest,
+}: {
+  sdk: EvoSDK;
+  pollKey: PollKey;
+  contest?: Contest;
+}) {
   const label = dpnsLabel(pollKey);
   const target = charterTarget(pollKey);
   const summary = contest ?? { key: pollKey, keyString: '' };
@@ -219,6 +231,7 @@ function ContestHeader({ pollKey, contest }: { pollKey: PollKey; contest?: Conte
           {pollKey.indexName} · {pollKey.indexValues.map(displayIndexValue).join(' / ')}
         </p>
       )}
+      {kindFor(pollKey).id === 'generic' && <PollIndexInfo sdk={sdk} pollKey={pollKey} />}
     </header>
   );
 }
@@ -239,6 +252,9 @@ export function ContestPage({
   const [state, setState] = useState<Contest | 'loading' | { error: string }>('loading');
   const [endsAtMs, setEndsAtMs] = useState<number | undefined>();
   const [failures, setFailures] = useState<Failure[]>([]);
+  // Whether the open-poll walk has finished: a poll whose index values
+  // `new VotePoll()` cannot rebuild is only votable once the walk found it.
+  const [activeChecked, setActiveChecked] = useState(false);
   const now = useNow();
   // Memoized: contender rows key their effects on this object.
   const loaded = useMemo(
@@ -274,6 +290,7 @@ export function ContestPage({
       const match = active.polls.find((p) => p.keyString === keyString);
       if (match?.endsAtMs) setEndsAtMs(match.endsAtMs);
       setFailures(active.failures);
+      setActiveChecked(true);
     });
     return () => {
       cancelled = true;
@@ -294,7 +311,7 @@ export function ContestPage({
   if (!loaded) {
     return (
       <div className="contest-page">
-        <ContestHeader pollKey={pollKey} />
+        <ContestHeader sdk={sdk} pollKey={pollKey} />
         {typeof state === 'object' && 'error' in state ? (
           <p className="page-note error">
             Could not load this contest on {network}: {state.error}
@@ -312,7 +329,7 @@ export function ContestPage({
   if (isEmptyContest(contest)) {
     return (
       <div className="contest-page">
-        <ContestHeader pollKey={pollKey} />
+        <ContestHeader sdk={sdk} pollKey={pollKey} />
         <ReadIssues failures={failures} caps={[]} />
         <p className="page-note">Nobody contests this on {network}.</p>
         <Discussion handle={handle} network={network} pollKey={pollKey} contenders={contenderIds} />
@@ -321,7 +338,9 @@ export function ContestPage({
   }
 
   const choices = kind.choices(contest);
-  const votable = isVotable(contest, now);
+  const open = isVotable(contest, now);
+  const signable = canVoteOnPoll(pollKey, keyString);
+  const votable = open && signable;
   const readIssues: Failure[] =
     contest.unreadableContenders > 0
       ? [
@@ -336,7 +355,7 @@ export function ContestPage({
 
   return (
     <div className="contest-page">
-      <ContestHeader pollKey={pollKey} contest={contest} />
+      <ContestHeader sdk={sdk} pollKey={pollKey} contest={contest} />
 
       <div className="contest-meta">
         <StatusChip contest={contest} now={now} />
@@ -348,6 +367,15 @@ export function ContestPage({
         <span className="mono-label">{plural(contest.tally.total, 'vote')} cast</span>
       </div>
       <ReadIssues failures={readIssues} caps={[]} />
+      {open && !signable && (
+        <p className="mono-label">
+          {!activeChecked
+            ? 'Checking that this poll is open for voting…'
+            : failures.length > 0
+              ? 'The list of open polls could not be read completely (see above), so this poll cannot be voted on from here. Reload to try again.'
+              : 'This poll is not in the list of open polls read from Platform, so it cannot be voted on from here. Reload to try again.'}
+        </p>
+      )}
       {kind.id === 'charter' && <CharterNotices />}
 
       <BallotBar state={contest.tally} showLock={choices.includes('lock')} />

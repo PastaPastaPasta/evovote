@@ -11,6 +11,15 @@ import type { LoadedKey } from './keyring';
 type VotePollInstance = InstanceType<SdkHandle['mod']['VotePoll']>;
 
 /**
+ * Whether a vote on this poll can be signed from here: the chain's own poll
+ * object is on hand (the open-poll walk saw it), or every index value is one
+ * `new VotePoll()` reproduces. Pages gate their vote buttons on this.
+ */
+export function canVoteOnPoll(key: PollKey, keyString: string): boolean {
+  return livePollFor(keyString) !== undefined || key.indexValues.every(isConstructible);
+}
+
+/**
  * The VotePoll to sign over. Platform keys a poll (and its contest fund) by
  * a hash of its typed index values, so a poll is rebuilt locally only when
  * every value is one `new VotePoll()` reproduces exactly (text/bool/null:
@@ -24,7 +33,7 @@ export function votePollFor(
 ): { poll: VotePollInstance; owned: boolean } {
   const live = livePollFor(keyString);
   if (live) return { poll: live as VotePollInstance, owned: false };
-  if (!key.indexValues.every(isConstructible)) {
+  if (!canVoteOnPoll(key, keyString)) {
     throw new Error(
       'This contest is not in the current list of open polls, so it cannot be voted on from here. Reload the contest and try again.',
     );

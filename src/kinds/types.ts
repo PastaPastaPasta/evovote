@@ -2,6 +2,7 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import type { ArchivePage } from '../discovery/archive';
 import type { Contender, Contest, ContestSummary, VoteChoiceKind } from '../model/contest';
 import type { PollKey } from '../model/pollKey';
+import type { FieldRow } from './fields';
 
 export type KindId = 'dpns' | 'charter' | 'generic';
 
@@ -12,8 +13,10 @@ export interface ContenderView {
   title?: string;
   /** One line of context, e.g. "also holds alice, bob". */
   subtitle?: string;
-  /** Key/value rows (the generic kind shows the document's fields). */
+  /** Plain key/value rows. */
   fields?: Array<[string, string]>;
+  /** Typed key/value rows (identifiers with copy buttons, bytes as hex). */
+  rows?: FieldRow[];
   /** A page with more about this contender (a charter's proposal page). */
   link?: { href: string; label: string };
 }
