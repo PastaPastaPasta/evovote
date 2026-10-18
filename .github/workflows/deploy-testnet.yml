@@ -1,0 +1,42 @@
+name: Deploy testnet site (v2)
+
+# v2 targets testnet and is published to its own Pages site, because this repo's
+# Pages custom domain (vote.dashhq.org) serves v1 from main. The build is pushed
+# to the gh-pages branch of PastaPastaPasta/evovote-testnet with a deploy key.
+
+on:
+  push:
+    branches: [v2]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-testnet
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_DISCUSSION_TESTNET_CONTRACT_ID: ${{ vars.VITE_DISCUSSION_TESTNET_CONTRACT_ID }}
+          VITE_DISCUSSION_MAINNET_CONTRACT_ID: ${{ vars.VITE_DISCUSSION_MAINNET_CONTRACT_ID }}
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          deploy_key: ${{ secrets.TESTNET_PAGES_DEPLOY_KEY }}
+          external_repository: PastaPastaPasta/evovote-testnet
+          publish_branch: gh-pages
+          publish_dir: dist
+          force_orphan: true
+          user_name: github-actions[bot]
+          user_email: 41898282+github-actions[bot]@users.noreply.github.com
+          full_commit_message: "deploy: PastaPastaPasta/evovote@${{ github.sha }}"
