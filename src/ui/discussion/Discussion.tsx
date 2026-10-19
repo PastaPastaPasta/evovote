@@ -164,6 +164,9 @@ function Thread({
         replyingTo={replyingTo}
         onCancelReply={() => setReplyingTo(undefined)}
         onPosted={() => {
+          // The posted reply keeps its target in the confirm step; clearing it here
+          // lets Reply on the same comment open a new reply.
+          setReplyingTo(undefined);
           if (order === 'newest') reload();
           else setOrder('newest');
         }}

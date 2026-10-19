@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { CHARTER_DECRYPTION } from '../../charters/boundKeys';
-import { CHARTERS_CONTRACT_ID, splitText, type RewardSplit } from '../../charters/documents';
+import { CHARTERS_CONTRACT_ID, splitText, type CharterReason, type RewardSplit } from '../../charters/documents';
 import { proposalHref } from '../../charters/pollKey';
-import { fetchReasonsByOwner } from '../../charters/reads';
+import { fetchReasonsByOwner, mergeReasons } from '../../charters/reads';
 import {
   MAX_REASON_DESCRIPTION,
   MAX_REASON_LABEL,
@@ -28,7 +28,7 @@ function NewReason({
   handle: SdkHandle;
   session: IdentitySession;
   existingCodes: string[];
-  onFiled: (id: string) => void;
+  onFiled: (reason: CharterReason) => void;
 }) {
   const [code, setCode] = useState('');
   const [label, setLabel] = useState('');
@@ -54,7 +54,14 @@ function NewReason({
         doneText={`Reason ${code} is filed.`}
         run={() => withDocumentSigner(handle, CHARTERS_CONTRACT_ID, (signer) => fileReason(handle, signer, input))}
         onDone={(outcome) => {
-          if (outcome.status === 'confirmed') onFiled(outcome.value);
+          if (outcome.status !== 'confirmed') return;
+          onFiled({
+            id: outcome.value,
+            ownerId: session.identityId,
+            code,
+            label: label.trim(),
+            ...(description.trim() ? { description: description.trim() } : {}),
+          });
         }}
       >
         <button className="link-button" onClick={() => setReview(false)}>
@@ -104,6 +111,8 @@ export function CharterWizard({
 }) {
   const reasons = useAsync(() => fetchReasonsByOwner(handle.sdk, session.identityId), [handle, session.identityId]);
   const [chosen, setChosen] = useState<string[]>([]);
+  // Reasons filed here, listed until a read has them (see mergeReasons).
+  const [filed, setFiled] = useState<CharterReason[]>([]);
   const [description, setDescription] = useState('');
   const [share, setShare] = useState('100');
   const [split, setSplit] = useState<RewardSplit>({ leader: 40, equal: 30, actions: 30 });
@@ -122,7 +131,9 @@ export function CharterWizard({
     rewardSplit: split,
   };
   const problems = validateCharter(input);
-  const ownReasons = reasons.status === 'ok' ? reasons.value.reasons : [];
+  const read = reasons.status === 'ok' ? reasons.value.reasons : [];
+  const ownReasons =
+    reasons.status === 'ok' ? mergeReasons(read, filed.filter((r) => r.ownerId === session.identityId)) : [];
   // A code must be unique per identity: filing needs the full list of the ones taken.
   const codesKnown = reasons.status === 'ok' && !reasons.value.capped;
   const toggle = (id: string) =>
@@ -175,8 +186,9 @@ export function CharterWizard({
           handle={handle}
           session={session}
           existingCodes={ownReasons.map((r) => r.code)}
-          onFiled={(id) => {
-            setChosen((prev) => [...prev, id]);
+          onFiled={(reason) => {
+            setFiled((prev) => [...prev, reason]);
+            setChosen((prev) => [...prev, reason.id]);
             reasons.reload();
           }}
         />}
