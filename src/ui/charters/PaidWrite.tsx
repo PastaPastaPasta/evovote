@@ -161,11 +161,14 @@ export function PaidWrite<T>({
           {w}
         </p>
       ))}
-      {allBlockers.map((b) => (
-        <p key={b} className="page-note error">
-          {b}
-        </p>
-      ))}
+      {/* Checks before signing: once the write has an outcome they no longer apply
+          (the filed reason's own code, the balance after paying). */}
+      {!outcome &&
+        allBlockers.map((b) => (
+          <p key={b} className="page-note error">
+            {b}
+          </p>
+        ))}
       {ack && !outcome && (
         <label className="ack">
           <input type="checkbox" checked={acked} onChange={(e) => setAcked(e.target.checked)} /> {ack}

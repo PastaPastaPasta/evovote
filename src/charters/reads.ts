@@ -205,6 +205,18 @@ export async function fetchReasonsByOwner(sdk: EvoSDK, ownerId: string): Promise
   return { reasons: items, capped };
 }
 
+/**
+ * The reasons read from Platform plus the ones just filed that the read does not
+ * have yet, in code order. A re-read right after a filing can reach a node that
+ * has not applied that block.
+ */
+export function mergeReasons(read: readonly CharterReason[], filed: readonly CharterReason[]): CharterReason[] {
+  const known = new Set(read.map((r) => r.id));
+  const missing = filed.filter((r) => !known.has(r.id));
+  if (missing.length === 0) return [...read];
+  return [...read, ...missing].sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+}
+
 /** The proposals an identity leads, up to 500. Throws when the read fails. */
 export async function fetchProposalsByLeader(sdk: EvoSDK, leaderId: string): Promise<CharterProposal[]> {
   const { items } = await collectDocs(

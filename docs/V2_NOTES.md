@@ -71,7 +71,8 @@ Checked on 2026-10-17 against testnet (rc.4), read-only. **[live test]** marks t
 
 ### Write paths not verified live
 
-Nothing was signed or broadcast in WP2/WP3. Unit tests build and sign with throwaway keys against a mocked SDK. WP6 must
+Superseded by "Live QA on testnet (WP6)" below, which ran every path listed here except the late-applicant (40111) and
+after-seating (40105) refusals. Nothing was signed or broadcast in WP2/WP3. Unit tests build and sign with throwaway keys against a mocked SDK. WP6 must
 run each of these on a throwaway elected contract: `reason` create, the identity update adding a DECRYPTION key bound to
 `submittedCharter` (MASTER-signed, the new key signing its own proof), `submittedCharter` create, the identity update adding
 an ENCRYPTION key bound to `joinRequest`, `buildJoinRequest` + create, `encryptedFor.decrypt` of a join request by the
@@ -122,3 +123,31 @@ Checked on 2026-10-17, offline except where marked. Nothing was signed or broadc
 - The scope hash computed in the browser matches what a second client computes (same canonical key string).
 - A charter contest and a generic one get their own discussion (the DPNS key is the only one exercised in unit tests).
 - Fee estimate vs the actual balance drop.
+
+## Live QA on testnet (WP6)
+
+Run on 2026-10-19 against testnet (drive 5.0.0-rc.4), through the deployed site
+(`pastapastapasta.github.io/evovote-testnet`) in a browser, with four fresh test identities and four testnet evonodes.
+Setup scripts and keys are outside the repo. Contracts published for the run:
+
+- Discussions: `2iaUXM8bZb6paYW1mRWCEUMe8EU1tp4Tbg456PXPN3qt` (the testnet `VITE_DISCUSSION_TESTNET_CONTRACT_ID`).
+- A throwaway elected contract: `EFyPZPsEDLHtN1R38CgzeAGfWr23DrgthPpTgbCW8zAt` (join window 600 s, vote window 1200 s,
+  interim contractOwner). Its seat is now permanently held by the test identity `Dn2H33…`.
+
+Before the run: the end-date leak that wedged every contest on 5.0.0-beta.2 (a second applicant moving the end date left an
+empty time tree behind) is fixed in rc.4. The move deletes the emptied tree (`add_contested_document_for_contract_operations/v1`
+stops at `vote_root_path().len()`), and `check_for_ended_vote_polls/v1` removes empty end times before it scans.
+
+| Path | Result |
+|---|---|
+| Sign in with a HIGH key (`byPublicKeyHash`) | ✅ identity, balance and keys shown |
+| `reason` create | ✅ on chain. ⚠️ The list re-read right after filing can miss it (stale node); fixed by listing reasons filed in the session until a read has them. The fee estimate is ~30% low (0.000288 estimated, ~0.0004 paid). |
+| Identity update adding DECRYPTION (bound to `submittedCharter`) and ENCRYPTION (bound to `joinRequest`) keys, MASTER-signed | ✅ key #4 on both identities; ~0.0003 DASH each (the app estimates 0.001) |
+| `submittedCharter` create | ✅ cites the chosen reason; the proposal page renders charter, reasons and split |
+| `joinRequest` create and the leader decrypting it | ✅ the message round-trips |
+| `electedCharter` create with `contestFund`, first and second applicant, with a member | ✅ 0.5 DASH fund taken; preflight shows contenders, the join-window close and the 40111 risk |
+| Masternode votes from the browser (bulk import, key check against the voter identity, multi-node ballot) | ✅ 4 evonodes; each vote read back from Platform; proved tally 12 : 4 (weight 4) matches the page |
+| Changing a vote, and skipping a repeat of the current vote | ✅ switch recorded; repeats are skipped before signing ("already votes this way") |
+| Award | ✅ `WonByIdentity` for the **later** applicant on 12 : 4 within one block of the end; the `electedCharter` is stored and the hub shows "Team seated" |
+| Comments, `supports` and replies | ✅ on chain with the contender and supports badges. ⚠️ Reply did nothing while the "posted" panel was up; fixed. |
+| Not run | 40111 (late applicant) and 40105 (applying after seating): both refusals still cost fees, and the preflight warns about both |

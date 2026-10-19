@@ -44,6 +44,21 @@ export function Composer({
   const reviewing = review !== null;
   const [writing, setWriting] = useState(false);
   const [outcome, setOutcome] = useState<WriteOutcome<Comment> | null>(null);
+  // Reply clicked after a comment went through: open a fresh compose box for it.
+  // A draft in progress is left alone; it simply gains the new reply target.
+  // The box is not mounted when Reply's own focus call runs, so it focuses on mount.
+  const [replyTarget, setReplyTarget] = useState(replyingTo?.id);
+  const [focusBody, setFocusBody] = useState(false);
+  if (replyTarget !== replyingTo?.id) {
+    setReplyTarget(replyingTo?.id);
+    if (replyingTo && (outcome?.status === 'confirmed' || outcome?.status === 'pending')) {
+      setBody('');
+      setSupports('');
+      setReview(null);
+      setOutcome(null);
+      setFocusBody(true);
+    }
+  }
 
   if (!session) {
     return (
@@ -107,6 +122,7 @@ export function Composer({
             <span className="mono-label">Your comment</span>
             <textarea
               id="comment-body"
+              autoFocus={focusBody}
               rows={4}
               value={body}
               disabled={reviewing}

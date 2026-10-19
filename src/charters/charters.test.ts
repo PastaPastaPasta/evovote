@@ -10,6 +10,7 @@ import {
 import { charterContenderFields, charterTitle, targetName } from '../kinds/charter';
 import { encodePollKey } from '../model/pollKey';
 import { mergeDirectory } from './directory';
+import { mergeReasons } from './reads';
 import { idFromValue, splitText, toElectedCharter, toJoinRequestMeta, toProposal, toReason } from './documents';
 import { canApply, electionTiming, joinClosesAt, LATE_APPLY_MARGIN_MS, type PhaseInput } from './phase';
 import { charterPollKey, charterTarget, proposalHref } from './pollKey';
@@ -349,6 +350,20 @@ describe('moderated-contract directory', () => {
       { id: MEMBER, sources: ['contested', 'added'] },
       { id: LEADER, sources: ['added'] },
     ]);
+  });
+});
+
+describe('reasons just filed', () => {
+  const reason = (id: string, code: string) => ({ id, ownerId: LEADER, code, label: code });
+
+  it('should list a filed reason the read does not have yet, in code order', () => {
+    const merged = mergeReasons([reason('a', 'ABU'), reason('c', 'SPM')], [reason('b', 'OFF')]);
+    expect(merged.map((r) => r.code)).toEqual(['ABU', 'OFF', 'SPM']);
+  });
+
+  it('should keep the read copy once the read has the filed reason', () => {
+    const read = [{ ...reason('b', 'OFF'), description: 'from Platform' }];
+    expect(mergeReasons(read, [reason('b', 'OFF')])).toEqual(read);
   });
 });
 
