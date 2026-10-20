@@ -68,7 +68,7 @@
   --blue: #0f9af0;
   --blue-deep: #6cc2f5;
   --blue-tint: #11364f;
-  --action: #1484d1;
+  --action: #0b6db3; /* white text on it: 5.4:1 */
   --action-hover: #2b97e2;
   --teal: #4fc4bf;
   --teal-tint: #12342f;
@@ -3440,6 +3440,24 @@ details.signin-key[open] > summary::before {
   margin: 4px 0 10px;
 }
 
+/* Platform out of reach: say so above whatever the cache still shows. */
+.dir-offline {
+  margin: 4px 0 8px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--lock);
+  background: var(--lock-tint);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 15px;
+}
+
+.dir-offline p {
+  margin: 0 0 6px;
+}
+
+.dir-offline .technical {
+  margin: 0 0 8px;
+}
+
 .dir-browse summary {
   cursor: pointer;
   color: var(--blue-deep);
@@ -3470,6 +3488,11 @@ details.signin-key[open] > summary::before {
   margin-left: auto;
 }
 
+.dir-sort {
+  display: inline-flex;
+  gap: 4px;
+}
+
 .dir-sort button {
   border: 1px solid var(--line);
   background: var(--surface);
@@ -3479,9 +3502,16 @@ details.signin-key[open] > summary::before {
   font-size: 12px;
 }
 
-.dir-sort button[aria-pressed='true'] {
-  color: var(--ink);
+.dir-sort button:hover {
   border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.dir-sort button[aria-pressed='true'] {
+  background: var(--blue-tint);
+  border-color: var(--blue);
+  color: var(--blue-deep);
+  font-weight: 600;
 }
 
 /* Fixed minimums keep bars and counts aligned whatever the status says. */
@@ -3504,6 +3534,17 @@ details.signin-key[open] > summary::before {
 
 .dir-name {
   font-family: var(--mono);
+  font-weight: 600;
+}
+
+/* A decided row's name stays in full ink: the faded bar marks it as history. */
+.contest-list .ledger-row.ended .dir-title {
+  color: var(--ink);
+}
+
+/* Moderator elections and other contests are titled in words, not ids. */
+.contest-list .kind-title {
+  font-family: var(--sans);
   font-weight: 600;
 }
 
