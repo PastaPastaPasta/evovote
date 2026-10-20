@@ -141,7 +141,7 @@ function Contest({ sdk, status }: { sdk: EvoSDK; status: ElectionStatus }) {
             <li key={c.identityId} className={won ? 'won' : ''}>
               <span className="hub-tally-name">
                 <IdentityName sdk={sdk} id={c.identityId} />
-                {won && <span className="chip won">won</span>}
+                {won && <span className="badge winner">Winner</span>}
               </span>
               <span className="hub-tally-bar" aria-hidden="true">
                 <span style={{ width: `${share}%` }} />
@@ -153,8 +153,8 @@ function Contest({ sdk, status }: { sdk: EvoSDK; status: ElectionStatus }) {
       </ol>
       <p className="meta">
         {plural(total, 'vote')} in all
-        {contest.tally.abstain > 0 && `, ${contest.tally.abstain} abstaining`}. Votes are weighted: a masternode
-        counts 1, an evonode 4.
+        {contest.tally.abstain > 0 && `, ${contest.tally.abstain} abstaining`}. Votes are weighted: a regular
+        masternode counts 1, an evonode 4.
       </p>
     </section>
   );

@@ -43,9 +43,10 @@ describe('describeVoteError', () => {
   });
 
   it('should name unknown codes and pass other errors through', () => {
-    expect(describeVoteError(wasmError('weird', 49999)).message).toBe(
-      'Platform refused the vote (code 49999).',
-    );
+    expect(describeVoteError(wasmError('weird', 49999))).toMatchObject({
+      message: 'for a reason this site does not recognise (see the technical detail).',
+      detail: 'weird (consensus error 49999)',
+    });
     expect(describeVoteError(wasmError('network down'))).toEqual({
       code: undefined,
       message: 'network down',

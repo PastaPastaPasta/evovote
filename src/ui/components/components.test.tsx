@@ -4,6 +4,9 @@ import type { ContestedIndex } from '../../discovery/contracts';
 import { base58Encode } from '../../model/bytes';
 import { FieldTable } from './FieldTable';
 import { IndexRules } from './IndexRules';
+import { technicalText } from '../charters/PaidWrite';
+import { CopyButton } from './CopyButton';
+import { choiceHeading, currentVoteText } from './VoteModal';
 
 const ID = base58Encode(Uint8Array.from({ length: 32 }, (_, i) => i + 1));
 
@@ -53,5 +56,38 @@ describe('IndexRules', () => {
     expect(html).toContain('Pick one');
     expect(html).toContain('Lock is not allowed');
     expect(html).toContain('matches ^[a-z]+$');
+  });
+});
+
+describe('CopyButton', () => {
+  it('should be an icon with an accessible name, not the word "copy"', () => {
+    const html = renderToStaticMarkup(<CopyButton text="abc" label="Copy contract id" />);
+    expect(html).toContain('aria-label="Copy contract id"');
+    expect(html).toContain('<svg');
+    expect(html.replace(/<[^>]*>/g, '').trim()).toBe('');
+  });
+});
+
+describe('vote modal wording', () => {
+  const id = base58Encode(new Uint8Array(32).fill(3));
+  it('should head the dialog with the contender\'s name, else a short id', () => {
+    expect(choiceHeading({ type: 'identity', identityId: id }, 'alice')).toBe('Vote for alice');
+    expect(choiceHeading({ type: 'identity', identityId: id })).toBe(`Vote for ${id.slice(0, 6)}…${id.slice(-6)}`);
+    expect(choiceHeading({ type: 'lock' })).toBe('Vote lock: award it to no one');
+  });
+
+  it('should say each node\'s current vote in words', () => {
+    const name = () => 'alice';
+    expect(currentVoteText(undefined, name)).toBe('Has not voted yet');
+    expect(currentVoteText({ type: 'identity', identityId: id }, name)).toBe('Votes for alice');
+    expect(currentVoteText({ type: 'abstain' }, name)).toBe('Votes abstain');
+  });
+});
+
+describe('technicalText', () => {
+  it('should say the code once and leave out a detail that repeats the message', () => {
+    expect(technicalText({ code: 40112, message: 'Already applied.', detail: 'raw' })).toBe('code 40112 · raw');
+    expect(technicalText({ code: 49999, message: 'm', detail: 'raw (consensus error 49999)' })).toBe('raw (consensus error 49999)');
+    expect(technicalText({ message: 'same', detail: 'same' })).toBe('');
   });
 });

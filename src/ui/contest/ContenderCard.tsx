@@ -15,6 +15,18 @@ import { endDate, shortId } from '../format';
 export const percent = (part: number, total: number): string =>
   total > 0 ? `${Math.round((part / total) * 100)}%` : '0%';
 
+/**
+ * The voter list's line. A contender's votes are weighted (an evonode counts
+ * 4), so the node count and the votes differ; say both, in that order.
+ */
+export function votersText(nodes: number, votes: number): string {
+  const who = nodes === 1 ? '1 masternode' : `${nodes >= 100 ? 'At least ' : ''}${nodes} masternodes`;
+  const worth = votes === 1 ? '1 vote' : `${votes} votes`;
+  // A capped list or a stale read says nothing about evonodes.
+  if (nodes >= 100) return `${who} voted for this (${worth} in all).`;
+  return votes > nodes ? `${who} voted for this, worth ${worth}: an evonode's vote counts 4.` : `${who} voted for this.`;
+}
+
 /** Prose longer than this is cut at a word with "Read full charter". */
 const CHARTER_EXCERPT = 280;
 
@@ -77,17 +89,14 @@ function Voters({ sdk, pollKey, contender }: { sdk: EvoSDK; pollKey: PollKey; co
   }
   return (
     <div className="voters-panel">
-      <p>
-        {voters.length === 1 ? '1 masternode' : `${voters.length >= 100 ? 'At least ' : ''}${voters.length} masternodes`} voted
-        for this (weight {contender.votes})
-      </p>
+      <p>{votersText(voters.length, contender.votes)}</p>
       <ul>
         {voters.map((v) => (
           <li key={v}>
-            <span className="mono" title={`ProTxHash ${v}`}>
-              {shortId(v, 10)}
+            <span className="mono" title={`Masternode ${v}`}>
+              {shortId(v)}
             </span>{' '}
-            <CopyButton text={v} label={`Copy ProTxHash ${v}`} />
+            <CopyButton text={v} label={`Copy masternode id ${shortId(v)}`} />
           </li>
         ))}
       </ul>
@@ -157,7 +166,7 @@ function CharterBlock({ charter, loser }: { charter: CharterApplicationView; los
 /**
  * One contender: who, the weight behind them, and (for a moderator
  * election) the charter they stand on. `name` is the page's single label
- * for this identity; the full id is in the tooltip and behind "copy id".
+ * for this identity; the full id is in the tooltip and behind the copy icon.
  */
 export function ContenderCard({
   sdk,
@@ -222,8 +231,7 @@ export function ContenderCard({
           <span className="contender-name" title={contender.identityId}>
             {name ?? <span className="mono">{shortId(contender.identityId, 6)}</span>}
           </span>
-          <CopyButton text={contender.identityId} label={`Copy identity id ${contender.identityId}`} />
-          {charter && <span className="contender-role">charter leader</span>}
+          <CopyButton text={contender.identityId} label={`Copy identity id of ${name ?? shortId(contender.identityId)}`} />
           {isWinner && <span className="badge winner">Winner</span>}
         </div>
         {askedFor || otherNames.length > 0 || lost ? (
@@ -265,7 +273,9 @@ export function ContenderCard({
         {!unvoted && (
           <div className="contender-tally">
             <span className="tally-number">{contender.votes}</span>
-            <span className="tally-unit">weight · {percent(contender.votes, total)}</span>
+            <span className="tally-unit">
+              {contender.votes === 1 ? 'vote' : 'votes'} · {percent(contender.votes, total)}
+            </span>
           </div>
         )}
         {canVote && (

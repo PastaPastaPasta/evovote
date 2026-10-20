@@ -395,6 +395,11 @@ main:focus {
   background: var(--paper);
 }
 
+/* On a phone the signed-in identity is its initial in a circle (the name is in the label). */
+.signin-initial {
+  display: none;
+}
+
 /* ---- Layout ---- */
 
 .content {
@@ -864,9 +869,9 @@ main:focus {
 }
 
 .tally-number {
-  font-family: var(--mono);
   font-weight: 700;
   font-size: 20px;
+  font-variant-numeric: tabular-nums;
   display: block;
 }
 
@@ -1023,6 +1028,25 @@ main:focus {
   color: var(--ink-2);
 }
 
+/* What a vote means, before it is cast: three short facts. */
+.modal-facts {
+  list-style: none;
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  display: grid;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+.modal-facts strong {
+  color: var(--ink);
+}
+.mn-status-text .technical {
+  text-align: left;
+}
+
 .modal-empty {
   text-align: center;
   padding: 24px 0;
@@ -1030,6 +1054,14 @@ main:focus {
   flex-direction: column;
   gap: 12px;
   align-items: center;
+}
+.modal-empty p {
+  margin: 0;
+  max-width: 40ch;
+}
+.modal-empty .modal-actions {
+  justify-content: center;
+  margin-top: var(--space-2);
 }
 
 .mn-pick-list,
@@ -1341,6 +1373,25 @@ main:focus {
     padding: 0 var(--space-3);
   }
 
+  .signin-link.signed-in {
+    width: 38px;
+    padding: 0;
+    border-radius: 50%;
+    text-align: center;
+    background: var(--blue-tint);
+    color: var(--blue-deep);
+    border-color: transparent;
+  }
+
+  .signin-link.signed-in .signin-full {
+    display: none;
+  }
+
+  .signin-link.signed-in .signin-initial {
+    display: inline;
+    font-weight: 700;
+  }
+
   .content {
     padding-top: var(--space-5);
   }
@@ -1476,8 +1527,33 @@ main:focus {
   overflow-wrap: anywhere;
 }
 
+/* The copy icon beside an id: quiet until hovered or focused. */
 .copy-button {
-  font-size: var(--text-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin: -4px 0;
+  padding: 0;
+  vertical-align: middle;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.copy-button:hover,
+.copy-button:focus-visible {
+  color: var(--blue-deep);
+  background: var(--surface-2);
+  border-color: var(--line);
+}
+.copy-button.copied {
+  color: var(--win);
+}
+.copy-button.failed {
+  color: var(--lock);
 }
 
 .index-rules {
@@ -2268,16 +2344,29 @@ details.rules > :not(summary) {
   color: var(--ink);
 }
 
-.contest-status {
+/* The contest's state: the hub's status panel, one size smaller. */
+.status-panel.compact {
+  padding: var(--space-3) var(--space-4);
+  margin: 18px 0 26px;
+}
+.status-panel.compact .status-headline {
+  font-size: 1.0625rem;
+  margin: var(--space-2) 0 2px;
+}
+.status-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px 18px;
-  margin: 18px 0 22px;
+  gap: 8px 18px;
 }
-.contest-stat {
-  font-size: 14px;
-  color: var(--ink-2);
+.status-badge.tone-urgent {
+  color: var(--amber);
+  background: var(--amber-tint);
+  border-color: transparent;
+}
+.status-panel.tone-muted {
+  border-left-color: var(--ink-2);
 }
 .text-action,
 .jump-link {
@@ -2393,14 +2482,6 @@ details.rules > :not(summary) {
   text-decoration: none;
 }
 .contender-links a:hover {
-  text-decoration: underline;
-}
-.contender-head .copy-button {
-  color: var(--ink-2);
-  text-decoration: none;
-}
-.contender-head .copy-button:hover {
-  color: var(--blue-deep);
   text-decoration: underline;
 }
 .contender-side {
@@ -2528,7 +2609,7 @@ details.rules > :not(summary) {
   color: var(--ink-2);
 }
 .alt-tally strong {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 16px;
   color: var(--ink);
   margin-right: 4px;

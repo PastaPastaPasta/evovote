@@ -261,6 +261,6 @@ describe('write refusals', () => {
       expect(REFUSALS[code]).toBeTruthy();
     }
     expect(describeWriteError({ message: 'x', code: 40135 }).message).toMatch(/elected moderation/);
-    expect(describeWriteError({ message: 'x', code: 49998 }).message).toBe('Platform refused the write (code 49998).');
+    expect(describeWriteError({ message: 'x', code: 49998 }).message).toBe('for a reason this site does not recognise (see the technical detail).');
   });
 });

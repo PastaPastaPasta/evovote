@@ -6,7 +6,8 @@ import { base58Encode } from '../../model/bytes';
 import { encodePollKey } from '../../model/pollKey';
 import type { Contender, Contest } from '../../model/contest';
 import { orderContenders } from '../pages/ContestPage';
-import { ContenderCard, percent } from './ContenderCard';
+import { ContenderCard, percent, votersText } from './ContenderCard';
+import { contestStatus } from '../pages/ContestPage';
 
 const id32 = (n: number) => base58Encode(new Uint8Array(32).fill(n));
 const A = id32(1);
@@ -49,11 +50,11 @@ describe('contender card', () => {
     expect(card(contest([a, zero]), zero)).not.toContain('Show voters');
   });
 
-  it('should label the tally as weight with its share, and say by how much a loser lost', () => {
+  it('should label the tally in votes with its share, and say by how much a loser lost', () => {
     const a = { identityId: A, votes: 12 };
     const b = { identityId: B, votes: 4 };
     const html = card(contest([a, b], A), b, { winnerVotes: 12 });
-    expect(html).toContain('weight · 25%');
+    expect(html).toContain('votes · 25%');
     expect(html).toContain('Lost 4–12');
     expect(card(contest([a, b], A), a)).toContain('Winner');
   });
@@ -65,7 +66,7 @@ describe('contender card', () => {
     const z = { identityId: B, votes: 0 };
     const unvoted = card(contest([{ identityId: A, votes: 0 }, z], A), z, { winnerVotes: 0 });
     expect(unvoted).not.toContain('Lost');
-    expect(unvoted).not.toContain('weight ·');
+    expect(unvoted).not.toContain('votes ·');
   });
 
   it('should show one label per person: the name, else a short id', () => {
@@ -76,6 +77,22 @@ describe('contender card', () => {
     const text = (html: string) => html.replace(/<[^>]*>/g, ' ');
     expect(text(named)).not.toContain(A.slice(0, 6));
     expect(text(card(contest([a]), a)).match(new RegExp(`${A.slice(0, 6)}…`, 'g'))).toHaveLength(1);
+  });
+
+  it('should not call anyone a "charter leader", and copy ids with an icon button that names what it copies', () => {
+    const a = { identityId: A, votes: 1 };
+    const html = card(contest([a]), a, { name: 'alice.dash' });
+    expect(html).not.toContain('charter leader');
+    expect(html).toContain('aria-label="Copy identity id of alice.dash"');
+    expect(html.replace(/<[^>]*>/g, ' ')).not.toMatch(/\bcopy\b/);
+  });
+
+  it('should say how many masternodes voted and, when evonodes weigh in, what that is worth', () => {
+    expect(votersText(3, 3)).toBe('3 masternodes voted for this.');
+    expect(votersText(1, 4)).toBe("1 masternode voted for this, worth 4 votes: an evonode's vote counts 4.");
+    expect(votersText(100, 130)).toBe('At least 100 masternodes voted for this (130 votes in all).');
+    // A stale read (fewer votes than voters) does not invent evonodes.
+    expect(votersText(3, 2)).toBe('3 masternodes voted for this.');
   });
 
   it('should word shares the same way everywhere', () => {
@@ -91,5 +108,24 @@ describe('orderContenders', () => {
     expect(orderContenders([a, b], B).map((c) => c.identityId)).toEqual([B, A]);
     expect(orderContenders([a, b]).map((c) => c.identityId)).toEqual([A, B]);
     expect(orderContenders([{ ...a, votes: 1 }, { ...b, votes: 3 }], A).map((c) => c.identityId)).toEqual([B, A]);
+  });
+});
+
+describe('contestStatus', () => {
+  const now = Date.UTC(2026, 9, 20, 12);
+  it('should name the winner in a sentence under a "Decided" badge', () => {
+    const s = contestStatus({ winner: { kind: 'identity', identityId: A, rawKind: 'WonByIdentity', decidedAtMs: now - 1 } }, now, 'alice');
+    expect(s).toMatchObject({ badge: 'Decided', tone: 'won' });
+    expect(s.text).toMatch(/^alice won on /);
+    expect(contestStatus({ winner: { kind: 'identity', identityId: A, rawKind: 'WonByIdentity' } }, now).text).toBe(
+      `${A.slice(0, 6)}…${A.slice(-6)} won.`,
+    );
+  });
+
+  it('should say how long voting stays open, and warn in its last day', () => {
+    expect(contestStatus({ endsAtMs: now + 3 * 86_400_000 }, now)).toMatchObject({ badge: 'Voting open', tone: 'live' });
+    expect(contestStatus({ endsAtMs: now + 3_600_000 }, now)).toMatchObject({ badge: 'Closing soon', tone: 'urgent' });
+    expect(contestStatus({ endsAtMs: now - 1 }, now)).toMatchObject({ badge: 'Counting' });
+    expect(contestStatus({ winner: { kind: 'locked', rawKind: 'Locked' } }, now)).toMatchObject({ badge: 'Locked', tone: 'muted' });
   });
 });

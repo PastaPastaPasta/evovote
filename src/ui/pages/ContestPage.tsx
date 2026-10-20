@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { getActivePolls } from '../../discovery/activePolls';
 import type { Failure } from '../../discovery/types';
@@ -26,9 +26,10 @@ import { ABSTAIN_COLOR, BallotBar, contenderColor, LOCK_COLOR } from '../compone
 import { KindTitle } from '../components/KindTitle';
 import { PollIndexInfo } from '../components/PollIndexInfo';
 import { ReadIssues } from '../components/ReadIssues';
+import { CopyButton } from '../components/CopyButton';
 import { ContenderCard, percent } from '../contest/ContenderCard';
 import { Discussion, type ContenderInfo, type ContestOutcome } from '../discussion/Discussion';
-import { countdown, endDate, shortId } from '../format';
+import { countdown, endDate, plural, shortId } from '../format';
 import { useNow } from '../hooks';
 
 const EMPTY: ReadonlyMap<string, string[]> = new Map();
@@ -76,33 +77,54 @@ export function orderContenders(contenders: readonly Contender[], winnerId?: str
     .map(({ c }) => c);
 }
 
-function StatusChip({ contest, now, winnerLabel }: { contest: Contest; now: number; winnerLabel?: string }) {
+/** Where the contest stands, as the hub says it: a tone badge and one plain sentence. */
+export function contestStatus(
+  contest: Pick<Contest, 'winner' | 'endsAtMs'>,
+  now: number,
+  winnerLabel?: string,
+): { badge: string; tone: 'won' | 'live' | 'urgent' | 'muted'; text: string } {
   const { winner, endsAtMs } = contest;
   if (winner) {
-    const when = winner.decidedAtMs ? ` · ${endDate(winner.decidedAtMs)}` : '';
+    const when = winner.decidedAtMs ? ` on ${endDate(winner.decidedAtMs)}` : '';
     if (winner.kind === 'identity' && winner.identityId) {
-      return (
-        <span className="chip won">
-          {winnerLabel ?? shortId(winner.identityId, 6)} won{when}
-        </span>
-      );
+      return { badge: 'Decided', tone: 'won', text: `${winnerLabel ?? shortId(winner.identityId)} won${when}.` };
     }
-    if (winner.kind === 'locked') return <span className="chip locked">Locked, awarded to no one{when}</span>;
-    return (
-      <span className="chip">
-        Decided ({winner.rawKind}){when}
-      </span>
-    );
+    if (winner.kind === 'locked') return { badge: 'Locked', tone: 'muted', text: `Masternodes voted to award it to no one${when}.` };
+    return { badge: 'Decided', tone: 'muted', text: `Platform recorded a result this site cannot read${when}.` };
   }
   if (endsAtMs !== undefined) {
     const timing = countdown(endsAtMs, now);
-    return (
-      <span className={timing.urgent ? 'chip urgent' : 'chip'}>
-        {timing.past ? 'Voting closed, awaiting the result' : `Closes in ${timing.text} · ${endDate(endsAtMs)}`}
-      </span>
-    );
+    if (timing.past) return { badge: 'Counting', tone: 'urgent', text: 'Voting has closed; Platform is recording the result.' };
+    return {
+      badge: timing.urgent ? 'Closing soon' : 'Voting open',
+      tone: timing.urgent ? 'urgent' : 'live',
+      text: `Voting closes in ${timing.text}, on ${endDate(endsAtMs)}.`,
+    };
   }
-  return <span className="chip">Open</span>;
+  return { badge: 'Voting open', tone: 'live', text: 'Masternodes can vote now.' };
+}
+
+/** The contest's state, in the hub's status panel: badge, one sentence, the counts, the way to the discussion. */
+function StatusPanel({ contest, now, winnerLabel, details, discussion }: {
+  contest: Contest;
+  now: number;
+  winnerLabel?: string;
+  details: string[];
+  discussion: ReactNode;
+}) {
+  const status = contestStatus(contest, now, winnerLabel);
+  // The panel's edge takes the hub's tones; "urgent" is amber on the badge only.
+  const edge = status.tone === 'urgent' ? 'live' : status.tone;
+  return (
+    <section className={`status-panel compact tone-${edge}`} aria-label="Contest status">
+      <div className="status-row">
+        <span className={`status-badge tone-${status.tone}`}>{status.badge}</span>
+        {discussion}
+      </div>
+      <p className="status-headline">{status.text}</p>
+      {details.length > 0 && <p className="status-detail">{details.join(' · ')}</p>}
+    </section>
+  );
 }
 
 function TechnicalDetails({ pollKey }: { pollKey: PollKey }) {
@@ -139,20 +161,25 @@ function ContestHeader({ sdk, pollKey, contest }: { sdk: EvoSDK; pollKey: PollKe
   const shown = label !== undefined ? dpnsDisplayLabel(summary) : undefined;
   return (
     <header className="contest-header">
-      <a href="#/" className="back-link">
-        ← All contests
-      </a>
+      {target !== undefined ? (
+        <a href={moderatedHref(target)} className="back-link">
+          ← Moderators of {targetName(target)}
+        </a>
+      ) : (
+        <a href="#/" className="back-link">
+          ← All contests
+        </a>
+      )}
       {target !== undefined ? (
         <>
-          <h1 className="contest-title">
-            <span className="contest-kicker">Moderator election ·</span> {targetName(target)}
-          </h1>
+          <p className="contest-eyebrow">Moderator election</p>
+          <h1 className="contest-title">Who moderates {targetName(target)}</h1>
           <p className="contest-lede">
-            Masternodes choose the team that moderates contract{' '}
+            Masternodes vote for the team that moderates contract{' '}
             <span className="mono" title={target}>
-              {shortId(target, 6)}
-            </span>
-            . <a href={moderatedHref(target)}>Election hub for this contract →</a>
+              {shortId(target)}
+            </span>{' '}
+            <CopyButton text={target} label="Copy contract id" />
           </p>
         </>
       ) : (
@@ -167,7 +194,7 @@ function ContestHeader({ sdk, pollKey, contest }: { sdk: EvoSDK; pollKey: PollKe
         </>
       )}
       {kind.id === 'generic' && <PollIndexInfo sdk={sdk} pollKey={pollKey} />}
-      {label === undefined && <TechnicalDetails pollKey={pollKey} />}
+      {label === undefined && target === undefined && <TechnicalDetails pollKey={pollKey} />}
     </header>
   );
 }
@@ -193,7 +220,7 @@ export function ContestPage({
   handle: SdkHandle;
   network: Network;
   keyString: string;
-  onVote: (contest: Contest, choice: VoteChoice) => void;
+  onVote: (contest: Contest, choice: VoteChoice, names?: ReadonlyMap<string, string>) => void;
 }) {
   const sdk = handle.sdk;
   const pollKey = decodePollKey(keyString);
@@ -355,17 +382,27 @@ export function ContestPage({
   const hasLock = choices.includes('lock');
   const tally = { ...contest.tally, contenders: ordered };
   const winnerLabel = winnerId ? labels(winnerId).label : undefined;
+  // The vote dialog names contenders as this page does.
+  const voteNames = new Map<string, string>();
+  for (const c of ordered) {
+    const { label } = labels(c.identityId);
+    if (label) voteNames.set(c.identityId, label);
+  }
 
   return (
     <div className="contest-page">
       <ContestHeader sdk={sdk} pollKey={pollKey} contest={contest} />
 
-      <div className="contest-status">
-        <StatusChip contest={contest} now={now} winnerLabel={winnerLabel} />
-        {ordered.length >= 2 && <span className="contest-stat">{ordered.length} contenders</span>}
-        {total === 0 && <span className="contest-stat">{decided ? 'No votes were cast' : 'No votes yet'}</span>}
-        <JumpToDiscussion count={commentCount} />
-      </div>
+      <StatusPanel
+        contest={contest}
+        now={now}
+        winnerLabel={winnerLabel}
+        details={[
+          ...(ordered.length >= 2 ? [`${ordered.length} contenders`] : []),
+          total === 0 ? (decided ? 'No votes were cast' : 'No votes yet') : `${plural(total, 'vote')} cast (weighted)`,
+        ]}
+        discussion={<JumpToDiscussion count={commentCount} />}
+      />
       <ReadIssues failures={readIssues} caps={[]} />
       {open && !signable && (
         <p className="contest-quiet">
@@ -381,11 +418,7 @@ export function ContestPage({
       <section className="results" aria-labelledby="results-title">
         <div className="results-head">
           <h2 id="results-title">{decided ? 'Result' : 'Standings'}</h2>
-          {total > 0 && (
-            <p>
-              Vote weight {total} · evonodes count 4, masternodes 1
-            </p>
-          )}
+          <p>Votes are weighted: a regular masternode counts 1, an evonode 4.</p>
         </div>
         {decided && winner && total === 0 && (
           <p className="contest-quiet">
@@ -423,7 +456,7 @@ export function ContestPage({
                 headingLabel={kind.id === 'dpns' ? dpnsDisplayLabel(contest) : undefined}
                 winnerVotes={winner && winner.identityId !== c.identityId ? winner.votes : undefined}
                 canVote={votable && choices.includes('identity')}
-                onVote={() => onVote(contest, { type: 'identity', identityId: c.identityId })}
+                onVote={() => onVote(contest, { type: 'identity', identityId: c.identityId }, voteNames)}
               />
             );
           })}
@@ -435,10 +468,10 @@ export function ContestPage({
               <span className="swatch" style={{ backgroundColor: ABSTAIN_COLOR }} aria-hidden="true" />
               <span className="alt-label">Abstain</span>
               <span className="alt-tally">
-                <strong>{abstain}</strong> weight · {percent(abstain, total)}
+                <strong>{abstain}</strong> {abstain === 1 ? 'vote' : 'votes'} · {percent(abstain, total)}
               </span>
               {votable && choices.includes('abstain') && (
-                <button type="button" className="vote-button ghost" onClick={() => onVote(contest, { type: 'abstain' })}>
+                <button type="button" className="vote-button ghost" onClick={() => onVote(contest, { type: 'abstain' }, voteNames)}>
                   Vote abstain
                 </button>
               )}
@@ -448,10 +481,10 @@ export function ContestPage({
                 <span className="swatch hatched" style={{ backgroundColor: LOCK_COLOR }} aria-hidden="true" />
                 <span className="alt-label">Lock: award it to no one</span>
                 <span className="alt-tally">
-                  <strong>{lock}</strong> weight · {percent(lock, total)}
+                  <strong>{lock}</strong> {lock === 1 ? 'vote' : 'votes'} · {percent(lock, total)}
                 </span>
                 {votable && (
-                  <button type="button" className="vote-button ghost" onClick={() => onVote(contest, { type: 'lock' })}>
+                  <button type="button" className="vote-button ghost" onClick={() => onVote(contest, { type: 'lock' }, voteNames)}>
                     Vote lock
                   </button>
                 )}
@@ -464,8 +497,7 @@ export function ContestPage({
           <p className="contest-quiet">Who voted is not kept after a contest is decided; Platform keeps only the totals.</p>
         )}
         <p className="contest-footnote">
-          Each masternode can vote up to 5 times on a contest; its latest vote counts.
-          {total === 0 && " An evonode's vote has weight 4, a regular masternode's 1."}
+          A masternode can vote up to 5 times on a contest, so it can change its mind; only its latest vote counts.
           {!hasLock && ' This contest has no Lock: there is always a winner, and a tie goes to the earliest applicant.'}
         </p>
       </section>

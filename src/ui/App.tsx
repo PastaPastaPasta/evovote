@@ -68,7 +68,7 @@ function Page({
   route: Route;
   handle: SdkHandle;
   network: Network;
-  onVote: (contest: Contest, choice: VoteChoice) => void;
+  onVote: (contest: Contest, choice: VoteChoice, names?: ReadonlyMap<string, string>) => void;
 }) {
   switch (route.page) {
     case 'home':
@@ -169,7 +169,7 @@ export function App() {
   const [network] = useState<Network>(currentNetwork);
   const [sdkState, setSdkState] = useState<SdkState>({ status: 'loading' });
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [pendingVote, setPendingVote] = useState<{ contest: Contest; choice: VoteChoice } | null>(
+  const [pendingVote, setPendingVote] = useState<{ contest: Contest; choice: VoteChoice; names?: ReadonlyMap<string, string> } | null>(
     null,
   );
   const [voteRound, setVoteRound] = useState(0);
@@ -249,8 +249,14 @@ export function App() {
           href="#/me"
           aria-current={section === 'me' ? 'page' : undefined}
           title={session ? `Signed in as ${identityLabel}` : undefined}
+          aria-label={session ? `Signed in as ${identityLabel}` : undefined}
         >
-          {identityLabel}
+          <span className="signin-full">{identityLabel}</span>
+          {session && (
+            <span className="signin-initial" aria-hidden="true">
+              {identityLabel.charAt(0).toUpperCase()}
+            </span>
+          )}
         </a>
       </header>
 
@@ -283,7 +289,7 @@ export function App() {
             route={route}
             handle={sdkState.handle}
             network={network}
-            onVote={(contest, choice) => setPendingVote({ contest, choice })}
+            onVote={(contest, choice, names) => setPendingVote({ contest, choice, names })}
           />
         )}
       </main>
@@ -308,6 +314,7 @@ export function App() {
           network={network}
           contest={pendingVote.contest}
           choice={pendingVote.choice}
+          names={pendingVote.names}
           onClose={() => {
             setPendingVote(null);
             // Remount the page so it re-reads the (invalidated) vote state.

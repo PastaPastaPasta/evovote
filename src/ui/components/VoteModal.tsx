@@ -14,25 +14,34 @@ import { planVotes, SKIP_TEXT, VOTES_PER_POLL, type PlanItem } from '../../votin
 import { receiptsFor, recordReceipt } from '../../voting/receipts';
 import { shortId, plural } from '../format';
 import { KindTitle } from './KindTitle';
+import { TechnicalDetail } from './TechnicalDetail';
 
-function choiceText(choice: VoteChoice | undefined): string {
-  if (!choice) return 'none';
-  switch (choice.type) {
+/** How a masternode's current vote reads in the list ("Abstain", "alice", "Has not voted"). Pure. */
+export function currentVoteText(
+  vote: VoteChoice | undefined,
+  name: (identityId: string) => string,
+): string {
+  if (!vote) return 'Has not voted yet';
+  switch (vote.type) {
     case 'identity':
-      return shortId(choice.identityId);
+      return `Votes for ${name(vote.identityId)}`;
     case 'abstain':
-      return 'abstain';
+      return 'Votes abstain';
     case 'lock':
-      return 'lock';
+      return 'Votes lock';
   }
 }
 
-function choiceLabel(choice: VoteChoice): string {
-  return choice.type === 'identity'
-    ? `Vote for ${shortId(choice.identityId)}`
-    : choice.type === 'abstain'
-      ? 'Vote abstain'
-      : 'Vote lock';
+/** The dialog's heading: what this vote does, in words. Pure. */
+export function choiceHeading(choice: VoteChoice, choiceName?: string): string {
+  switch (choice.type) {
+    case 'identity':
+      return `Vote for ${choiceName ?? shortId(choice.identityId)}`;
+    case 'abstain':
+      return 'Vote abstain';
+    case 'lock':
+      return 'Vote lock: award it to no one';
+  }
 }
 
 type CurrentVotes = Map<string, Map<string, VoteChoice> | undefined>;
@@ -46,12 +55,15 @@ export function VoteModal({
   network,
   contest,
   choice,
+  names,
   onClose,
   onOpenMasternodes,
 }: {
   network: Network;
   contest: Contest;
   choice: VoteChoice;
+  /** The contenders' names (as the page shows them), by identity id. */
+  names?: ReadonlyMap<string, string>;
   onClose: () => void;
   onOpenMasternodes: () => void;
 }) {
@@ -112,6 +124,7 @@ export function VoteModal({
   }, [current, contest, kind, ready, selected, choice, network]);
 
   const toCast = plan.filter((item) => item.action === 'cast');
+  const name = (identityId: string) => names?.get(identityId) ?? shortId(identityId);
   const planFor = (mnId: string) => plan.find((item) => item.mnId === mnId);
 
   const openMasternodes = () => {
@@ -186,34 +199,54 @@ export function VoteModal({
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Cast masternode votes"
+        aria-labelledby="vote-modal-title"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="modal-title">
-          {choiceLabel(choice)}
+        <h2 className="modal-title" id="vote-modal-title">
+          {choiceHeading(choice, choice.type === 'identity' ? names?.get(choice.identityId) : undefined)}
           <span className="modal-context">
-            on <KindTitle contest={contest} tld /> · {network}
+            <KindTitle contest={contest} tld /> · {network === 'testnet' ? 'Testnet' : 'Mainnet'}
           </span>
         </h2>
 
         {phase === 'pick' && ready.length === 0 && (
           <div className="modal-empty">
-            <p>No verified voting keys are loaded in this tab.</p>
-            <button className="vote-button" onClick={openMasternodes}>
-              Open Masternodes
-            </button>
+            <p>
+              <strong>Add your masternode&apos;s voting key to vote.</strong>
+            </p>
+            <p className="modal-hint">
+              The key stays in this tab and is forgotten when you close it. It can only vote; it cannot move funds.
+            </p>
+            <div className="modal-actions">
+              <button className="vote-button ghost" onClick={onClose}>
+                Cancel
+              </button>
+              <button className="vote-button" onClick={openMasternodes}>
+                Add a voting key
+              </button>
+            </div>
           </div>
         )}
 
         {phase === 'pick' && ready.length > 0 && (
           <>
-            <p className="modal-hint">
-              Votes are signed here in your browser and broadcast straight to Platform.
-              Each masternode has {VOTES_PER_POLL} votes per contest in total, counting the
-              first; the latest one counts.
-            </p>
+            <ul className="modal-facts">
+              <li>
+                <strong>Weight.</strong> A regular masternode&apos;s vote counts 1; an evonode&apos;s counts 4.
+              </li>
+              <li>
+                <strong>You can change it.</strong> Each masternode can vote {VOTES_PER_POLL} times on this
+                contest while voting is open; only its latest vote counts.
+              </li>
+              <li>
+                <strong>Public, then final.</strong> Votes are signed in this browser and sent straight to Dash
+                Platform, where anyone can see them. When voting closes, the result is permanent.
+              </li>
+            </ul>
             {current === 'loading' && (
-              <p className="mono-label">Reading each masternode's current vote…</p>
+              <p className="modal-hint" role="status">
+                Checking how each masternode votes now…
+              </p>
             )}
             <ul className="mn-pick-list">
               {ready.map((mn) => {
@@ -228,23 +261,25 @@ export function VoteModal({
                         onChange={() => toggle(mn.id)}
                       />
                       <span className="mn-pick-label">{mn.label}</span>
-                      <span className="mono-label mono">{shortId(mn.proTxHash)}</span>
+                      <span className="mono-label mono" title={mn.proTxHash}>
+                        {shortId(mn.proTxHash)}
+                      </span>
                       {current !== 'loading' && (
                         <span className="mono-label">
                           {votes === undefined
-                            ? 'current vote unknown (read failed)'
-                            : `now: ${choiceText(votes.get(contest.keyString))}`}
+                            ? "Couldn't check its current vote"
+                            : currentVoteText(votes.get(contest.keyString), name)}
                         </span>
                       )}
                       {item && item.votesUsedAtLeast > 0 && (
                         <span className="mono-label">
-                          ≥{item.votesUsedAtLeast} of {VOTES_PER_POLL} used
+                          {item.votesUsedAtLeast >= VOTES_PER_POLL
+                            ? `All ${VOTES_PER_POLL} votes used`
+                            : `At least ${item.votesUsedAtLeast} of its ${VOTES_PER_POLL} votes used`}
                         </span>
                       )}
-                      {item?.action === 'skip' && item.reason && (
-                        <span className="mono-label plan-skip">
-                          skip: {SKIP_TEXT[item.reason]}
-                        </span>
+                      {item?.action === 'skip' && item.reason && item.reason !== 'budget' && (
+                        <span className="mono-label plan-skip">Skipped: {SKIP_TEXT[item.reason]}</span>
                       )}
                     </label>
                   </li>
@@ -253,12 +288,10 @@ export function VoteModal({
             </ul>
             {masternodes.length > ready.length && (
               <p className="modal-hint">
-                {plural(masternodes.length - ready.length, 'masternode')} without a verified
-                key —{' '}
+                {plural(masternodes.length - ready.length, 'more masternode')} without a voting key loaded.{' '}
                 <button className="link-button" onClick={openMasternodes}>
-                  add keys
+                  Add their keys
                 </button>
-                .
               </p>
             )}
             <div className="modal-actions">
@@ -270,7 +303,7 @@ export function VoteModal({
                 disabled={current === 'loading' || toCast.length === 0}
                 onClick={() => void broadcast(toCast)}
               >
-                Sign &amp; broadcast {plural(toCast.length, 'vote')}
+                {toCast.length === 0 ? 'Nothing to send' : `Sign and send ${plural(toCast.length, 'vote')}`}
               </button>
             </div>
           </>
@@ -288,13 +321,17 @@ export function VoteModal({
                       <span className="mn-pick-label">{mn.label}</span>
                       <span className="mono-label mono">{shortId(mn.proTxHash)}</span>
                       <span className="mn-status-text">
-                        {status.step === 'queued' && 'waiting'}
-                        {status.step === 'sending' && 'signing, broadcasting, verifying…'}
-                        {status.step === 'accepted' && 'vote recorded (read back from Platform)'}
-                        {status.step === 'unverified' &&
-                          'broadcast, but not yet visible on Platform — check again shortly'}
+                        {status.step === 'queued' && 'Waiting…'}
+                        {status.step === 'sending' && 'Signing and sending…'}
+                        {status.step === 'accepted' && 'Vote recorded'}
+                        {status.step === 'unverified' && 'Sent. Platform has not shown it yet; close this and check the standings again in a minute.'}
                         {status.step === 'failed' && (
-                          <span title={status.error.detail}>failed — {status.error.message}</span>
+                          <>
+                            Not recorded: {status.error.message}
+                            {status.error.detail !== status.error.message && (
+                              <TechnicalDetail>{status.error.detail}</TechnicalDetail>
+                            )}
+                          </>
                         )}
                       </span>
                     </li>

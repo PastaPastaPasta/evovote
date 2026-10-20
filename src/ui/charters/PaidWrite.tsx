@@ -8,19 +8,21 @@ import { errorMessage } from '../../sdk/errors';
 import { TechnicalDetail } from '../components/TechnicalDetail';
 import { useAsync } from '../useAsync';
 
+/** "code 40112 · <SDK message>", without saying the code twice or repeating the message. Pure. */
+export function technicalText(error: { code?: number; message: string; detail: string }): string {
+  const detail = error.detail !== error.message ? error.detail : '';
+  const code = error.code && !detail.includes(String(error.code)) ? `code ${error.code}` : '';
+  return [code, detail].filter(Boolean).join(' · ');
+}
+
 function OutcomeNote<T>({ outcome, done }: { outcome: WriteOutcome<T>; done: string }) {
   if (outcome.status === 'confirmed') return <p className="page-note ok">{done}</p>;
   if (outcome.status === 'refused') {
+    const technical = technicalText(outcome.error);
     return (
       <div className="page-note error">
         <p>Platform refused it: {outcome.error.message}</p>
-        {(outcome.error.code || outcome.error.detail !== outcome.error.message) && (
-          <TechnicalDetail>
-            {outcome.error.code ? `code ${outcome.error.code}` : ''}
-            {outcome.error.code && outcome.error.detail !== outcome.error.message ? ' · ' : ''}
-            {outcome.error.detail !== outcome.error.message ? outcome.error.detail : ''}
-          </TechnicalDetail>
-        )}
+        {technical && <TechnicalDetail>{technical}</TechnicalDetail>}
       </div>
     );
   }
@@ -56,6 +58,7 @@ export function PaidWrite<T>({
   estimate,
   priceKey,
   blockers = [],
+  blockerDetail = [],
   warnings = [],
   ack,
   permanent,
@@ -75,6 +78,8 @@ export function PaidWrite<T>({
   /** Changes when what is priced changes (re-runs the estimate). */
   priceKey?: string;
   blockers?: string[];
+  /** Codes and raw detail behind the blockers, folded under "Technical detail". */
+  blockerDetail?: string[];
   warnings?: string[];
   /** A statement the user must tick before the button enables. */
   ack?: string;
@@ -195,6 +200,9 @@ export function PaidWrite<T>({
             {b}
           </p>
         ))}
+      {!outcome && allBlockers.length > 0 && blockerDetail.length > 0 && (
+        <TechnicalDetail>{blockerDetail.join(' ')}</TechnicalDetail>
+      )}
       {/* A hard confirmation shows nothing to tick or press while something blocks it. */}
       {ack && !outcome && !hideConfirm && (
         <label className="ack">
