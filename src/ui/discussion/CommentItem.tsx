@@ -132,7 +132,7 @@ export function CommentItem({
               ↳ to <PersonName id={replyTarget.ownerId} name={names.get(replyTarget.ownerId)} />
             </p>
           )}
-          {orphan && <p className="comment-context">Reply to an earlier comment ({shortId(comment.replyTo ?? '', 6)})</p>}
+          {orphan && <p className="comment-context">Reply to an earlier comment that is not shown here</p>}
           <p className="comment-body">{displayText(comment.body)}</p>
           {(onReply || onCopyLink) && (
             <div className="comment-actions">

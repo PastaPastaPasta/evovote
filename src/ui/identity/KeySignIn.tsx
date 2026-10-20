@@ -84,7 +84,7 @@ export function KeySignIn({ network, onSignedIn }: { network: Network; onSignedI
           </button>
           {choices.ids.map((id) => (
             <button key={id} className="vote-button ghost mono" disabled={busy} onClick={() => void submit(choices.wif, id)}>
-              {shortId(id, 8)}
+              {shortId(id)}
             </button>
           ))}
         </div>
