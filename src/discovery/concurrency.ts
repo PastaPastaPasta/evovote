@@ -35,6 +35,13 @@ export function createPump<T>(
   };
 }
 
+/** `list` cut into runs of at most `size` items. */
+export function chunk<T>(list: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
 /** Run `fn` over `items` with bounded concurrency; resolves when all settle. */
 export async function forEachConcurrent<T>(
   items: readonly T[],

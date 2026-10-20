@@ -25,7 +25,7 @@ export interface CachedResult {
 
 export interface CachedDirectory {
   results: Map<string, CachedResult>;
-  /** Kinds whose whole archive was read and ordered once (`${kindId}`). */
+  /** Kinds whose whole archive was read and ordered once. */
   complete: Set<string>;
 }
 
@@ -33,10 +33,28 @@ const DB_NAME = 'evovote-directory';
 const RESULTS = 'results';
 const META = 'meta';
 
+/**
+ * How long the first read waits for IndexedDB to open. Some WebKit builds
+ * never answer `indexedDB.open` at all; the page then starts without a
+ * cache (and still writes to it if the open answers late).
+ */
+export const OPEN_TIMEOUT_MS = 4_000;
+
 let db: Promise<IDBDatabase | undefined> | undefined;
 
 function openDb(): Promise<IDBDatabase | undefined> {
-  db ??= new Promise((resolve) => {
+  db ??= new Promise((settle) => {
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      settle(undefined);
+    }, OPEN_TIMEOUT_MS);
+    const resolve = (handle: IDBDatabase | undefined) => {
+      clearTimeout(timer);
+      // A slow open that answers after all: later writes use it.
+      if (timedOut && handle) db = Promise.resolve(handle);
+      settle(handle);
+    };
     try {
       if (typeof indexedDB === 'undefined') return resolve(undefined);
       const req = indexedDB.open(DB_NAME, 1);
@@ -98,24 +116,23 @@ export function peekCachedDirectory(network: Network): CachedDirectory | undefin
   return ready.get(network);
 }
 
-let pending: { network: Network; records: CachedResult[]; meta: string[] }[] = [];
+let pendingRecords: CachedResult[] = [];
+let pendingMeta: { id: string; kindId: string }[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
 
 function scheduleFlush() {
   flushTimer ??= setTimeout(() => {
     flushTimer = undefined;
-    const batch = pending;
-    pending = [];
+    const records = pendingRecords;
+    const meta = pendingMeta;
+    pendingRecords = [];
+    pendingMeta = [];
     void openDb().then((handle) => {
       if (!handle) return;
       try {
         const tx = handle.transaction([RESULTS, META], 'readwrite');
-        const results = tx.objectStore(RESULTS);
-        const meta = tx.objectStore(META);
-        for (const { network, records, meta: kinds } of batch) {
-          for (const r of records) results.put(r);
-          for (const kindId of kinds) meta.put({ id: `${network}|${kindId}`, kindId, at: Date.now() });
-        }
+        for (const r of records) tx.objectStore(RESULTS).put(r);
+        for (const m of meta) tx.objectStore(META).put(m);
       } catch {
         // A failed write only costs a re-read next visit.
       }
@@ -143,16 +160,20 @@ export function saveCachedResult(
     keyString,
   };
   dir.results.set(keyString, record);
-  pending.push({ network, records: [record], meta: [] });
+  pendingRecords.push(record);
   scheduleFlush();
 }
 
 /** Remember that a kind's whole archive has been read and ordered once. */
 export function markDirectoryComplete(network: Network, kindId: string): void {
   const dir = ready.get(network);
-  if (!dir || dir.complete.has(kindId)) return;
+  if (!dir) {
+    void loadCachedDirectory(network).then(() => markDirectoryComplete(network, kindId));
+    return;
+  }
+  if (dir.complete.has(kindId)) return;
   dir.complete.add(kindId);
-  pending.push({ network, records: [], meta: [kindId] });
+  pendingMeta.push({ id: `${network}|${kindId}`, kindId });
   scheduleFlush();
 }
 

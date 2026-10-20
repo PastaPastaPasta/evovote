@@ -1,3 +1,6 @@
+/** A count with thousands separators: "1,036". */
+export const fmt = (n: number) => n.toLocaleString();
+
 export function shortId(id: string, chars = 6): string {
   return id.length <= chars * 2 + 1 ? id : `${id.slice(0, chars)}…${id.slice(-chars)}`;
 }

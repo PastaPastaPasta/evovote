@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
-import { createPump, createWantQueue } from '../../discovery/concurrency';
+import { chunk, createPump, createWantQueue } from '../../discovery/concurrency';
 import {
   cachedContest,
   isStorable,
@@ -21,6 +21,7 @@ import {
   dpnsSpelling,
   fetchDpnsNames,
   fetchUsernames,
+  NAME_BATCH,
   rememberDpnsSpelling,
   type DpnsName,
 } from '../../kinds/dpns';
@@ -32,19 +33,30 @@ import { switchNetwork, type Network } from '../../sdk/network';
 import { ABSTAIN_COLOR, BallotBar, contenderColor, LOCK_COLOR } from '../components/BallotBar';
 import { ContestedName } from '../components/ContestedName';
 import { OpenContractForm } from '../components/OpenContractForm';
-import { countdown, plural, shortId } from '../format';
+import { countdown, fmt, plural, shortId } from '../format';
 import { useNow } from '../hooks';
 import { kindHref, pollHref } from '../router';
 import {
+  completeKinds,
+  decidedWords,
+  emptyMessage,
   isPlaced,
+  kindIdOf,
   loaded,
   matchesNeedle,
+  mergeByKey,
+  namesWinner,
+  needsName,
+  NOUN,
   orderEnded,
-  otherName,
   outcomeOf,
   rowLabel,
   shortDate,
+  statesOf,
+  statusSentence,
+  titleOf,
   toNeedle,
+  winnerNameOf,
   type DirectoryFacts,
   type EndedSort,
   type RowState,
@@ -62,27 +74,13 @@ const SEARCH_MIN = 10;
 /** Show what is known even if the newest-first order is still settling. */
 const SHOW_ANYWAY_MS = 20_000;
 
-const fmt = (n: number) => n.toLocaleString();
-
-/** "a moderator election", for the kind chip on the All tab. */
-const CHIP: Record<KindId, string> = {
-  dpns: 'username',
-  charter: 'moderator election',
-  generic: 'other contest',
-};
-
-/** "1,036 username contests", "5 moderator elections" for the status sentence. */
-function kindCount(kind: KindId, n: number): string {
-  const noun = kind === 'dpns' ? 'username contest' : kind === 'charter' ? 'moderator election' : 'other contest';
-  return `${fmt(n)} ${noun}${n === 1 ? '' : 's'}`;
+interface LegendItem {
+  label: string;
+  color: string;
+  hatched?: boolean;
 }
 
-function joinWords(parts: string[]): string {
-  if (parts.length <= 1) return parts.join('');
-  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
-}
-
-function Legend({ items }: { items: { label: string; color: string; hatched?: boolean }[] }) {
+function Legend({ items }: { items: LegendItem[] }) {
   if (items.length === 0) return null;
   return (
     <div className="legend" aria-label="Bar colours">
@@ -98,7 +96,7 @@ function Legend({ items }: { items: { label: string; color: string; hatched?: bo
 
 /** What the bars of some rows can contain, as legend entries. */
 function legendFor(states: Contest[], ended: boolean) {
-  const items: { label: string; color: string; hatched?: boolean }[] = [];
+  const items: LegendItem[] = [];
   const voted = states.filter((s) => s.tally.total > 0);
   if (voted.length === 0) return items;
   items.push({ label: ended ? 'winner' : 'leader', color: contenderColor(0) });
@@ -126,7 +124,7 @@ function DirectoryIssues({ failures, caps }: { failures: Failure[]; caps: Cap[] 
       )}
       {caps.map((c, i) => (
         <p key={i}>
-          Showing the first {fmt(c.limit)} from the {c.source}; there are more.
+          Showing {fmt(c.limit)} from the {c.source}; there are more.
         </p>
       ))}
       {failures.length > 0 && (
@@ -225,6 +223,127 @@ function SkeletonRows({ count }: { count: number }) {
   );
 }
 
+/** A username's name cell: as requested while open, as registered once decided. */
+function UsernameCell({ contest, isOpen }: { contest: ContestSummary | Contest; isOpen: boolean }) {
+  const spelling = dpnsSpelling(contest);
+  if (isOpen) return <ContestedName label={spelling.label} />;
+  return (
+    <span
+      className={spelling.known ? 'dir-name' : 'dir-name normalized'}
+      title={
+        spelling.known
+          ? undefined
+          : 'Shown in normalized form (lowercase, o→0, i/l→1): the registered spelling could not be read.'
+      }
+    >
+      {spelling.label}
+    </span>
+  );
+}
+
+/** The bar cell: the ballot, or a few words when there is nothing to draw. */
+function BarCell({ state, isOpen, showLock }: { state: RowState | undefined; isOpen: boolean; showLock: boolean }) {
+  if (state === undefined) return <span className="bar-skeleton" />;
+  if (state === 'error') return <span className="mono-label">result unavailable</span>;
+  if (isOpen || state.tally.total > 0) {
+    return <BallotBar state={state.tally} mini ended={!isOpen} showLock={showLock} />;
+  }
+  const outcome = outcomeOf(state);
+  let note = 'no votes cast';
+  if (outcome.unopposed) note = 'only contender';
+  else if (outcome.kind === 'awaiting') note = 'no votes';
+  return <span className="dir-result-note">{note}</span>;
+}
+
+/** The votes cell: "12 votes", a decided score ("12–4"), or "no votes yet". */
+function votesText(state: Contest | undefined, isOpen: boolean): string {
+  if (!state) return '';
+  const total = state.tally.total;
+  if (isOpen) return total > 0 ? plural(total, 'vote') : 'no votes yet';
+  return outcomeOf(state).score ?? (total > 0 ? plural(total, 'vote') : '');
+}
+
+/** One row of the ledger: name, bar, votes, and when it closes or how it ended. */
+function LedgerRow({
+  contest,
+  isOpen,
+  facts,
+  now,
+  showChip,
+}: {
+  contest: ContestSummary;
+  isOpen: boolean;
+  facts: DirectoryFacts;
+  now: number;
+  /** On the All tab, non-username rows say what they are. */
+  showChip: boolean;
+}) {
+  const state = facts.states[contest.keyString];
+  const loadedState = loaded(facts, contest.keyString);
+  const kind = kindFor(contest.key);
+  const timing = contest.endsAtMs ? countdown(contest.endsAtMs, now) : undefined;
+  const winnerName = winnerNameOf(contest, facts);
+  const outcome = loadedState && !isOpen ? outcomeOf(loadedState) : undefined;
+  const title = titleOf(contest, facts);
+  const contenders = loadedState?.tally.contenders.length ?? 0;
+
+  let status: ReactNode = '';
+  let statusClass = 'ledger-ends mono-label';
+  if (isOpen) {
+    status = timing ? `closes in ${timing.text}` : '';
+    if (timing?.urgent) statusClass += ' urgent';
+  } else if (outcome) {
+    status = (
+      <>
+        <span className={`dir-outcome ${outcome.kind.replace(' ', '-')}`}>
+          {outcome.kind === 'awaiting' ? 'awaiting result' : outcome.kind}
+        </span>
+        {outcome.decidedAtMs !== undefined && <span className="dir-date">{shortDate(outcome.decidedAtMs)}</span>}
+      </>
+    );
+  } else if (state === undefined) {
+    status = '…';
+  }
+
+  const sub =
+    outcome?.kind === 'awarded' && namesWinner(kind.id, contenders)
+      ? `won by ${winnerName ?? shortId(outcome.winnerId ?? '', 6)}`
+      : undefined;
+  const chip = showChip && kind.id !== 'dpns' ? NOUN[kind.id] : undefined;
+
+  return (
+    <li>
+      <a
+        className={isOpen ? 'ledger-row' : 'ledger-row ended'}
+        href={pollHref(contest.keyString)}
+        aria-label={rowLabel({ title, open: isOpen, closes: timing?.text, state, winnerName })}
+      >
+        <span className="ledger-name">
+          <span className="dir-title">
+            {kind.id === 'dpns' ? (
+              <UsernameCell contest={loadedState ?? contest} isOpen={isOpen} />
+            ) : (
+              <span className="kind-title">{title}</span>
+            )}
+            {isOpen && contenders >= 2 && <span className="contest-flag">{contenders} contenders</span>}
+          </span>
+          {(sub || chip) && (
+            <span className="dir-sub">
+              {chip && <span className="kind-chip">{chip}</span>}
+              {sub}
+            </span>
+          )}
+        </span>
+        <span className="ledger-bar">
+          <BarCell state={state} isOpen={isOpen} showLock={!!loadedState && kind.choices(loadedState).includes('lock')} />
+        </span>
+        <span className="ledger-votes mono-label">{votesText(loadedState, isOpen)}</span>
+        <span className={statusClass}>{status}</span>
+      </a>
+    </li>
+  );
+}
+
 /**
  * The directory of every contest Platform knows about (`#/`), or of one kind
  * (`#/k/<kind>`). Each tab reads only its own lists (the active polls plus
@@ -294,9 +413,10 @@ export function OverviewPage({
     void loadCachedDirectory(network).then((dir) => {
       if (off) return;
       for (const r of dir.results.values()) {
-        const key = r.name ? decodePollKey(r.keyString) : undefined;
+        if (!r.name) continue;
+        const key = decodePollKey(r.keyString);
         const label = key && dpnsLabel(key);
-        if (r.name && label) rememberDpnsSpelling(label, r.name.label);
+        if (label) rememberDpnsSpelling(label, r.name.label);
       }
       setCache(dir);
     });
@@ -319,7 +439,7 @@ export function OverviewPage({
       const label = dpnsLabel(key);
       if (r.name && label) names[label] = r.name;
     }
-    return { rows, states, names };
+    return { rows, keys: new Set(rows.map((c) => c.keyString)), states, names };
   }, [cache]);
 
   const facts: DirectoryFacts = useMemo(
@@ -380,13 +500,11 @@ export function OverviewPage({
         const labels: string[] = [];
         for (const c of list) {
           const label = dpnsLabel(c.key);
-          const record = dir.results.get(c.keyString);
-          if (!label || record?.name || record?.result || requestedLabels.current.has(label)) continue;
+          if (!label || !needsName(dir.results.get(c.keyString)) || requestedLabels.current.has(label)) continue;
           requestedLabels.current.add(label);
           labels.push(label);
         }
-        const chunks: string[][] = [];
-        for (let i = 0; i < labels.length; i += 100) chunks.push(labels.slice(i, i + 100));
+        const chunks = chunk(labels, NAME_BATCH);
         if (chunks.length === 0) return;
         setNamesPending((n) => n + chunks.length);
         namePump.current.push(chunks);
@@ -398,11 +516,7 @@ export function OverviewPage({
       (batch) => {
         if (cancelled) return;
         // Dedupe: a reused run replays its batches, and StrictMode mounts twice in dev.
-        const append = (prev: ContestSummary[]) => {
-          const have = new Set(prev.map((c) => c.keyString));
-          const fresh = batch.list.filter((c) => !have.has(c.keyString));
-          return fresh.length > 0 ? [...prev, ...fresh] : prev;
-        };
+        const append = (prev: ContestSummary[]) => mergeByKey(prev, batch.list);
         if (batch.phase === 'active') setActive(append);
         else setArchive(append);
         if (batch.source === 'dpns archive') requestNames(batch.list);
@@ -429,10 +543,16 @@ export function OverviewPage({
       try {
         const state = await read(sdk, c);
         if (cancelled) return;
-        setSession((prev) => ({ ...prev, [c.keyString]: state }));
+        // A tally-only read that lands late never replaces a full one.
+        setSession((prev) =>
+          read === fetchContestTally && typeof prev[c.keyString] === 'object' ? prev : { ...prev, [c.keyString]: state },
+        );
         if (isStorable(state)) saveCachedResult(network, c.keyString, { result: resultOf(state) });
       } catch {
-        if (!cancelled) setSession((prev) => ({ ...prev, [c.keyString]: 'error' }));
+        // A failed read keeps whatever an earlier one found.
+        if (!cancelled) {
+          setSession((prev) => (typeof prev[c.keyString] === 'object' ? prev : { ...prev, [c.keyString]: 'error' }));
+        }
       }
     });
     queue.current = q;
@@ -445,27 +565,24 @@ export function OverviewPage({
 
   // ---- The tab's rows ----
 
-  const inTab = (c: ContestSummary) => tabKinds.includes(kindFor(c.key).id);
+  // The active polls have been read (successfully or not): until then an
+  // archive row not in the cache may still be open, so it is held back.
+  const activeRead = available && report.finished.includes('active');
+  const inTab = (c: ContestSummary) => tabKinds.includes(kindIdOf(c));
   const activeKeys = new Set(active.map((c) => c.keyString));
-  const archiveAll = useMemo(() => {
-    const seen = new Set<string>();
-    const out: ContestSummary[] = [];
-    for (const c of [...archive, ...cached.rows]) {
-      if (seen.has(c.keyString)) continue;
-      seen.add(c.keyString);
-      out.push(c);
-    }
-    return out;
-  }, [archive, cached.rows]);
-  const archiveRows = archiveAll.filter((c) => !activeKeys.has(c.keyString) && inTab(c));
-  const openRows = active.filter((c) => inTab(c) && c.endsAtMs !== undefined && c.endsAtMs > now);
+  const archiveAll = useMemo(() => mergeByKey(archive, cached.rows), [archive, cached.rows]);
+  const archiveRows = archiveAll.filter(
+    (c) => !activeKeys.has(c.keyString) && inTab(c) && (activeRead || cached.keys.has(c.keyString)),
+  );
+  // Soonest-closing first (a restarted active run appends its new polls at the end).
+  const openRows = active
+    .filter((c) => inTab(c) && c.endsAtMs !== undefined && c.endsAtMs > now)
+    .sort((a, b) => (a.endsAtMs ?? 0) - (b.endsAtMs ?? 0));
   const expiredRows = active.filter((c) => inTab(c) && (c.endsAtMs === undefined || c.endsAtMs <= now));
   const endedRows = [...expiredRows, ...archiveRows];
 
-  const sourceIdsOf = (kind: KindId) =>
-    sources.filter((s) => s.id === 'active' || s.kindId === kind).map((s) => s.id);
   const sourcesFinished = (kind: KindId) =>
-    sourceIdsOf(kind).every((id) => report.finished.includes(id));
+    sources.every((s) => (s.id !== 'active' && s.kindId !== kind) || report.finished.includes(s.id));
   // Rows whose place in the newest-first order needs their tally: usernames
   // with no name document (locked, mostly) and decided rows of other kinds.
   const unplaced = archiveRows.filter((c) => {
@@ -477,68 +594,84 @@ export function OverviewPage({
     sourcesFinished(kind) && (kind !== 'dpns' || namesPending === 0);
   const kindReady = (kind: KindId) =>
     !!cache?.complete.has(kind) ||
-    (settled(kind) && !unplaced.some((c) => kindFor(c.key).id === kind));
+    (settled(kind) && !unplaced.some((c) => kindIdOf(c) === kind));
   const ready = available && (slow || tabKinds.every(kindReady));
-  // Open contests need only the active polls: they show before the archive is ordered.
-  const openReady = ready || (available && report.finished.includes('active'));
+  // Nothing is said about open contests until the active polls are read,
+  // however much the cache already shows; "nothing is open" never after a
+  // failed read.
+  const openFailed = report.failures.some((f) => f.source === 'active' || f.source === 'active polls');
   const listComplete = ready && report.status !== 'streaming';
 
-  // A kind whose archive was read, named and ordered without failures is
-  // cached as complete: the next visit renders it at once.
-  const completeNow = tabKinds.filter(
-    (k) => sources.length > 0 && !cache?.complete.has(k) && settled(k) && kindReady(k) && report.failures.length === 0,
-  );
-  const completeKey = completeNow.join(',');
+  // A kind whose archive was read in full, named and ordered, and whose rows
+  // all come back from the cache, is cached as complete: the next visit
+  // renders it at once. (Idempotent, so it runs every render.)
+  const completeNow =
+    sources.length > 0
+      ? completeKinds({
+          kinds: tabKinds,
+          ordered: (k) => !cache?.complete.has(k) && kindReady(k),
+          rows: archiveRows,
+          facts,
+          report,
+        })
+      : [];
   useEffect(() => {
-    if (!completeKey) return;
-    for (const k of completeKey.split(',')) markDirectoryComplete(network, k);
-  }, [completeKey, network]);
+    for (const k of completeNow) markDirectoryComplete(network, k);
+  });
 
   const needle = toNeedle(filter);
   const matches = (c: ContestSummary) => !needle || matchesNeedle(c, kindFor(c.key), facts, needle);
-  const titleOf = (c: ContestSummary) => kindFor(c.key).title(loaded(facts, c.keyString) ?? c);
+  const titleFor = (c: ContestSummary) => titleOf(c, facts);
 
   const visibleOpen = openRows.filter(matches);
-  const orderedEnded = orderEnded(endedRows.filter(matches), facts, sort, titleOf, now);
+  const orderedEnded = orderEnded(endedRows.filter(matches), facts, sort, titleFor, now);
   const visibleEnded = orderedEnded.slice(0, shown);
   const remaining = orderedEnded.length - visibleEnded.length;
 
   // The queue: every open row of the tab, then the shown page of decided
-  // rows once their order is settled, then rows waiting to be placed.
+  // rows once their order is settled (or shown anyway), then rows waiting to
+  // be placed once the open ones are known (an open contest read too early
+  // would miss its documents). Open rows always read in full: one whose
+  // state came from a tally-only read is read again, and the queue runs
+  // each full read once.
   const orderKnown = tabKinds.every((k) => settled(k) || !!cache?.complete.has(k));
   const wanted = [
     ...openRows,
-    ...expiredRows,
-    ...(orderKnown ? visibleEnded : []),
-    ...unplaced,
-  ].filter((c) => facts.states[c.keyString] === undefined);
+    ...[
+      ...expiredRows,
+      ...(orderKnown || ready ? visibleEnded : []),
+      ...(activeRead ? unplaced : []),
+    ].filter((c) => facts.states[c.keyString] === undefined),
+  ];
   // Cheap (a filter over at most a few pages of rows), so it runs every render.
   useEffect(() => {
     queue.current?.want(wanted);
-  }, [wanted, sdk]);
+  });
 
   // Winners' usernames for the rows shown ("won by alice"). Usernames are
   // their own winners' names, so only contested ones (2+ contenders) ask.
-  const shownRows = [...(openReady ? visibleOpen : []), ...(ready ? visibleEnded : [])];
+  const shownRows = [...(activeRead ? visibleOpen : []), ...(ready ? visibleEnded : [])];
   const askIds = new Set<string>();
   for (const c of shownRows) {
     const state = loaded(facts, c.keyString);
     const id = state?.winner?.identityId;
     if (!id || identityNames[id]) continue;
-    if (kindFor(c.key).id !== 'dpns' || state.tally.contenders.length >= 2) askIds.add(id);
+    if (namesWinner(kindIdOf(c), state.tally.contenders.length)) askIds.add(id);
   }
-  const askKey = [...askIds].sort().join(' ');
+  // Runs every render; askedIds keeps each lookup to once.
   const askedIds = useRef(new Set<string>());
   useEffect(() => {
-    if (!sdk || !askKey) return;
-    for (const id of askKey.split(' ')) {
+    if (!sdk) return;
+    for (const id of askIds) {
       if (askedIds.current.has(id)) continue;
       askedIds.current.add(id);
-      void fetchUsernames(sdk, id).then((names) =>
-        setIdentityNames((prev) => ({ ...prev, [id]: names })),
-      );
+      fetchUsernames(sdk, id)
+        .then((names) => setIdentityNames((prev) => ({ ...prev, [id]: names })))
+        .catch(() => {
+          // The row keeps its short id.
+        });
     }
-  }, [askKey, sdk]);
+  });
 
   // ---- Rendering ----
 
@@ -547,13 +680,14 @@ export function OverviewPage({
   const counts: Partial<Record<KindId, string>> = {};
   for (const k of kindsFor(network)) {
     const n =
-      active.filter((c) => kindFor(c.key).id === k.id).length +
-      archiveAll.filter((c) => !activeKeys.has(c.keyString) && kindFor(c.key).id === k.id).length;
+      active.filter((c) => kindIdOf(c) === k.id).length +
+      archiveAll.filter((c) => !activeKeys.has(c.keyString) && kindIdOf(c) === k.id).length;
     const read = sources.length > 0 && (!k.archive || sources.some((s) => s.kindId === k.id));
     if (read) counts[k.id] = kindReady(k.id) && sourcesFinished(k.id) ? fmt(n) : '…';
     else if (cache?.complete.has(k.id)) counts[k.id] = fmt(n);
   }
 
+  const heading = kindFilter ? kindById(kindFilter)?.label : undefined;
   const readList = () => {
     const el = listRef.current;
     el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -564,7 +698,7 @@ export function OverviewPage({
     return (
       <div className="contest-list">
         <KindTabs network={network} active={kindFilter} counts={counts} />
-        <h1 className="dir-heading">{kindById(kindFilter ?? '')?.label}</h1>
+        <h1 className="dir-heading">{heading}</h1>
         <p className="page-note">
           Moderator elections arrive on {network} with protocol 14. Until then they run on
           testnet.{' '}
@@ -576,163 +710,37 @@ export function OverviewPage({
     );
   }
 
-  const winnerNameOf = (c: ContestSummary, state: Contest | undefined) => {
-    const id = state?.winner?.identityId;
-    if (!id) return undefined;
-    const names = identityNames[id];
-    return kindFor(c.key).id === 'dpns' ? otherName(names, dpnsLabel(c.key)) : names?.[0];
-  };
-
-  const row = (contest: ContestSummary, isOpen: boolean) => {
-    const state = facts.states[contest.keyString];
-    const contest_ = typeof state === 'object' ? state : undefined;
-    const kind = kindFor(contest.key);
-    const timing = contest.endsAtMs ? countdown(contest.endsAtMs, now) : undefined;
-    const winnerName = winnerNameOf(contest, contest_);
-    const outcome = contest_ && !isOpen ? outcomeOf(contest_) : undefined;
-    const title = titleOf(contest);
-
-    let name: ReactNode;
-    if (kind.id === 'dpns') {
-      const spelling = dpnsSpelling(contest_ ?? contest);
-      name = isOpen ? (
-        <ContestedName label={spelling.label} />
-      ) : (
-        <span
-          className={spelling.known ? 'dir-name' : 'dir-name normalized'}
-          title={
-            spelling.known
-              ? undefined
-              : 'Shown in normalized form (lowercase, o→0, i/l→1): the registered spelling could not be read.'
-          }
-        >
-          {spelling.label}
-        </span>
-      );
-    } else {
-      name = <span className="kind-title">{title}</span>;
-    }
-
-    let bar: ReactNode;
-    let votes = '';
-    if (state === undefined) {
-      bar = <span className="bar-skeleton" />;
-    } else if (state === 'error') {
-      bar = <span className="mono-label">result unavailable</span>;
-    } else if (isOpen || state.tally.total > 0) {
-      bar = (
-        <BallotBar state={state.tally} mini ended={!isOpen} showLock={kind.choices(state).includes('lock')} />
-      );
-    } else {
-      bar = (
-        <span className="dir-result-note">
-          {outcome?.unopposed ? 'only contender' : outcome?.kind === 'awaiting' ? 'no votes' : 'no votes cast'}
-        </span>
-      );
-    }
-    if (contest_) {
-      if (isOpen) votes = contest_.tally.total > 0 ? plural(contest_.tally.total, 'vote') : 'no votes yet';
-      else if (outcome?.score) votes = outcome.score;
-      else if (contest_.tally.total > 0) votes = plural(contest_.tally.total, 'vote');
-    }
-
-    let status: ReactNode;
-    let statusClass = 'ledger-ends mono-label';
-    if (isOpen) {
-      status = timing ? `closes in ${timing.text}` : '';
-      if (timing?.urgent) statusClass += ' urgent';
-    } else if (outcome) {
-      const word = outcome.kind === 'awaiting' ? 'awaiting result' : outcome.kind;
-      status = (
-        <>
-          <span className={`dir-outcome ${outcome.kind.replace(' ', '-')}`}>{word}</span>
-          {outcome.decidedAtMs !== undefined && <span className="dir-date">{shortDate(outcome.decidedAtMs)}</span>}
-        </>
-      );
-    } else if (state === undefined) {
-      status = '…';
-    } else {
-      status = '';
-    }
-
-    const contenders = contest_?.tally.contenders.length ?? 0;
-    const sub =
-      !isOpen && outcome?.kind === 'awarded' && (kind.id !== 'dpns' || contenders >= 2)
-        ? `won by ${winnerName ?? shortId(outcome.winnerId ?? '', 6)}`
-        : undefined;
-
-    // On the All tab, non-username rows say what they are.
-    const chip = !kindFilter && kind.id !== 'dpns' ? CHIP[kind.id] : undefined;
-
-    return (
-      <li key={contest.keyString}>
-        <a
-          className={isOpen ? 'ledger-row' : 'ledger-row ended'}
-          href={pollHref(contest.keyString)}
-          aria-label={rowLabel({ title, open: isOpen, closes: timing?.text, state, winnerName })}
-        >
-          <span className="ledger-name">
-            <span className="dir-title">
-              {name}
-              {isOpen && contenders >= 2 && <span className="contest-flag">{contenders} contenders</span>}
-            </span>
-            {(sub || chip) && (
-              <span className="dir-sub">
-                {chip && <span className="kind-chip">{chip}</span>}
-                {sub}
-              </span>
-            )}
-          </span>
-          <span className="ledger-bar">{bar}</span>
-          <span className="ledger-votes mono-label">{votes}</span>
-          <span className={statusClass}>{status}</span>
-        </a>
-      </li>
-    );
-  };
-
   // ---- The status sentence ----
 
-  const endedByKind = new Map<KindId, number>();
-  for (const c of endedRows) {
-    const k = kindFor(c.key).id;
-    endedByKind.set(k, (endedByKind.get(k) ?? 0) + 1);
-  }
-  const decidedWords = joinWords(
-    tabKinds.filter((k) => (endedByKind.get(k) ?? 0) > 0).map((k) => kindCount(k, endedByKind.get(k) ?? 0)),
-  );
   const soonest = openRows[0];
-  let sentence: ReactNode;
-  if (!sdk && !ready) {
-    sentence = 'Connecting to Dash Platform…';
-  } else if (openReady && openRows.length > 0) {
-    sentence = (
-      <>
-        <strong>{plural(openRows.length, 'contest')} open for voting.</strong>
-        {soonest?.endsAtMs && ` The next closes in ${countdown(soonest.endsAtMs, now).text}.`}
-        {!ready
-          ? ' Reading decided contests…'
-          : decidedWords && ` ${decidedWords} decided so far.`}
-      </>
-    );
-  } else if (!ready) {
-    const found = openRows.length + endedRows.length;
-    sentence = found > 0 ? `Reading contests from Platform… ${fmt(found)} found so far.` : 'Reading contests from Platform…';
-  } else if (endedRows.length > 0) {
-    sentence = (
-      <>
-        <strong>Nothing is open for voting right now.</strong> {decidedWords}{' '}
-        {endedRows.length === 1 ? 'has' : 'have'} been decided.
-      </>
-    );
-  } else {
-    sentence = '';
-  }
+  const sentence = statusSentence({
+    connected: !!sdk,
+    ready,
+    openRead: activeRead,
+    openFailed,
+    openCount: openRows.length,
+    endedCount: endedRows.length,
+    decided: decidedWords(endedRows, tabKinds),
+    nextCloses: soonest?.endsAtMs ? countdown(soonest.endsAtMs, now).text : undefined,
+  });
+  const empty = emptyMessage({
+    filter,
+    connected: !!sdk,
+    openRead: activeRead,
+    status: report.status,
+    failures: report.failures.length,
+    kindFilter,
+    heading,
+    network,
+  });
 
+  const nothingShown = visibleOpen.length === 0 && orderedEnded.length === 0;
+  // Skeleton rows show while the list is not ready, or while an empty tab cannot be called empty yet.
+  const loadingRows = !ready || (nothingShown && !empty);
   const tabRowCount = openRows.length + endedRows.length;
-  const heading = kindFilter ? kindById(kindFilter)?.label : undefined;
-  const openStates = visibleOpen.map((c) => loaded(facts, c.keyString)).filter((s): s is Contest => !!s);
-  const endedStates = visibleEnded.map((c) => loaded(facts, c.keyString)).filter((s): s is Contest => !!s);
+  const row = (c: ContestSummary, isOpen: boolean) => (
+    <LedgerRow key={c.keyString} contest={c} isOpen={isOpen} facts={facts} now={now} showChip={!kindFilter} />
+  );
 
   return (
     <div className="contest-list" data-loading={listComplete ? 'false' : 'true'}>
@@ -747,12 +755,16 @@ export function OverviewPage({
       )}
 
       <p className="dir-status" role="status" aria-live="polite">
-        {sentence}
-        {ready && report.status === 'streaming' && <span className="mono-label"> Checking for new contests…</span>}
+        {sentence.lead && <strong>{sentence.lead}</strong>}
+        {sentence.lead && sentence.rest && ' '}
+        {sentence.rest}
+        {activeRead && ready && report.status === 'streaming' && (
+          <span className="mono-label"> Checking for new contests…</span>
+        )}
       </p>
       <DirectoryIssues failures={report.failures} caps={report.caps} />
 
-      <div ref={listRef} tabIndex={-1} className="dir-list" aria-busy={!ready}>
+      <div ref={listRef} tabIndex={-1} className="dir-list" aria-busy={loadingRows}>
         {ready && tabRowCount > SEARCH_MIN && (
           <input
             className="search"
@@ -767,11 +779,11 @@ export function OverviewPage({
           />
         )}
 
-        {openReady && visibleOpen.length > 0 && (
+        {activeRead && visibleOpen.length > 0 && (
           <>
             <div className="dir-section-head">
               <h2 className="section-title">Open for voting · {visibleOpen.length}</h2>
-              <Legend items={legendFor(openStates, false)} />
+              <Legend items={legendFor(statesOf(visibleOpen, facts), false)} />
             </div>
             <ol className="ledger">{visibleOpen.map((c) => row(c, true))}</ol>
           </>
@@ -781,7 +793,7 @@ export function OverviewPage({
           <>
             <div className="dir-section-head">
               <h2 className="section-title">
-                {!sdk ? 'Connecting' : openReady && openRows.length > 0 ? 'Recently decided' : 'Loading contests'}
+                {activeRead && openRows.length > 0 ? 'Recently decided' : 'Loading contests'}
               </h2>
             </div>
             <SkeletonRows count={5} />
@@ -794,7 +806,7 @@ export function OverviewPage({
                   <h2 className="section-title">
                     {sort === 'recent' ? 'Recently decided' : 'Decided, A–Z'} · {fmt(orderedEnded.length)}
                   </h2>
-                  <Legend items={legendFor(endedStates, true)} />
+                  <Legend items={legendFor(statesOf(visibleEnded, facts), true)} />
                   {orderedEnded.length > SEARCH_MIN && (
                     <div className="segmented dir-sort" role="group" aria-label="Sort decided contests">
                       <button type="button" aria-pressed={sort === 'recent'} onClick={() => { setSort('recent'); setShown(FIRST_PAGE); }}>
@@ -815,21 +827,7 @@ export function OverviewPage({
               </>
             )}
 
-            {visibleOpen.length === 0 && orderedEnded.length === 0 && (
-              <p className="page-note">
-                {needle
-                  ? `No contests match “${filter.trim()}”.`
-                  : report.status === 'error'
-                    ? 'Contests could not be read from Platform. Check your connection and reload the page.'
-                    : report.failures.length > 0
-                      ? 'None found, but some reads failed (see above).'
-                      : kindFilter === 'generic'
-                        ? `No other contract has a contested resource on ${network} yet. Browse a contract by id to see its contested indices.`
-                        : kindFilter
-                          ? `No ${heading?.toLowerCase() ?? 'contests'} on ${network} yet.`
-                          : `Nothing is contested on ${network} right now.`}
-              </p>
-            )}
+            {nothingShown && (empty ? <p className="page-note">{empty}</p> : <SkeletonRows count={3} />)}
           </>
         )}
       </div>

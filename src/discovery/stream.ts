@@ -21,14 +21,25 @@ export interface ContestSource {
   phase: StreamPhase;
   /** The kind this archive belongs to (archives only). */
   kindId?: string;
-  read: (sdk: EvoSDK) => AsyncIterable<ArchivePage | SummaryPage>;
+  read: (sdk: EvoSDK) => AsyncIterable<SummaryPage>;
 }
 
-/** A page that already carries summaries (the active polls). */
+/** One page of a source: some contests, and any failure or cap met on the way. */
 export interface SummaryPage {
   list: ContestSummary[];
   failures?: Failure[];
   caps?: Cap[];
+}
+
+/** An archive sweep's pages as summary pages. */
+export async function* archiveSummaries(pages: AsyncIterable<ArchivePage>): AsyncGenerator<SummaryPage> {
+  for await (const page of pages) {
+    yield {
+      list: page.keys.map((key) => ({ key, keyString: encodePollKey(key) })),
+      failures: page.failure ? [page.failure] : undefined,
+      caps: page.cap ? [page.cap] : undefined,
+    };
+  }
 }
 
 export interface ContestBatch {
@@ -99,17 +110,9 @@ function startRun(sdk: EvoSDK, source: ContestSource): SourceRun {
     try {
       for await (const page of source.read(sdk)) {
         run.at = Date.now();
-        let list: ContestSummary[];
-        if ('list' in page) {
-          list = page.list;
-          run.failures.push(...(page.failures ?? []));
-          run.caps.push(...(page.caps ?? []));
-        } else {
-          list = page.keys.map((key) => ({ key, keyString: encodePollKey(key) }));
-          if (page.failure) run.failures.push(page.failure);
-          if (page.cap) run.caps.push(page.cap);
-        }
-        const fresh = list.filter((c) => !seen.has(c.keyString));
+        run.failures.push(...(page.failures ?? []));
+        run.caps.push(...(page.caps ?? []));
+        const fresh = page.list.filter((c) => !seen.has(c.keyString));
         for (const c of fresh) seen.add(c.keyString);
         run.seen = seen.size;
         if (fresh.length > 0) {
@@ -135,12 +138,9 @@ function runFor(sdk: EvoSDK, source: ContestSource): SourceRun {
   // Reuse an in-progress run (unless wedged past its deadline) or a clean
   // completed one inside the TTL. Failed and partial runs always restart.
   const run = runs.get(source.id);
-  const reusable =
-    run !== undefined &&
-    (run.status === 'streaming'
-      ? Date.now() - run.at < STREAM_DEADLINE_MS
-      : run.status === 'done' && Date.now() - run.at < CONTESTS_TTL_MS);
-  if (reusable) return run;
+  const age = run ? Date.now() - run.at : Infinity;
+  if (run?.status === 'streaming' && age < STREAM_DEADLINE_MS) return run;
+  if (run?.status === 'done' && age < CONTESTS_TTL_MS) return run;
   const fresh = startRun(sdk, source);
   runs.set(source.id, fresh);
   return fresh;
@@ -151,7 +151,11 @@ export function combineReports(
   sources: readonly { id: string; status: StreamStatus; failures: Failure[]; caps: Cap[]; seen: number }[],
 ): StreamReport {
   const failures = sources.flatMap((s) => s.failures);
-  const caps = sources.flatMap((s) => s.caps);
+  // A sliced archive caps per slice: say it once per source, with how many
+  // contests that source did read (slices overlap nothing, so `seen` is exact).
+  const caps = sources.flatMap((s) =>
+    [...new Set(s.caps.map((c) => c.source))].map((source) => ({ source, limit: s.seen })),
+  );
   const finished = sources.filter((s) => s.status !== 'streaming').map((s) => s.id);
   let status: StreamStatus;
   if (finished.length < sources.length) status = 'streaming';

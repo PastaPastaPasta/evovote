@@ -1,5 +1,6 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { mergeSweeps, sweepContestedResources, type ContestedResourceSweep } from '../discovery/archive';
+import { chunk } from '../discovery/concurrency';
 import { freeQuietly } from '../sdk/free';
 import type { Network } from '../sdk/network';
 import { choicesForResolution, type Contest, type ContestSummary } from '../model/contest';
@@ -19,6 +20,16 @@ const PARENT = 'dash';
  */
 export function normalizeDpnsLabel(label: string): string {
   return label.toLowerCase().replace(/o/g, '0').replace(/[il]/g, '1');
+}
+
+/** A name without its ".dash" suffix (any case). */
+export function stripDash(name: string): string {
+  return name.replace(/\.dash$/i, '');
+}
+
+/** A username ("Bob.dash", "bob") in its normalized form ("b0b"). */
+export function normalizedUsername(name: string): string {
+  return normalizeDpnsLabel(stripDash(name));
 }
 
 /** The poll key of a `.dash` username contest, from its normalized label. */
@@ -104,7 +115,7 @@ export function dpnsSpelling(c: ContestSummary | Contest): { label: string; know
 }
 
 /** Most values an `in` clause takes (and most documents a page returns). */
-const NAME_BATCH = 100;
+export const NAME_BATCH = 100;
 
 /** Pure mapping of a domain document's JSON; exported for tests. */
 export function toDpnsName(json: Record<string, unknown>): DpnsName | undefined {
@@ -131,8 +142,7 @@ export async function fetchDpnsNames(
 ): Promise<Map<string, DpnsName>> {
   const out = new Map<string, DpnsName>();
   const version = sdk.version();
-  for (let i = 0; i < labels.length; i += NAME_BATCH) {
-    const batch = labels.slice(i, i + NAME_BATCH);
+  for (const batch of chunk(labels, NAME_BATCH)) {
     const docs = await sdk.documents.query({
       dataContractId: DPNS_CONTRACT_ID,
       documentTypeName: DOCUMENT_TYPE,
@@ -143,19 +153,24 @@ export async function fetchDpnsNames(
       orderBy: [['normalizedLabel', 'asc']],
       limit: NAME_BATCH,
     });
-    for (const doc of docs.values()) {
-      if (!doc) continue;
-      try {
-        const json = doc.toJSON(version) as Record<string, unknown>;
-        const name = toDpnsName(json);
-        const normalized = json.normalizedLabel;
-        if (name && typeof normalized === 'string') {
-          out.set(normalized, name);
-          rememberDpnsSpelling(normalized, name.label);
+    const found = [...docs.values()];
+    try {
+      for (const doc of found) {
+        if (!doc) continue;
+        try {
+          const json = doc.toJSON(version) as Record<string, unknown>;
+          const name = toDpnsName(json);
+          const normalized = json.normalizedLabel;
+          if (name && typeof normalized === 'string') {
+            out.set(normalized, name);
+            rememberDpnsSpelling(normalized, name.label);
+          }
+        } catch {
+          // One unreadable document costs only its own name.
         }
-      } finally {
-        freeQuietly(doc);
       }
+    } finally {
+      found.forEach(freeQuietly);
     }
   }
   return out;
@@ -167,7 +182,16 @@ export async function fetchDpnsNames(
  * ones have no i, l or o). Eleven sequential pages of testnet's ~1,000
  * contested names become two or three per slice.
  */
-export const ARCHIVE_SLICES = ['b', 'e', 'm', 'n', 't', 'u'];
+const ARCHIVE_SLICES = ['b', 'e', 'm', 'n', 't', 'u'];
+
+/**
+ * The label of a returned archive resource: the label string itself
+ * (verified on rc.4 testnet), or the last value if it comes as an array.
+ */
+export function labelOf(resource: unknown): string | undefined {
+  const label = Array.isArray(resource) ? resource[resource.length - 1] : resource;
+  return typeof label === 'string' ? label : undefined;
+}
 
 const ARCHIVE_SWEEP: ContestedResourceSweep = {
   source: 'DPNS archive',
@@ -176,9 +200,8 @@ const ARCHIVE_SWEEP: ContestedResourceSweep = {
   indexName: INDEX_NAME,
   prefix: [text(PARENT)],
   toKey: (resource) => {
-    // Resources come back as the label string (verified on rc.4 testnet).
-    const label = Array.isArray(resource) ? resource[resource.length - 1] : resource;
-    return typeof label === 'string' ? dpnsPollKey(label) : undefined;
+    const label = labelOf(resource);
+    return label === undefined ? undefined : dpnsPollKey(label);
   },
 };
 
@@ -224,7 +247,7 @@ export const dpnsKind: ContestKind = {
         sweepContestedResources(sdk, ARCHIVE_SWEEP, {
           range: {
             from,
-            stop: to === undefined ? undefined : (r) => typeof r === 'string' && r >= to,
+            stop: to === undefined ? undefined : (r) => (labelOf(r) ?? '') >= to,
           },
         }),
       ),

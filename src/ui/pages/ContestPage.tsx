@@ -378,7 +378,7 @@ export function ContestPage({
       )}
       {kind.id === 'charter' && <CharterNotices />}
 
-      <BallotBar state={contest.tally} showLock={choices.includes('lock')} />
+      <BallotBar state={contest.tally} showLock={choices.includes('lock')} ended={!open} />
 
       <ol className="contenders">
         {contenders.map((c, rank) => (

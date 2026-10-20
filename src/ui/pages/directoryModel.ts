@@ -1,6 +1,11 @@
-import { dpnsLabel, normalizeDpnsLabel, type DpnsName } from '../../kinds/dpns';
-import type { ContestKind } from '../../kinds/types';
+import { isStorable, type CachedResult } from '../../discovery/resultCache';
+import type { StreamReport, StreamStatus } from '../../discovery/stream';
+import { dpnsLabel, normalizedUsername, normalizeDpnsLabel, stripDash, type DpnsName } from '../../kinds/dpns';
+import { kindFor } from '../../kinds/registry';
+import type { ContestKind, KindId } from '../../kinds/types';
 import type { Contest, ContestSummary } from '../../model/contest';
+import type { Network } from '../../sdk/network';
+import { fmt, plural } from '../format';
 
 /**
  * The directory's pure logic: what a row says, where it sorts, and what a
@@ -23,10 +28,84 @@ export interface DirectoryFacts {
 
 export type EndedSort = 'recent' | 'name';
 
+/** The kind of a row. */
+export function kindIdOf(c: ContestSummary): KindId {
+  return kindFor(c.key).id;
+}
+
+/**
+ * Whether a decided row's winner needs a name of its own ("won by alice"):
+ * a username's winner is the name itself unless others contended for it.
+ */
+export function namesWinner(kind: KindId, contenders: number): boolean {
+  return kind !== 'dpns' || contenders >= 2;
+}
+
 /** The loaded contest of a row, if any. */
 export function loaded(facts: DirectoryFacts, keyString: string): Contest | undefined {
   const s = facts.states[keyString];
   return typeof s === 'object' ? s : undefined;
+}
+
+/** The loaded contests of some rows, skipping rows not (or not readably) loaded. */
+export function statesOf(rows: readonly ContestSummary[], facts: DirectoryFacts): Contest[] {
+  return rows.map((c) => loaded(facts, c.keyString)).filter((s): s is Contest => !!s);
+}
+
+/** A row's title, from its loaded contest when there is one. */
+export function titleOf(c: ContestSummary, facts: DirectoryFacts): string {
+  return kindFor(c.key).title(loaded(facts, c.keyString) ?? c);
+}
+
+/** `base` plus the items of `extra` whose key it lacks; `base` itself when none are new. */
+export function mergeByKey(base: ContestSummary[], extra: readonly ContestSummary[]): ContestSummary[] {
+  const have = new Set(base.map((c) => c.keyString));
+  const fresh = extra.filter((c) => {
+    if (have.has(c.keyString)) return false;
+    have.add(c.keyString);
+    return true;
+  });
+  return fresh.length > 0 ? [...base, ...fresh] : base;
+}
+
+/**
+ * Whether a username's name document is worth asking for, given what the
+ * cache holds: not once it is known, nor for a contest decided without a
+ * winner (locked or none: no name document exists). An awarded result alone
+ * does not do: it carries no spelling.
+ */
+export function needsName(record: CachedResult | undefined): boolean {
+  if (record?.name) return false;
+  return !record?.result || record.result.winner.kind === 'identity';
+}
+
+/**
+ * Whether a decided row comes back, in its place, from the cache alone on
+ * the next visit: by its registered name (a username) or its stored result.
+ */
+export function isRemembered(c: ContestSummary, facts: DirectoryFacts): boolean {
+  const label = dpnsLabel(c.key);
+  if (label !== undefined && facts.names[label]?.createdAtMs !== undefined) return true;
+  const state = loaded(facts, c.keyString);
+  return state !== undefined && isStorable(state);
+}
+
+/**
+ * The kinds of a tab whose decided list can be cached as complete: every
+ * source finished without a failure or a cap, and every decided row of the
+ * kind will come back from the cache (none unread, failed or undecided).
+ */
+export function completeKinds(args: {
+  kinds: readonly KindId[];
+  /** The kind's sources finished and every row of it is placed. */
+  ordered: (kind: KindId) => boolean;
+  rows: readonly ContestSummary[];
+  facts: DirectoryFacts;
+  report: Pick<StreamReport, 'failures' | 'caps'>;
+}): KindId[] {
+  const { kinds, ordered, rows, facts, report } = args;
+  if (report.failures.length > 0 || report.caps.length > 0) return [];
+  return kinds.filter((k) => ordered(k) && rows.every((c) => kindIdOf(c) !== k || isRemembered(c, facts)));
 }
 
 /**
@@ -71,9 +150,9 @@ export function orderEnded(
     if (sort === 'name') return byName(a, b);
     const ra = recency(a, facts);
     const rb = recency(b, facts);
-    if (ra === undefined || rb === undefined) {
-      return ra === rb ? byName(a, b) : ra === undefined ? 1 : -1;
-    }
+    if (ra === undefined && rb === undefined) return byName(a, b);
+    if (ra === undefined) return 1;
+    if (rb === undefined) return -1;
     return rb - ra || byName(a, b);
   });
 }
@@ -88,9 +167,8 @@ export interface Needle {
 export function toNeedle(input: string): Needle | undefined {
   const raw = input.trim();
   if (!raw) return undefined;
-  const lower = raw.toLowerCase();
-  const bare = lower.endsWith('.dash') ? lower.slice(0, -'.dash'.length) : lower;
-  return { raw, lower: bare, normalized: normalizeDpnsLabel(bare) };
+  const lower = stripDash(raw.toLowerCase());
+  return { raw, lower, normalized: normalizeDpnsLabel(lower) };
 }
 
 /**
@@ -106,7 +184,7 @@ export function matchesNeedle(
 ): boolean {
   const state = loaded(facts, c.keyString);
   // A username's title ends in ".dash" like every other: match the name itself.
-  const title = kind.title(state ?? c).toLowerCase().replace(/\.dash$/, '');
+  const title = stripDash(kind.title(state ?? c).toLowerCase());
   if (title.includes(needle.lower)) return true;
   const label = dpnsLabel(c.key);
   if (label !== undefined && needle.normalized && label.includes(needle.normalized)) return true;
@@ -125,7 +203,7 @@ export function matchesNeedle(
   for (const id of ids) {
     if (idMatch(id)) return true;
     const names = facts.identityNames[id] ?? [];
-    if (names.some((n) => normalizeDpnsLabel(n.replace(/\.dash$/i, '')).includes(needle.normalized))) return true;
+    if (names.some((n) => normalizedUsername(n).includes(needle.normalized))) return true;
   }
   return false;
 }
@@ -177,8 +255,19 @@ export function shortDate(ms: number): string {
 }
 
 /** A username that is not the contest's own name, to tell its winner apart. */
-export function otherName(names: readonly string[] | undefined, normalized?: string): string | undefined {
-  return names?.find((n) => normalizeDpnsLabel(n.replace(/\.dash$/i, '')) !== normalized);
+function otherName(names: readonly string[] | undefined, normalized?: string): string | undefined {
+  return names?.find((n) => normalizedUsername(n) !== normalized);
+}
+
+/**
+ * The username of a row's winner, to show "won by alice": for a username
+ * contest, a name of the winner's other than the contested one.
+ */
+export function winnerNameOf(c: ContestSummary, facts: DirectoryFacts): string | undefined {
+  const id = loaded(facts, c.keyString)?.winner?.identityId;
+  if (!id) return undefined;
+  const names = facts.identityNames[id];
+  return kindIdOf(c) === 'dpns' ? otherName(names, dpnsLabel(c.key)) : names?.[0];
 }
 
 /**
@@ -212,4 +301,119 @@ export function rowLabel(args: {
     parts.push(`${state.tally.total} vote${state.tally.total === 1 ? '' : 's'}`);
   }
   return `${title} — ${parts.join(', ')}`;
+}
+
+/** What one contest of a kind is called in a sentence. */
+export const NOUN: Record<KindId, string> = {
+  dpns: 'username contest',
+  charter: 'moderator election',
+  generic: 'other contest',
+};
+
+/** "1,036 username contests", "5 moderator elections". */
+function kindCount(kind: KindId, n: number): string {
+  return `${fmt(n)} ${NOUN[kind]}${n === 1 ? '' : 's'}`;
+}
+
+function joinWords(parts: string[]): string {
+  if (parts.length <= 1) return parts.join('');
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/** "1,036 username contests and 5 moderator elections" for some decided rows, in tab order. */
+export function decidedWords(rows: readonly ContestSummary[], kinds: readonly KindId[]): string {
+  const byKind = new Map<KindId, number>();
+  for (const c of rows) {
+    const k = kindIdOf(c);
+    byKind.set(k, (byKind.get(k) ?? 0) + 1);
+  }
+  return joinWords(kinds.filter((k) => byKind.has(k)).map((k) => kindCount(k, byKind.get(k) ?? 0)));
+}
+
+/** The directory's status line: a bold lead (a fact) and the rest. */
+export interface StatusSentence {
+  lead?: string;
+  rest?: string;
+}
+
+/**
+ * What the status line says. Nothing is claimed about open contests until
+ * the active polls have been read, however much the cache already shows;
+ * and "nothing is open" never when that read failed.
+ */
+export function statusSentence(s: {
+  connected: boolean;
+  /** The decided list can be shown (ordered, from this visit or the cache). */
+  ready: boolean;
+  /** The active-polls read has finished (successfully or not). */
+  openRead: boolean;
+  /** The active-polls read failed, so open contests may be missing. */
+  openFailed: boolean;
+  openCount: number;
+  endedCount: number;
+  /** decidedWords of the decided rows. */
+  decided: string;
+  /** "2h 5m": when the soonest open contest closes. */
+  nextCloses?: string;
+}): StatusSentence {
+  const reading = () => {
+    const found = s.openCount + s.endedCount;
+    return found > 0 ? `Reading contests from Platform… ${fmt(found)} found so far.` : 'Reading contests from Platform…';
+  };
+  let decidedPart = '';
+  if (!s.ready) decidedPart = 'Reading decided contests…';
+  else if (s.decided) decidedPart = `${s.decided} decided so far.`;
+
+  if (!s.openRead) {
+    const waiting = s.connected ? 'Checking for open contests…' : 'Connecting to Dash Platform…';
+    if (s.ready && s.decided) return { rest: `${decidedPart} ${waiting}` };
+    if (s.connected && !s.ready) return { rest: reading() };
+    return { rest: waiting };
+  }
+  if (s.openCount > 0) {
+    const next = s.nextCloses ? `The next closes in ${s.nextCloses}.` : '';
+    return {
+      lead: `${plural(s.openCount, 'contest')} open for voting.`,
+      rest: [next, decidedPart].filter(Boolean).join(' ') || undefined,
+    };
+  }
+  if (s.openFailed) {
+    return { rest: ['Open contests could not be read from Platform.', decidedPart].filter(Boolean).join(' ') };
+  }
+  if (!s.ready) return { rest: reading() };
+  if (s.endedCount > 0) {
+    return {
+      lead: 'Nothing is open for voting right now.',
+      rest: `${s.decided} ${s.endedCount === 1 ? 'has' : 'have'} been decided.`,
+    };
+  }
+  return {};
+}
+
+/**
+ * What an empty tab says, or undefined while it cannot be known to be
+ * empty (Platform not connected, open contests not read, lists still
+ * streaming): the page keeps its loading rows instead.
+ */
+export function emptyMessage(s: {
+  filter: string;
+  connected: boolean;
+  /** The active-polls read has finished (successfully or not). */
+  openRead: boolean;
+  status: StreamStatus;
+  failures: number;
+  kindFilter?: KindId;
+  heading?: string;
+  network: Network;
+}): string | undefined {
+  const typed = s.filter.trim();
+  if (typed) return `No contests match “${typed}”.`;
+  if (!s.connected || !s.openRead || s.status === 'streaming') return undefined;
+  if (s.status === 'error') return 'Contests could not be read from Platform. Check your connection and reload the page.';
+  if (s.failures > 0) return 'None found, but some reads failed (see above).';
+  if (s.kindFilter === 'generic') {
+    return `No other contract has a contested resource on ${s.network} yet. Browse a contract by id to see its contested indices.`;
+  }
+  if (s.kindFilter) return `No ${s.heading?.toLowerCase() ?? 'contests'} on ${s.network} yet.`;
+  return `Nothing is contested on ${s.network} right now.`;
 }

@@ -1,4 +1,4 @@
-import { ACTIVE_SOURCE, type ContestSource } from '../discovery/stream';
+import { ACTIVE_SOURCE, archiveSummaries, type ContestSource } from '../discovery/stream';
 import type { PollKey } from '../model/pollKey';
 import type { Network } from '../sdk/network';
 import { charterKind } from './charter';
@@ -39,7 +39,7 @@ const ARCHIVE_SOURCES: ReadonlyMap<KindId, ContestSource> = new Map(
   KINDS.flatMap((k): [KindId, ContestSource][] => {
     const archive = k.archive;
     return archive
-      ? [[k.id, { id: `${k.id} archive`, phase: 'archive', kindId: k.id, read: (sdk) => archive(sdk) }]]
+      ? [[k.id, { id: `${k.id} archive`, phase: 'archive', kindId: k.id, read: (sdk) => archiveSummaries(archive(sdk)) }]]
       : [];
   }),
 );

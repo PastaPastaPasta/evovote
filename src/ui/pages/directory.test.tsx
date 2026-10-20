@@ -1,6 +1,6 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mergeSweeps, sweepContestedResources, type ArchivePage } from '../../discovery/archive';
 import { createWantQueue } from '../../discovery/concurrency';
 import { cachedContest, isStorable, loadCachedDirectory, resultOf } from '../../discovery/resultCache';
@@ -12,6 +12,8 @@ import {
   dpnsPollKey,
   dpnsSpelling,
   fetchDpnsNames,
+  labelOf,
+  normalizedUsername,
   rememberDpnsSpelling,
   toDpnsName,
 } from '../../kinds/dpns';
@@ -20,10 +22,17 @@ import type { Contest, ContestSummary } from '../../model/contest';
 import { encodePollKey, type PollKey } from '../../model/pollKey';
 import { BallotBar } from '../components/BallotBar';
 import {
+  completeKinds,
+  decidedWords,
+  emptyMessage,
+  isRemembered,
   matchesNeedle,
+  mergeByKey,
+  needsName,
   orderEnded,
   outcomeOf,
   rowLabel,
+  statusSentence,
   toNeedle,
   type DirectoryFacts,
 } from './directoryModel';
@@ -160,6 +169,46 @@ describe('username names', () => {
     expect(dpnsSpelling(summary(key))).toEqual({ label: 'Alice', known: true });
   });
 
+  it('should keep the other names of a batch when one document cannot be read, and free them all', async () => {
+    let freed = 0;
+    const doc = (l: string, bad = false) => ({
+      toJSON: () => {
+        if (bad) throw new Error('bad document');
+        return { label: l.toUpperCase(), normalizedLabel: l };
+      },
+      free: () => {
+        freed++;
+      },
+    });
+    const sdk = {
+      version: () => 1,
+      documents: {
+        query: async () => new Map([['a', doc('a')], ['b', doc('b', true)], ['c', doc('c')]]),
+      },
+    } as unknown as EvoSDK;
+    const names = await fetchDpnsNames(sdk, ['a', 'b', 'c']);
+    expect([...names.keys()]).toEqual(['a', 'c']);
+    expect(freed).toBe(3);
+  });
+
+  it('should ask for a name unless it is known or the contest had no winner to own one', () => {
+    const result = (kind: 'identity' | 'locked') => ({
+      tally: { contenders: [], abstain: 0, lock: 0, total: 0 },
+      winner: { kind, rawKind: kind },
+    });
+    const base = { id: 'x', network: 'testnet' as const, keyString: 'k' };
+    expect(needsName(undefined)).toBe(true);
+    expect(needsName({ ...base, name: { label: 'Bob' } })).toBe(false);
+    // An awarded result carries no spelling: still ask.
+    expect(needsName({ ...base, result: result('identity') })).toBe(true);
+    expect(needsName({ ...base, result: result('locked') })).toBe(false);
+  });
+
+  it('should strip ".dash" and normalize a username', () => {
+    expect(normalizedUsername('Bob.DASH')).toBe('b0b');
+    expect(normalizedUsername('alice')).toBe('a11ce');
+  });
+
   it('should batch name lookups 100 labels at a time', async () => {
     const queries: Array<{ where: unknown[][] }> = [];
     const sdk = {
@@ -188,6 +237,13 @@ describe('username names', () => {
 describe('archive slices', () => {
   it('should cover the index in contiguous slices', () => {
     expect(archiveSlices(['m'])).toEqual([{ from: undefined, to: 'm' }, { from: 'm', to: undefined }]);
+  });
+
+  it('should read a label from a string or array resource', () => {
+    expect(labelOf('bob')).toBe('bob');
+    expect(labelOf(['dash', 'bob'])).toBe('bob');
+    expect(labelOf(42)).toBeUndefined();
+    expect(labelOf([])).toBeUndefined();
   });
 
   it('should start a range inclusively, stop at its end, and merge slices', async () => {
@@ -266,6 +322,156 @@ describe('sources and reports', () => {
     expect(combineReports([run('a', 'done'), run('b', 'error', 0)]).status).toBe('partial');
     expect(combineReports([run('a', 'error', 0)]).status).toBe('error');
   });
+
+  it('should report a sliced archive cap once per source, with all it read', () => {
+    const run = (id: string, seen: number, caps: { source: string; limit: number }[]) => ({
+      id,
+      status: 'done' as const,
+      failures: [],
+      caps,
+      seen,
+    });
+    const report = combineReports([
+      run('dpns archive', 9100, [
+        { source: 'DPNS archive', limit: 2000 },
+        { source: 'DPNS archive', limit: 2000 },
+      ]),
+      run('charter archive', 2000, [{ source: 'moderator election archive', limit: 2000 }]),
+      run('active', 3, []),
+    ]);
+    expect(report.caps).toEqual([
+      { source: 'DPNS archive', limit: 9100 },
+      { source: 'moderator election archive', limit: 2000 },
+    ]);
+  });
+});
+
+describe('directory list state', () => {
+  const base = {
+    connected: true,
+    ready: true,
+    openRead: true,
+    openFailed: false,
+    openCount: 0,
+    endedCount: 3,
+    decided: '3 username contests',
+  };
+
+  it('should say nothing about open contests until the active polls are read', () => {
+    const text = (s: { lead?: string; rest?: string }) => `${s.lead ?? ''} ${s.rest ?? ''}`;
+    // A cached, complete list while Platform connects.
+    const connecting = statusSentence({ ...base, connected: false, openRead: false });
+    expect(text(connecting)).not.toMatch(/Nothing is open/);
+    expect(connecting.rest).toBe('3 username contests decided so far. Connecting to Dash Platform…');
+    const checking = statusSentence({ ...base, openRead: false });
+    expect(text(checking)).not.toMatch(/Nothing is open/);
+    expect(checking.rest).toMatch(/Checking for open contests…$/);
+    expect(statusSentence({ ...base, connected: false, ready: false, openRead: false, endedCount: 0 }).rest).toBe(
+      'Connecting to Dash Platform…',
+    );
+    expect(statusSentence({ ...base, ready: false, openRead: false, endedCount: 0 }).rest).toBe(
+      'Reading contests from Platform…',
+    );
+    // Once they are read.
+    expect(statusSentence(base)).toEqual({
+      lead: 'Nothing is open for voting right now.',
+      rest: '3 username contests have been decided.',
+    });
+    expect(statusSentence({ ...base, openCount: 2, nextCloses: '5m' })).toEqual({
+      lead: '2 contests open for voting.',
+      rest: 'The next closes in 5m. 3 username contests decided so far.',
+    });
+    expect(statusSentence({ ...base, openCount: 1, ready: false }).rest).toBe('Reading decided contests…');
+    // A failed active-polls read never becomes "nothing is open".
+    expect(statusSentence({ ...base, openFailed: true })).toEqual({
+      rest: 'Open contests could not be read from Platform. 3 username contests decided so far.',
+    });
+  });
+
+  it('should render a cached, complete directory without Platform and claim nothing about open contests', async () => {
+    vi.resetModules();
+    const cache = await import('../../discovery/resultCache');
+    const { OverviewPage } = await import('./OverviewPage');
+    const dpns = await import('../../kinds/dpns');
+    await cache.loadCachedDirectory('testnet');
+    const c = contest(dpns.dpnsPollKey('a11ce'), [2, 1], { at: Date.UTC(2026, 9, 1) });
+    if (!cache.isStorable(c)) throw new Error('unreachable');
+    cache.saveCachedResult('testnet', c.keyString, { result: cache.resultOf(c), name: { label: 'Alice', createdAtMs: 1 } });
+    for (const k of ['dpns', 'charter', 'generic']) cache.markDirectoryComplete('testnet', k);
+    const html = renderToStaticMarkup(<OverviewPage network="testnet" />);
+    expect(html).toContain('a11ce.dash — decided');
+    expect(html).toContain('1 username contest decided so far. Connecting to Dash Platform…');
+    expect(html).not.toMatch(/Nothing is (open|contested)/);
+    expect(html).not.toContain('Open for voting');
+  });
+
+  it('should only call a tab empty once Platform has been read in full', () => {
+    const s = {
+      filter: '',
+      connected: true,
+      openRead: true,
+      status: 'done' as const,
+      failures: 0,
+      network: 'testnet' as const,
+    };
+    expect(emptyMessage({ ...s, connected: false })).toBeUndefined();
+    expect(emptyMessage({ ...s, openRead: false })).toBeUndefined();
+    expect(emptyMessage({ ...s, status: 'streaming' })).toBeUndefined();
+    expect(emptyMessage({ ...s, openRead: false, filter: ' bob ' })).toBe('No contests match “bob”.');
+    expect(emptyMessage(s)).toBe('Nothing is contested on testnet right now.');
+    expect(emptyMessage({ ...s, kindFilter: 'charter', heading: 'Moderator elections' })).toBe(
+      'No moderator elections on testnet yet.',
+    );
+    expect(emptyMessage({ ...s, status: 'partial', failures: 1 })).toMatch(/some reads failed/);
+    expect(emptyMessage({ ...s, status: 'error', failures: 1 })).toMatch(/could not be read/);
+  });
+
+  it('should count decided rows by kind, in tab order', () => {
+    const rows = [summary(dpnsPollKey('a')), summary(charterPollKey(TARGET)), summary(dpnsPollKey('b'))];
+    expect(decidedWords(rows, ['dpns', 'charter', 'generic'])).toBe('2 username contests and 1 moderator election');
+    expect(decidedWords([], ['dpns'])).toBe('');
+  });
+
+  it('should merge rows by key, keeping the list when nothing is new', () => {
+    const a = summary(dpnsPollKey('a'));
+    const b = summary(dpnsPollKey('b'));
+    const list = [a];
+    expect(mergeByKey(list, [a])).toBe(list);
+    expect(mergeByKey(list, [b, a, b])).toEqual([a, b]);
+  });
+});
+
+describe('directory completeness', () => {
+  const named = summary(dpnsPollKey('a11ce'));
+  const locked = summary(dpnsPollKey('10cked'));
+  const election = summary(charterPollKey(TARGET));
+  const remembered = facts({
+    names: { a11ce: { label: 'Alice', createdAtMs: 5 } },
+    states: {
+      [locked.keyString]: contest(locked.key, [1], { locked: true, at: 9 }, { lock: 3 }),
+      [election.keyString]: contest(election.key, [2, 1], { at: 9 }),
+    },
+  });
+  const report = { failures: [], caps: [] };
+  const args = { kinds: ['dpns', 'charter'] as const, ordered: () => true, rows: [named, locked, election] };
+
+  it('should cache a kind as complete only when every row comes back from the cache', () => {
+    expect(completeKinds({ ...args, kinds: [...args.kinds], facts: remembered, report })).toEqual(['dpns', 'charter']);
+    // A failed tally, an undecided result, or a tally never read is not remembered.
+    const errored = facts({ ...remembered, states: { ...remembered.states, [locked.keyString]: 'error' } });
+    expect(isRemembered(locked, errored)).toBe(false);
+    expect(completeKinds({ ...args, kinds: [...args.kinds], facts: errored, report })).toEqual(['charter']);
+    const undecided = facts({ ...remembered, states: { ...remembered.states, [election.keyString]: contest(election.key, [2]) } });
+    expect(completeKinds({ ...args, kinds: [...args.kinds], facts: undecided, report })).toEqual(['dpns']);
+    expect(isRemembered(summary(dpnsPollKey('unread')), remembered)).toBe(false);
+  });
+
+  it('should not cache anything as complete after a failure or a cap', () => {
+    const kinds = [...args.kinds];
+    expect(completeKinds({ ...args, kinds, facts: remembered, report: { failures: [], caps: [{ source: 'x', limit: 2000 }] } })).toEqual([]);
+    expect(completeKinds({ ...args, kinds, facts: remembered, report: { failures: [{ source: 'x', message: 'm' }], caps: [] } })).toEqual([]);
+    expect(completeKinds({ ...args, kinds, facts: remembered, report, ordered: (k) => k === 'charter' })).toEqual(['charter']);
+  });
 });
 
 describe('result cache', () => {
@@ -281,6 +487,52 @@ describe('result cache', () => {
     const back = cachedContest({ id: `testnet|${c.keyString}`, network: 'testnet', keyString: c.keyString, result });
     expect(back?.winner).toEqual(c.winner);
     expect(back?.key).toEqual(key);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('should run without a cache when IndexedDB never answers', async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    // A WebKit hang: open() returns a request that never fires an event.
+    vi.stubGlobal('indexedDB', { open: () => ({}) });
+    const cache = await import('../../discovery/resultCache');
+    const loading = cache.loadCachedDirectory('testnet');
+    await vi.advanceTimersByTimeAsync(cache.OPEN_TIMEOUT_MS);
+    const dir = await loading;
+    expect(dir.results.size).toBe(0);
+    cache.saveCachedResult('testnet', 'k', { name: { label: 'Bob' } });
+    expect(cache.peekCachedDirectory('testnet')?.results.get('k')?.name).toEqual({ label: 'Bob' });
+  });
+
+  it('should still write to IndexedDB when its open answers after the timeout', async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    const req: { result?: unknown; onsuccess?: () => void } = {};
+    vi.stubGlobal('indexedDB', { open: () => req });
+    const cache = await import('../../discovery/resultCache');
+    const loading = cache.loadCachedDirectory('testnet');
+    await vi.advanceTimersByTimeAsync(cache.OPEN_TIMEOUT_MS);
+    expect((await loading).results.size).toBe(0);
+    const puts: unknown[] = [];
+    req.result = { transaction: () => ({ objectStore: () => ({ put: (r: unknown) => puts.push(r) }) }) };
+    req.onsuccess?.();
+    cache.saveCachedResult('testnet', 'k', { name: { label: 'Bob' } });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(puts).toEqual([expect.objectContaining({ keyString: 'k', name: { label: 'Bob' } })]);
+  });
+
+  it('should keep a complete marker set before the cache has loaded', async () => {
+    vi.resetModules();
+    const cache = await import('../../discovery/resultCache');
+    cache.markDirectoryComplete('testnet', 'charter');
+    const dir = await cache.loadCachedDirectory('testnet');
+    await Promise.resolve();
+    expect(dir.complete.has('charter')).toBe(true);
   });
 
   it('should be an empty cache without IndexedDB', async () => {
