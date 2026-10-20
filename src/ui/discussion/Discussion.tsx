@@ -1,16 +1,33 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { discussionContractId } from '../../discussion/config';
 import { resolveNames } from '../../discussion/names';
+import { buildThreads, commentLink, isBusyError, linkedCommentId, type Thread } from '../../discussion/present';
 import type { Comment, CommentOrder } from '../../discussion/reads';
 import { scopeOf, type Scope } from '../../discussion/scope';
 import { encodePollKey, type PollKey } from '../../model/pollKey';
 import type { SdkHandle } from '../../sdk/connection';
 import type { Network } from '../../sdk/network';
 import { useIdentitySession } from '../../identity/session';
+import { useNow } from '../hooks';
 import { useAsync } from '../useAsync';
-import { CommentItem } from './CommentItem';
+import { endDate } from '../format';
+import { commentAnchor, CommentItem, type ContenderInfo } from './CommentItem';
 import { Composer } from './Composer';
 import { useComments } from './useComments';
+
+export type { ContenderInfo } from './CommentItem';
+
+/** How a decided contest ended, for the note above its discussion. */
+export interface ContestOutcome {
+  decidedAtMs?: number;
+  /** The winner's label; absent when it was locked. */
+  winnerName?: string;
+}
+
+/** Replies shown under a comment before "Show N more replies". */
+const REPLIES_SHOWN = 3;
+/** The sort control appears once a discussion is this long. */
+const SORT_FROM = 5;
 
 const EMPTY_NAMES: ReadonlyMap<string, string> = new Map();
 
@@ -31,16 +48,27 @@ function useNames(handle: SdkHandle, ids: readonly string[]): ReadonlyMap<string
   return names;
 }
 
-function Section({ children, actions }: { children: React.ReactNode; actions?: React.ReactNode }) {
+function Band({
+  count,
+  tools,
+  children,
+}: {
+  /** "3", "30+", or undefined while unknown. */
+  count?: string;
+  tools?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <section className="discussion" aria-labelledby="discussion-title">
-      <div className="discussion-heading">
+    <section className="discussion-band" id="discussion" aria-labelledby="discussion-title">
+      <header className="discussion-band-head">
         <div>
-          <span className="mono-label">Community</span>
-          <h2 id="discussion-title">Discussion</h2>
+          <h2 id="discussion-title">
+            Discussion{count !== undefined && count !== '0' && <span className="discussion-count"> · {count}</span>}
+          </h2>
+          <p className="discussion-sub">Public and permanent. Comments don't count as votes.</p>
         </div>
-        {actions}
-      </div>
+        {tools}
+      </header>
       {children}
     </section>
   );
@@ -55,22 +83,37 @@ export function Discussion({
   network,
   pollKey,
   contenders,
+  outcome,
+  onCount,
 }: {
   handle: SdkHandle;
   network: Network;
   pollKey: PollKey;
-  /** The contest's contender identities (a charter's are its leaders). */
-  contenders: readonly string[];
+  /** The contest's contenders (a charter's are its leaders). */
+  contenders: readonly ContenderInfo[];
+  /** Set once the contest is decided. */
+  outcome?: ContestOutcome;
+  /** Reports the number of comments loaded, and whether there are more. */
+  onCount?: (count: number, more: boolean) => void;
 }) {
   const contractId = discussionContractId(network);
   if (!contractId) {
     return (
-      <Section>
-        <p className="page-note">Discussion is not activated on {network}.</p>
-      </Section>
+      <Band>
+        <p className="discussion-empty">Discussion is not activated on {network}.</p>
+      </Band>
     );
   }
-  return <ActiveDiscussion handle={handle} contractId={contractId} pollKey={pollKey} contenders={contenders} />;
+  return (
+    <ActiveDiscussion
+      handle={handle}
+      contractId={contractId}
+      pollKey={pollKey}
+      contenders={contenders}
+      outcome={outcome}
+      onCount={onCount}
+    />
+  );
 }
 
 function ActiveDiscussion({
@@ -78,134 +121,269 @@ function ActiveDiscussion({
   contractId,
   pollKey,
   contenders,
+  outcome,
+  onCount,
 }: {
   handle: SdkHandle;
   contractId: string;
   pollKey: PollKey;
-  contenders: readonly string[];
+  contenders: readonly ContenderInfo[];
+  outcome?: ContestOutcome;
+  onCount?: (count: number, more: boolean) => void;
 }) {
   const keyString = encodePollKey(pollKey);
   const scope = useAsync(() => scopeOf(pollKey), [keyString]);
-  if (scope.status === 'loading') return <Section>{null}</Section>;
+  if (scope.status === 'loading') {
+    return (
+      <Band>
+        <p className="discussion-loading" role="status">
+          Loading comments…
+        </p>
+      </Band>
+    );
+  }
   if (scope.status === 'error') {
     return (
-      <Section>
-        <p className="page-note error">Discussion is unavailable for this contest: {scope.message}</p>
-      </Section>
+      <Band>
+        <p className="discussion-empty">Discussion is unavailable for this contest: {scope.message}</p>
+      </Band>
     );
   }
   return (
-    <Thread
+    <ThreadView
       handle={handle}
       contractId={contractId}
       pollKey={pollKey}
       scope={scope.value}
       contenders={contenders}
+      outcome={outcome}
+      onCount={onCount}
     />
   );
 }
 
-function Thread({
+/** A read failure in plain words, the raw text behind "Technical detail". */
+function ReadError({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <div className="discussion-alert" role="alert">
+      <p>
+        {isBusyError(error)
+          ? 'Platform is busy right now, so the comments could not be loaded.'
+          : 'The comments could not be loaded.'}{' '}
+        <button type="button" className="text-action" onClick={onRetry}>
+          Try again
+        </button>
+      </p>
+      <details>
+        <summary>Technical detail</summary>
+        <p className="mono">{error}</p>
+      </details>
+    </div>
+  );
+}
+
+function ThreadView({
   handle,
   contractId,
   pollKey,
   scope,
   contenders,
+  outcome,
+  onCount,
 }: {
   handle: SdkHandle;
   contractId: string;
   pollKey: PollKey;
   scope: Scope;
-  contenders: readonly string[];
+  contenders: readonly ContenderInfo[];
+  outcome?: ContestOutcome;
+  onCount?: (count: number, more: boolean) => void;
 }) {
   const session = useIdentitySession();
-  const [order, setOrder] = useState<CommentOrder>('newest');
-  const [replyingTo, setReplyingTo] = useState<Comment>();
-  const { comments, loading, error, hasMore, hidden, loadMore, reload } = useComments(handle.sdk, contractId, scope, order);
+  const now = useNow(60_000);
+  const [order, setOrder] = useState<CommentOrder>('oldest');
+  const [replyingTo, setReplyingTo] = useState<string>();
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [linked] = useState(() => linkedCommentId(location.search));
+  const scrolledTo = useRef<string | undefined>(undefined);
+  const { comments, loading, error, retrying, hasMore, hidden, fresh, loadMore, reload, addLocal } = useComments(
+    handle.sdk,
+    contractId,
+    scope,
+    order,
+  );
 
   const nameIds = useMemo(
-    () => [...comments.flatMap((c) => (c.supports ? [c.ownerId, c.supports] : [c.ownerId])), ...contenders],
-    [comments, contenders],
+    () => comments.flatMap((c) => (c.supports ? [c.ownerId, c.supports] : [c.ownerId])),
+    [comments],
   );
-  const names = useNames(handle, nameIds);
-  const contenderIds = useMemo(() => new Set(contenders), [contenders]);
+  const looked = useNames(handle, nameIds);
+  // The page's labels for contenders win, so one person reads the same everywhere.
+  const names = useMemo(() => {
+    const merged = new Map(looked);
+    for (const c of contenders) {
+      if (c.name) merged.set(c.id, c.name);
+      else merged.delete(c.id);
+    }
+    return merged;
+  }, [looked, contenders]);
+  const contenderMap = useMemo(() => new Map(contenders.map((c) => [c.id, c])), [contenders]);
   const byId = useMemo(() => new Map(comments.map((c) => [c.id, c])), [comments]);
+  const threads = useMemo(() => buildThreads(comments), [comments]);
+  const settled = !loading && !error;
+
+  useEffect(() => {
+    if (settled) onCount?.(comments.length, hasMore);
+  }, [settled, comments.length, hasMore, onCount]);
+
+  // A shared link (`?c=<id>`): scroll to the comment and mark it, once loaded.
+  useEffect(() => {
+    if (!linked || scrolledTo.current === linked || !byId.has(linked)) return;
+    scrolledTo.current = linked;
+    requestAnimationFrame(() =>
+      document.getElementById(commentAnchor(linked))?.scrollIntoView({ block: 'center' }),
+    );
+    // Drop the parameter so later navigation does not carry it.
+    history.replaceState(null, '', location.pathname + location.hash);
+  }, [linked, byId]);
+
+  const copyLink = (id: string) => async () => {
+    try {
+      await navigator.clipboard.writeText(commentLink(location, id));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const posted = (comment?: Comment) => {
+    setReplyingTo(undefined);
+    if (comment) addLocal(comment);
+    else reload();
+  };
+
+  const composerProps = { handle, contractId, pollKey, scope, contenders, decided: outcome !== undefined, names };
+
+  const renderComment = (comment: Comment, thread: Thread, isReply: boolean, children?: ReactNode) => {
+    const parent = isReply && comment.replyTo !== thread.root.id ? byId.get(comment.replyTo ?? '') : undefined;
+    return (
+      <CommentItem
+        key={comment.id}
+        comment={comment}
+        names={names}
+        contenders={contenderMap}
+        now={now}
+        replyTarget={parent}
+        orphan={!isReply && thread.orphan}
+        highlighted={comment.id === linked}
+        onReply={() => setReplyingTo((current) => (current === comment.id ? undefined : comment.id))}
+        onCopyLink={copyLink(comment.id)}
+      >
+        {replyingTo === comment.id && (
+          <div className="inline-reply">
+            <Composer {...composerProps} replyTo={comment} onCancel={() => setReplyingTo(undefined)} onPosted={posted} />
+          </div>
+        )}
+        {children}
+      </CommentItem>
+    );
+  };
+
+  const count = settled || comments.length > 0 ? `${comments.length}${hasMore ? '+' : ''}` : undefined;
+  const showSort = comments.length >= SORT_FROM || hasMore;
 
   return (
-    <Section
-      actions={
-        <div className="discussion-actions">
-          <div className="segmented" role="group" aria-label="Order">
-            {(['newest', 'oldest'] as const).map((o) => (
-              <button
-                key={o}
-                type="button"
-                className="link-button"
-                aria-pressed={order === o}
-                onClick={() => setOrder(o)}
-              >
-                {o === 'newest' ? 'Newest first' : 'Oldest first'}
-              </button>
-            ))}
-          </div>
-          <button className="link-button" disabled={loading} onClick={reload}>
-            Refresh
-          </button>
-        </div>
+    <Band
+      count={count}
+      tools={
+        showSort && (
+          <label className="discussion-sort">
+            <span>Sort</span>
+            <select value={order} onChange={(e) => setOrder(e.target.value as CommentOrder)}>
+              <option value="oldest">Oldest first</option>
+              <option value="newest">Newest first</option>
+            </select>
+          </label>
+        )
       }
     >
-      <Composer
-        handle={handle}
-        contractId={contractId}
-        pollKey={pollKey}
-        scope={scope}
-        contenders={contenders}
-        names={names}
-        replyingTo={replyingTo}
-        onCancelReply={() => setReplyingTo(undefined)}
-        onPosted={() => {
-          // The posted reply keeps its target in the confirm step; clearing it here
-          // lets Reply on the same comment open a new reply.
-          setReplyingTo(undefined);
-          if (order === 'newest') reload();
-          else setOrder('newest');
-        }}
-      />
-      {error && <p className="page-note error" role="alert">Could not load comments: {error}</p>}
-      {!loading && !error && comments.length === 0 && !hasMore && (
-        <p className="page-note">No comments yet. Start the conversation.</p>
+      {outcome && (
+        <p className="discussion-closed">
+          Voting closed{outcome.decidedAtMs ? ` ${endDate(outcome.decidedAtMs)}` : ''} ·{' '}
+          {outcome.winnerName ? `${outcome.winnerName} won` : 'locked, nobody won'}. Comments stay open.
+        </p>
       )}
-      <ol className="comment-list">
-        {comments.map((comment) => (
-          <CommentItem
-            key={comment.id}
-            comment={comment}
-            names={names}
-            contenderIds={contenderIds}
-            replyTarget={comment.replyTo ? byId.get(comment.replyTo) : undefined}
-            onReply={
-              session
-                ? () => {
-                    setReplyingTo(comment);
-                    document.getElementById('comment-body')?.focus();
-                  }
-                : undefined
-            }
-          />
-        ))}
-      </ol>
+      {fresh > 0 && (
+        <button type="button" className="fresh-pill" onClick={() => reload()}>
+          {fresh === 1 ? '1 new comment' : `${fresh} new comments`} · show
+        </button>
+      )}
+      {error && <ReadError error={error} onRetry={reload} />}
+      {retrying > 0 && (
+        <p className="discussion-loading" role="status">
+          Platform is busy; trying again ({retrying} of 3)…
+        </p>
+      )}
+      {!loading && !error && comments.length === 0 && !hasMore && (
+        <div className="discussion-empty">
+          <strong>No comments yet.</strong>
+          <span>
+            {outcome
+              ? 'Share what you think of the result, or ask the winner what comes next.'
+              : 'Say who you back and why, or ask the contenders a question.'}
+          </span>
+        </div>
+      )}
+      {comments.length > 0 && (
+        <ol className="thread-list">
+          {threads.map((thread) => {
+            // A thread holding the linked comment opens in full, so the link lands.
+            const open = expanded.has(thread.root.id) || (linked !== undefined && thread.replies.some((r) => r.id === linked));
+            const shown = open ? thread.replies : thread.replies.slice(0, REPLIES_SHOWN);
+            const more = thread.replies.length - shown.length;
+            return renderComment(
+              thread.root,
+              thread,
+              false,
+              thread.replies.length > 0 && (
+                <ol className="reply-list">
+                  {shown.map((r) => renderComment(r, thread, true))}
+                  {more > 0 && (
+                    <li className="reply-more">
+                      <button
+                        type="button"
+                        className="text-action"
+                        onClick={() => setExpanded((prev) => new Set([...prev, thread.root.id]))}
+                      >
+                        Show {more} more {more === 1 ? 'reply' : 'replies'}
+                      </button>
+                    </li>
+                  )}
+                </ol>
+              ),
+            );
+          })}
+        </ol>
+      )}
+      {loading && retrying === 0 && (
+        <p className="discussion-loading" role="status">
+          Loading comments…
+        </p>
+      )}
+      {hasMore && !loading && (
+        <button type="button" className="vote-button ghost load-more" onClick={loadMore}>
+          Load more comments
+        </button>
+      )}
       {hidden > 0 && (
-        <p className="fine-print">
+        <p className="discussion-hidden">
           {hidden} document{hidden === 1 ? '' : 's'} in this discussion could not be shown (malformed or not
           belonging to this contest).
         </p>
       )}
-      {loading && <p className="mono-label" role="status">Loading comments…</p>}
-      {hasMore && !loading && (
-        <button className="vote-button ghost" onClick={loadMore}>
-          Load more comments
-        </button>
-      )}
-    </Section>
+      <div className="discussion-compose-slot">
+        {session || !replyingTo ? <Composer {...composerProps} onPosted={posted} /> : null}
+      </div>
+    </Band>
   );
 }
