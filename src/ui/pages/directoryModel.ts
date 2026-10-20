@@ -129,6 +129,59 @@ export function isPlaced(c: ContestSummary, facts: DirectoryFacts): boolean {
 }
 
 /**
+ * The decided rows a tab shows. Until its newest-first order is final, only
+ * rows already placed in it: a row whose date is still being read would
+ * otherwise sit at the bottom, by name, and then jump. Once the order is
+ * final (or shown anyway), every row.
+ */
+export function shownEnded(
+  rows: readonly ContestSummary[],
+  facts: DirectoryFacts,
+  orderFinal: boolean,
+): readonly ContestSummary[] {
+  return orderFinal ? rows : rows.filter((c) => isPlaced(c, facts));
+}
+
+/**
+ * Whether a tab's decided list shows yet. At once when its order is final;
+ * before that, once open contests are known (an archive row not in the
+ * cache may still be open until then), every name is in (so the named rows
+ * are in order), and the rows already placed fill the first page: a short
+ * list comes in whole rather than row by row.
+ */
+export function showDecided(s: {
+  orderFinal: boolean;
+  openRead: boolean;
+  namesKnown: boolean;
+  placed: number;
+  total: number;
+  page: number;
+}): boolean {
+  if (s.orderFinal) return true;
+  return s.openRead && s.namesKnown && s.placed >= Math.min(s.page, s.total);
+}
+
+/**
+ * What the tally queue reads, most urgent first: every open row (always
+ * read in full, so even one with a state is asked again; the queue runs
+ * each full read once), then the unread rows among the expired ones, the
+ * decided rows on screen, and the rows still waiting for a date to be
+ * placed; each once. Nothing else: a decided row off screen with a known
+ * date is never read.
+ */
+export function tallyWants(args: {
+  open: readonly ContestSummary[];
+  expired: readonly ContestSummary[];
+  visible: readonly ContestSummary[];
+  unplaced: readonly ContestSummary[];
+  facts: DirectoryFacts;
+}): ContestSummary[] {
+  const { open, expired, visible, unplaced, facts } = args;
+  const unread = [...expired, ...visible, ...unplaced].filter((c) => facts.states[c.keyString] === undefined);
+  return mergeByKey([...open], unread);
+}
+
+/**
  * Ended contests in display order. Contests still awaiting their result come
  * first, then decided ones newest first (or by name); rows whose date is
  * unknown go last, by name.
@@ -355,6 +408,8 @@ export function statusSentence(s: {
   decided: string;
   /** "2h 5m": when the soonest open contest closes. */
   nextCloses?: string;
+  /** What the app is doing while not connected (default "Connecting to Dash Platform…"). */
+  connecting?: string;
 }): StatusSentence {
   const reading = () => {
     const found = s.openCount + s.endedCount;
@@ -365,7 +420,7 @@ export function statusSentence(s: {
   else if (s.decided) decidedPart = `${s.decided} decided so far.`;
 
   if (!s.openRead) {
-    const waiting = s.connected ? 'Checking for open contests…' : 'Connecting to Dash Platform…';
+    const waiting = s.connected ? 'Checking for open contests…' : (s.connecting ?? 'Connecting to Dash Platform…');
     if (s.ready && s.decided) return { rest: `${decidedPart} ${waiting}` };
     if (s.connected && !s.ready) return { rest: reading() };
     return { rest: waiting };
