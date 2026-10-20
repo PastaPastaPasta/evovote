@@ -234,6 +234,7 @@ export function LeaderDashboard({
           summary={[...appRows, ...timingRows(preflight), ['If votes tie', 'The team that applied first wins.']]}
           estimate={async () => preflight.cost}
           blockers={preflight.blockers}
+          blockerDetail={preflight.technical}
           balanceChecked
           permanent="application"
           warnings={[...preflight.warnings, ...splitNotes(proposal.rewardSplit, members.length)]}
