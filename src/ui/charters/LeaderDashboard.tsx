@@ -14,6 +14,7 @@ import {
   type DecryptedJoinRequest,
 } from '../../charters/writes';
 import { documentSigningProblem, heldBoundKeyHex, withDocumentSigner, type IdentitySession } from '../../identity/session';
+import { SigningProblemNote } from '../identity/SigningProblemNote';
 import { dashText } from '../../model/credits';
 import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
@@ -95,7 +96,7 @@ export function LeaderDashboard({
   const [decryptError, setDecryptError] = useState<string | null>(null);
   const [preflight, setPreflight] = useState<ApplyPreflight | 'loading' | { error: string } | null>(null);
 
-  const signing = documentSigningProblem(session, CHARTERS_CONTRACT_ID);
+  const signing = documentSigningProblem(session, { contractId: CHARTERS_CONTRACT_ID, documentType: 'electedCharter' });
   const decryptionHex = heldBoundKeyHex(session, CHARTER_DECRYPTION);
   const joiners = joinRequests.filter((r) => r.memberId !== session.identityId);
   const args = useMemo(
@@ -175,7 +176,7 @@ export function LeaderDashboard({
       </p>
 
       <h3>Apply for the seat</h3>
-      {signing && <p className="page-note error">{signing}</p>}
+      {signing && <SigningProblemNote problem={signing} />}
       {!signing && preflight === null && (
         <button className="vote-button" onClick={() => void prepare()}>
           Check and prepare the application
@@ -204,7 +205,7 @@ export function LeaderDashboard({
           confirmLabel={`Sign and apply (${dashText(preflight.cost.total)})`}
           doneText="You are a contender for the seat. Masternodes can now vote; share the contest page."
           run={() =>
-            withDocumentSigner(handle, CHARTERS_CONTRACT_ID, async (signer) => {
+            withDocumentSigner(handle, { contractId: CHARTERS_CONTRACT_ID, documentType: 'electedCharter' }, async (signer) => {
               // The election may have moved since the check (a rival applied
               // or won, the window closed): read it again right before signing.
               const fresh = await preflightApply(handle, args);

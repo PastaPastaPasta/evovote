@@ -5,6 +5,7 @@ import { leaderCanReceive } from '../../charters/reads';
 import { MAX_JOIN_MESSAGE_BYTES, validateJoinMessage } from '../../charters/validate';
 import { estimateJoinRequest, fileJoinRequest } from '../../charters/writes';
 import { documentSigningProblem, heldBoundKeyHex, withDocumentSigner, type IdentitySession } from '../../identity/session';
+import { SigningProblemNote } from '../identity/SigningProblemNote';
 import { utf8Length } from '../../model/bytes';
 import type { SdkHandle } from '../../sdk/connection';
 import { BoundKeySetup } from '../identity/BoundKeySetup';
@@ -40,8 +41,8 @@ export function JoinPanel({
       </p>
     );
   }
-  const signing = documentSigningProblem(session, CHARTERS_CONTRACT_ID);
-  if (signing) return <p className="page-note error">{signing}</p>;
+  const signing = documentSigningProblem(session, { contractId: CHARTERS_CONTRACT_ID, documentType: 'joinRequest' });
+  if (signing) return <SigningProblemNote problem={signing} />;
   if (leaderReady.status === 'loading') return <p className="mono-label">Checking the leader&apos;s keys…</p>;
   if (leaderReady.status === 'error') {
     return <p className="page-note error">Could not read the leader&apos;s keys: {leaderReady.message}</p>;
@@ -88,7 +89,7 @@ export function JoinPanel({
           confirmLabel="Sign and send the join request"
           doneText="Your join request is filed. The leader can now list you as a member."
           run={() =>
-            withDocumentSigner(handle, CHARTERS_CONTRACT_ID, (signer) =>
+            withDocumentSigner(handle, { contractId: CHARTERS_CONTRACT_ID, documentType: 'joinRequest' }, (signer) =>
               fileJoinRequest(handle, signer, {
                 submittedCharterId: proposal.id,
                 message,

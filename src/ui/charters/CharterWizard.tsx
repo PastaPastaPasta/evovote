@@ -12,6 +12,7 @@ import {
 } from '../../charters/validate';
 import { estimateCharter, estimateReason, fileCharter, fileReason } from '../../charters/writes';
 import { documentSigningProblem, heldBoundKeyHex, withDocumentSigner, type IdentitySession } from '../../identity/session';
+import { SigningProblemNote } from '../identity/SigningProblemNote';
 import type { SdkHandle } from '../../sdk/connection';
 import { shortId } from '../format';
 import { BoundKeySetup } from '../identity/BoundKeySetup';
@@ -52,7 +53,7 @@ function NewReason({
         blockers={problems}
         confirmLabel="Sign and file the reason"
         doneText={`Reason ${code} is filed.`}
-        run={() => withDocumentSigner(handle, CHARTERS_CONTRACT_ID, (signer) => fileReason(handle, signer, input))}
+        run={() => withDocumentSigner(handle, { contractId: CHARTERS_CONTRACT_ID, documentType: 'reason' }, (signer) => fileReason(handle, signer, input))}
         onDone={(outcome) => {
           if (outcome.status !== 'confirmed') return;
           onFiled({
@@ -119,8 +120,8 @@ export function CharterWizard({
   const [review, setReview] = useState(false);
   const [filedId, setFiledId] = useState<string | null>(null);
 
-  const signing = documentSigningProblem(session, CHARTERS_CONTRACT_ID);
-  if (signing) return <p className="page-note error">{signing}</p>;
+  const signing = documentSigningProblem(session, { contractId: CHARTERS_CONTRACT_ID, documentType: 'submittedCharter' });
+  if (signing) return <SigningProblemNote problem={signing} />;
 
   const keyReady = !!heldBoundKeyHex(session, CHARTER_DECRYPTION);
   const shareValue = share.trim() === '' ? undefined : Number(share);
@@ -250,7 +251,7 @@ export function CharterWizard({
           confirmLabel="Sign and file the charter"
           doneText="Your charter is filed."
           run={() =>
-            withDocumentSigner(handle, CHARTERS_CONTRACT_ID, (signer) => fileCharter(handle, signer, targetContractId, input))
+            withDocumentSigner(handle, { contractId: CHARTERS_CONTRACT_ID, documentType: 'submittedCharter' }, (signer) => fileCharter(handle, signer, targetContractId, input))
           }
           onDone={(outcome) => {
             if (outcome.status === 'confirmed') {

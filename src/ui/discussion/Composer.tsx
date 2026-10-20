@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { estimateComment, commentLength, COMMENT_LIMIT, postComment, validateDraft, type CommentDraft } from '../../discussion/writes';
-import type { Comment } from '../../discussion/reads';
+import { COMMENT_TYPE, type Comment } from '../../discussion/reads';
 import type { Scope } from '../../discussion/scope';
 import type { WriteOutcome } from '../../identity/outcome';
 import { documentSigningProblem, useIdentitySession, withDocumentSigner } from '../../identity/session';
 import type { PollKey } from '../../model/pollKey';
 import type { SdkHandle } from '../../sdk/connection';
 import { PaidWrite } from '../charters/PaidWrite';
+import { SigningProblemNote } from '../identity/SigningProblemNote';
 import { PersonName } from './CommentItem';
+import { SignInPrompt } from './SignInPrompt';
 
 /**
  * The compose box. It needs the identity session (`#/me`); "Review" opens the
@@ -60,21 +62,9 @@ export function Composer({
     }
   }
 
-  if (!session) {
-    return (
-      <p className="page-note">
-        <a href="#/me">Sign in</a> with your identity to comment. You need a HIGH or CRITICAL authentication key.
-      </p>
-    );
-  }
-  const problem = documentSigningProblem(session, contractId);
-  if (problem) {
-    return (
-      <p className="page-note error">
-        {problem} <a href="#/me">Open my identity</a>
-      </p>
-    );
-  }
+  if (!session) return <SignInPrompt />;
+  const problem = documentSigningProblem(session, { contractId, documentType: COMMENT_TYPE });
+  if (problem) return <SigningProblemNote problem={problem} />;
 
   const draft: CommentDraft = {
     body,
@@ -176,7 +166,7 @@ export function Composer({
           run={async () => {
             setWriting(true);
             try {
-              return await withDocumentSigner(handle, contractId, (signer) =>
+              return await withDocumentSigner(handle, { contractId, documentType: COMMENT_TYPE }, (signer) =>
                 postComment(handle, signer, contractId, pollKey, review.draft),
               );
             } finally {
