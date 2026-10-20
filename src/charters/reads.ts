@@ -392,3 +392,34 @@ export async function fetchElectionStatus(
     failures,
   };
 }
+
+/**
+ * The proposal a leader stood on in a target's election, from their filed
+ * proposals: the latest one for that target filed before `decidedAtMs` (a
+ * decided contest no longer carries the application that named it).
+ */
+export function pickLeaderProposal(
+  proposals: readonly CharterProposal[],
+  targetContractId: string,
+  decidedAtMs?: number,
+): CharterProposal | undefined {
+  const forTarget = proposals.filter(
+    (p) =>
+      p.targetContractId === targetContractId &&
+      (decidedAtMs === undefined || p.createdAtMs === undefined || p.createdAtMs <= decidedAtMs),
+  );
+  return forTarget.reduce<CharterProposal | undefined>(
+    (best, p) => (!best || (p.createdAtMs ?? 0) >= (best.createdAtMs ?? 0) ? p : best),
+    undefined,
+  );
+}
+
+/** A leader's proposal for one target (see `pickLeaderProposal`). Throws when the read fails. */
+export async function fetchLeaderProposal(
+  sdk: EvoSDK,
+  leaderId: string,
+  targetContractId: string,
+  decidedAtMs?: number,
+): Promise<CharterProposal | undefined> {
+  return pickLeaderProposal(await fetchProposalsByLeader(sdk, leaderId), targetContractId, decidedAtMs);
+}

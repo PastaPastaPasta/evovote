@@ -1,14 +1,19 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { sweepContestedResources } from '../discovery/archive';
 import { knownContractById } from '../config/knownContracts';
-import { CHARTERS_CONTRACT_ID, splitText, toElectedCharter, type ElectedCharter } from '../charters/documents';
+import {
+  CHARTERS_CONTRACT_ID,
+  toElectedCharter,
+  type CharterProposal,
+  type ElectedCharter,
+} from '../charters/documents';
 import { CHARTER_INDEX, charterPollKey, charterTarget, proposalHref } from '../charters/pollKey';
-import { fetchProposal, fetchReasons } from '../charters/reads';
+import { fetchLeaderProposal, fetchProposal, fetchReasons } from '../charters/reads';
 import { choicesForResolution, type Contender, type Contest, type ContestSummary } from '../model/contest';
 import { indexValueFromJs } from '../model/indexValue';
 import { freeQuietly } from '../sdk/free';
 import { fetchUsernames } from './dpns';
-import type { ContenderView, ContestKind } from './types';
+import type { CharterApplicationView, ContenderView, ContestKind } from './types';
 
 export { CHARTERS_CONTRACT_ID, charterPollKey };
 
@@ -51,27 +56,26 @@ async function applicationOf(
   }
 }
 
-/** Pure part of describeContender: the rows a charter contender shows. */
-export function charterContenderFields(args: {
+/** Pure part of describeContender: a charter contender's card, from what was read. */
+export function charterApplicationView(args: {
+  target: string;
+  proposal: CharterProposal;
+  /** Undefined when the reasons could not be read. */
+  reasons?: Array<{ code: string; label: string }>;
+  /** The electedCharter, when it is still there (open contests, the winner). */
   application?: ElectedCharter;
-  memberNames: string[];
-  proposal?: { description: string; moderatorsShare: number; rewardSplit?: Parameters<typeof splitText>[0] };
-  reasonCodes?: string[];
-}): Array<[string, string]> {
-  const { application, memberNames, proposal, reasonCodes } = args;
-  const rows: Array<[string, string]> = [];
-  if (proposal) {
-    const text = proposal.description.length > 240 ? `${proposal.description.slice(0, 240)}…` : proposal.description;
-    rows.push(['charter', text]);
-    rows.push(["moderators' share", `${proposal.moderatorsShare}% of the declared fee`]);
-    rows.push(['reward split', splitText(proposal.rewardSplit)]);
-  }
-  if (reasonCodes) rows.push(['reasons', reasonCodes.length > 0 ? reasonCodes.join(', ') : 'none (the team could take no action)']);
-  if (application) {
-    rows.push(['members', application.members.length > 0 ? memberNames.join(', ') : 'none besides the leader']);
-    if (application.createdAtMs) rows.push(['applied', new Date(application.createdAtMs).toLocaleString()]);
-  }
-  return rows;
+  memberNames?: string[];
+}): CharterApplicationView {
+  const { target, proposal, reasons, application, memberNames } = args;
+  return {
+    description: proposal.description,
+    moderatorsShare: proposal.moderatorsShare,
+    rewardSplit: proposal.rewardSplit,
+    reasons,
+    members: application ? (memberNames ?? application.members.map(short)) : undefined,
+    appliedAtMs: application?.createdAtMs,
+    href: proposalHref(target, proposal.id),
+  };
 }
 
 /**
@@ -84,29 +88,32 @@ export const charterKind: ContestKind = {
   label: 'Moderator elections',
   matches: (key) => charterTarget(key) !== undefined,
   title: charterTitle,
+  /**
+   * The charter the contender stands on. A decided contest keeps only the
+   * winner's application (as the seated charter); a loser's is found among
+   * the proposals they filed for this target. Throws when a read fails, so
+   * "no charter" is only said when none exists.
+   */
   async describeContender(sdk, c, contender) {
-    const view: ContenderView = { identityId: contender.identityId, subtitle: 'charter leader' };
-    const [leaderName, application] = await Promise.all([
-      displayName(sdk, contender.identityId),
-      applicationOf(sdk, c, contender).catch(() => undefined),
-    ]);
-    view.title = leaderName;
-    if (!application) return view;
-    const [memberNames, proposal] = await Promise.all([
-      Promise.all(application.members.map((m) => displayName(sdk, m))),
-      fetchProposal(sdk, application.submittedCharterId).catch(() => undefined),
-    ]);
-    const reasons = proposal
-      ? await fetchReasons(sdk, proposal.reasonIds).catch(() => undefined)
-      : undefined;
-    view.fields = charterContenderFields({
-      application,
-      memberNames,
-      proposal,
-      reasonCodes: reasons?.reasons.map((r) => `${r.code} ${r.label}`),
-    });
+    const view: ContenderView = { identityId: contender.identityId };
     const target = charterTarget(c.key);
-    if (target) view.link = { href: proposalHref(target, application.submittedCharterId), label: 'Open the proposal' };
+    if (!target) return view;
+    const application = await applicationOf(sdk, c, contender);
+    const proposal = application
+      ? await fetchProposal(sdk, application.submittedCharterId)
+      : await fetchLeaderProposal(sdk, contender.identityId, target, c.winner?.decidedAtMs);
+    if (!proposal) {
+      view.charter = null;
+      return view;
+    }
+    const [memberNames, reasons] = await Promise.all([
+      application ? Promise.all(application.members.map((m) => displayName(sdk, m))) : undefined,
+      fetchReasons(sdk, proposal.reasonIds).then(
+        (r) => r.reasons.map(({ code, label }) => ({ code, label })),
+        () => undefined,
+      ),
+    ]);
+    view.charter = charterApplicationView({ target, proposal, reasons, application, memberNames });
     return view;
   },
   // Resolution 1: no Lock. There is always a winner; ties go to the earliest contender.

@@ -7,11 +7,19 @@ import {
   electionOpensAtMs,
   parseContractModeration,
 } from './declaration';
-import { charterContenderFields, charterTitle, targetName } from '../kinds/charter';
+import { charterApplicationView, charterTitle, targetName } from '../kinds/charter';
 import { encodePollKey } from '../model/pollKey';
 import { mergeDirectory } from './directory';
-import { mergeReasons } from './reads';
-import { idFromValue, splitText, toElectedCharter, toJoinRequestMeta, toProposal, toReason } from './documents';
+import { mergeReasons, pickLeaderProposal } from './reads';
+import {
+  idFromValue,
+  splitText,
+  toElectedCharter,
+  toJoinRequestMeta,
+  toProposal,
+  toReason,
+  type CharterProposal,
+} from './documents';
 import { canApply, electionTiming, joinClosesAt, LATE_APPLY_MARGIN_MS, type PhaseInput } from './phase';
 import { charterPollKey, charterTarget, proposalHref } from './pollKey';
 import {
@@ -374,8 +382,23 @@ describe('charter kind', () => {
     expect(charterTitle({ key, keyString: encodePollKey(key) })).toBe(`Moderators of ${targetName(TARGET)}`);
   });
 
+  const proposal = (over: Partial<CharterProposal> = {}): CharterProposal => ({
+    id: id32(1),
+    leaderId: LEADER,
+    targetContractId: TARGET,
+    description: 'We keep threads on topic.',
+    reasonIds: [],
+    moderatorsShare: 60,
+    rewardSplit: { leader: 40, equal: 30, actions: 30 },
+    createdAtMs: 1_790_000_000_000,
+    ...over,
+  });
+
   it('should describe a contender from its application and proposal', () => {
-    const rows = charterContenderFields({
+    const view = charterApplicationView({
+      target: TARGET,
+      proposal: proposal(),
+      reasons: [{ code: 'OFF', label: 'Off-topic' }],
       application: {
         id: id32(4),
         leaderId: LEADER,
@@ -385,16 +408,33 @@ describe('charter kind', () => {
         createdAtMs: 1_790_000_000_000,
       },
       memberNames: ['alice'],
-      proposal: { description: 'd'.repeat(300), moderatorsShare: 60, rewardSplit: { leader: 40, equal: 30, actions: 30 } },
-      reasonCodes: [],
     });
-    const byKey = Object.fromEntries(rows);
-    expect(byKey.charter).toHaveLength(241);
-    expect(byKey["moderators' share"]).toBe('60% of the declared fee');
-    expect(byKey['reward split']).toBe('leader 40% · equal 30% · by actions 30%');
-    expect(byKey.reasons).toMatch(/none/);
-    expect(byKey.members).toBe('alice');
-    expect(byKey.applied).toBeTruthy();
-    expect(charterContenderFields({ memberNames: [] })).toEqual([]);
+    expect(view).toMatchObject({
+      description: 'We keep threads on topic.',
+      moderatorsShare: 60,
+      rewardSplit: { leader: 40, equal: 30, actions: 30 },
+      reasons: [{ code: 'OFF', label: 'Off-topic' }],
+      members: ['alice'],
+      appliedAtMs: 1_790_000_000_000,
+      href: proposalHref(TARGET, id32(1)),
+    });
+  });
+
+  it('should say a losing application keeps no member list', () => {
+    const view = charterApplicationView({ target: TARGET, proposal: proposal() });
+    expect(view.members).toBeUndefined();
+    expect(view.reasons).toBeUndefined();
+    expect(view.href).toBe(proposalHref(TARGET, id32(1)));
+  });
+
+  it("should pick the leader's latest proposal for the target, filed before the decision", () => {
+    const other = proposal({ id: id32(2), targetContractId: MEMBER, createdAtMs: 1_790_000_009_000 });
+    const early = proposal({ id: id32(3), createdAtMs: 1_790_000_001_000 });
+    const late = proposal({ id: id32(5), createdAtMs: 1_790_000_005_000 });
+    const after = proposal({ id: id32(6), createdAtMs: 1_790_000_020_000 });
+    expect(pickLeaderProposal([early, other, late], TARGET)?.id).toBe(id32(5));
+    expect(pickLeaderProposal([early, late, after], TARGET, 1_790_000_010_000)?.id).toBe(id32(5));
+    expect(pickLeaderProposal([other], TARGET)).toBeUndefined();
+    expect(pickLeaderProposal([], TARGET)).toBeUndefined();
   });
 });
