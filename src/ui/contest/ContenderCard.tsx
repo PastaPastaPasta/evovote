@@ -205,7 +205,9 @@ export function ContenderCard({
   const decided = contest.winner !== undefined;
   const total = contest.tally.total;
   const charter = described?.charter;
+  // The name this applicant asked for, when it differs from the contest's own spelling.
   const requested = kind.id === 'dpns' ? described?.title : undefined;
+  const askedFor = requested && requested !== headingLabel ? requested : undefined;
   // A contest decided without votes says so once above the cards; "Lost 0–0"
   // and a row of zeros would only repeat it.
   const unvoted = decided && total === 0;
@@ -224,11 +226,11 @@ export function ContenderCard({
           {charter && <span className="contender-role">charter leader</span>}
           {isWinner && <span className="badge winner">Winner</span>}
         </div>
-        {(requested && requested !== headingLabel) || otherNames.length > 0 || lost ? (
+        {askedFor || otherNames.length > 0 || lost ? (
           <p className="contender-sub">
-            {requested && requested !== headingLabel && (
+            {askedFor && (
               <span>
-                asked for <ContestedName label={requested} />
+                asked for <ContestedName label={askedFor} />
               </span>
             )}
             {otherNames.length > 0 && <span>also holds {otherNames.join(', ')}</span>}

@@ -358,7 +358,7 @@ function ThreadView({
           Platform is busy; trying again ({retrying} of 3)…
         </p>
       )}
-      {!loading && !error && comments.length === 0 && !hasMore && (
+      {settled && comments.length === 0 && !hasMore && (
         <div className="discussion-empty">
           <strong>No comments yet.</strong>
           <span>
@@ -384,7 +384,7 @@ function ThreadView({
                 <ol className="reply-list">
                   {shown.map((r) => renderComment(r, thread, true))}
                   {more > 0 && (
-                    <li className="reply-more">
+                    <li>
                       <button
                         type="button"
                         className="text-action"

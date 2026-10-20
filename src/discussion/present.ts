@@ -38,15 +38,11 @@ export function buildThreads(comments: readonly Comment[]): Thread[] {
     }
     return current;
   };
+  // A Map iterates in insertion order, so the threads keep the roots' order.
   const threads = new Map<string, Thread>();
-  const order: string[] = [];
   for (const c of comments) {
-    const root = rootOf(c);
-    if (root.id === c.id) {
-      if (!threads.has(c.id)) {
-        threads.set(c.id, { root: c, replies: [], orphan: c.replyTo !== undefined });
-        order.push(c.id);
-      }
+    if (rootOf(c).id === c.id && !threads.has(c.id)) {
+      threads.set(c.id, { root: c, replies: [], orphan: c.replyTo !== undefined });
     }
   }
   for (const c of comments) {
@@ -54,7 +50,7 @@ export function buildThreads(comments: readonly Comment[]): Thread[] {
     if (root.id !== c.id) threads.get(root.id)?.replies.push(c);
   }
   for (const t of threads.values()) t.replies.sort((a, b) => a.createdAtMs - b.createdAtMs);
-  return order.map((id) => threads.get(id)!);
+  return [...threads.values()];
 }
 
 /** "just now", "5 min ago", "3 h ago", "2 days ago", then the date. */
