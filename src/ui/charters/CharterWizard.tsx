@@ -195,62 +195,68 @@ export function CharterWizard({
   ];
   // Anything the list does not name (too long, too many reasons) is listed above it.
   if (problems.length > 0 && checklist.every(([done]) => done)) checklist.push([false, 'Fix the problems listed above']);
-  const ready = problems.length === 0 && keyReady;
+  // The charter can be reviewed once its text and terms are valid; a missing
+  // key is a blocker of the review card, which says to add it (step 2).
+  const canReview = problems.length === 0;
+  const ready = canReview && keyReady;
 
   return (
     <div className="wizard">
-      <h3>1. Reasons your team may act on</h3>
-      <p className="fine-print">
-        Every ban, suspension, warning and deletion your team makes must cite one of these. A charter with no
-        reasons is a team that can take no such action. Reasons are yours: you can cite them in any charter you file.
-      </p>
-      {reasons.status === 'loading' && (
-        <p className="meta" role="status">
-          Reading your reasons…
+      {/* While reviewing, the charter is frozen: what is priced is what is filed. "← Edit" unlocks it. */}
+      <fieldset className="wizard-step" disabled={review}>
+        <h3>1. Reasons your team may act on</h3>
+        <p className="fine-print">
+          Every ban, suspension, warning and deletion your team makes must cite one of these. A charter with no
+          reasons is a team that can take no such action. Reasons are yours: you can cite them in any charter you file.
         </p>
-      )}
-      {reasons.status === 'error' && (
-        <p className="meta error">
-          Could not read your reasons.{' '}
-          <button className="link-button" onClick={reasons.reload}>
-            Try again
-          </button>
-        </p>
-      )}
-      {reasons.status === 'ok' && ownReasons.length === 0 && <p className="meta">You have not filed any reasons yet.</p>}
-      <ul className="reason-list">
-        {ownReasons.map((r) => (
-          <li key={r.id}>
-            <label className="reason-choice">
-              <input type="checkbox" checked={chosen.includes(r.id)} onChange={() => toggle(r.id)} />
-              <span className="reason-code mono">{r.code}</span>
-              <span>
-                <strong>{r.label}</strong>
-                {r.description && <span className="meta"> — {r.description}</span>}
-              </span>
-            </label>
-          </li>
-        ))}
-      </ul>
-      {reasons.status === 'ok' && reasons.value.capped && (
-        <p className="meta">Showing your first {ownReasons.length} reasons; filing another is turned off here.</p>
-      )}
-      <details>
-        <summary>File a new reason</summary>
-        {!codesKnown && <p className="meta">Your existing reasons must be read first, so a code is not filed twice.</p>}
-        {codesKnown && (
-          <NewReason
-            handle={handle}
-            session={session}
-            existingCodes={ownReasons.map((r) => r.code)}
-            onFiled={(reason) => {
-              setFiled((prev) => [...prev, reason]);
-              setChosen((prev) => [...prev, reason.id]);
-              reasons.reload();
-            }}
-          />
+        {reasons.status === 'loading' && (
+          <p className="meta" role="status">
+            Reading your reasons…
+          </p>
         )}
-      </details>
+        {reasons.status === 'error' && (
+          <p className="meta error">
+            Could not read your reasons.{' '}
+            <button className="link-button" onClick={reasons.reload}>
+              Try again
+            </button>
+          </p>
+        )}
+        {reasons.status === 'ok' && ownReasons.length === 0 && <p className="meta">You have not filed any reasons yet.</p>}
+        <ul className="reason-list">
+          {ownReasons.map((r) => (
+            <li key={r.id}>
+              <label className="reason-choice">
+                <input type="checkbox" checked={chosen.includes(r.id)} onChange={() => toggle(r.id)} />
+                <span className="reason-code mono">{r.code}</span>
+                <span>
+                  <strong>{r.label}</strong>
+                  {r.description && <span className="meta"> — {r.description}</span>}
+                </span>
+              </label>
+            </li>
+          ))}
+        </ul>
+        {reasons.status === 'ok' && reasons.value.capped && (
+          <p className="meta">Showing your first {ownReasons.length} reasons; filing another is turned off here.</p>
+        )}
+        <details>
+          <summary>File a new reason</summary>
+          {!codesKnown && <p className="meta">Your existing reasons must be read first, so a code is not filed twice.</p>}
+          {codesKnown && (
+            <NewReason
+              handle={handle}
+              session={session}
+              existingCodes={ownReasons.map((r) => r.code)}
+              onFiled={(reason) => {
+                setFiled((prev) => [...prev, reason]);
+                setChosen((prev) => [...prev, reason.id]);
+                reasons.reload();
+              }}
+            />
+          )}
+        </details>
+      </fieldset>
 
       <h3>2. Your decryption key</h3>
       <p className="fine-print">
@@ -258,45 +264,47 @@ export function CharterWizard({
       </p>
       <BoundKeySetup handle={handle} session={session} spec={CHARTER_DECRYPTION} what="decryption key for join requests" />
 
-      <h3>3. The charter</h3>
-      <label className="field">
-        <span className="field-label">What your team would moderate, and how</span>
-        <span className="field-hint">The first sentence becomes your proposal&apos;s title.</span>
-        <textarea rows={5} value={description} onChange={(e) => setDescription(e.target.value)} />
-      </label>
-      <label className="field narrow">
-        <span className="field-label">Share of moderation fees your team takes (%)</span>
-        <input inputMode="numeric" value={share} onChange={(e) => setShare(e.target.value)} />
-        <span className="field-hint">100 takes the whole fee the contract declares; less is a discount for the people who pay it.</span>
-      </label>
-      <fieldset className="split-fields">
-        <legend className="field-label">How your team&apos;s earnings are split (must add up to 100)</legend>
-        <div className="form-row">
-          {SPLIT_PARTS.map(([part, text]) => (
-            <label key={part} className="field narrow">
-              <span className="field-hint">{text} %</span>
-              <input
-                inputMode="numeric"
-                value={Number.isNaN(split[part]) ? '' : String(split[part])}
-                onChange={(e) => setSplit((s) => ({ ...s, [part]: e.target.value === '' ? NaN : Number(e.target.value) }))}
-              />
-            </label>
-          ))}
-        </div>
+      <fieldset className="wizard-step" disabled={review}>
+        <h3>3. The charter</h3>
+        <label className="field">
+          <span className="field-label">What your team would moderate, and how</span>
+          <span className="field-hint">The first sentence becomes your proposal&apos;s title.</span>
+          <textarea rows={5} value={description} onChange={(e) => setDescription(e.target.value)} />
+        </label>
+        <label className="field narrow">
+          <span className="field-label">Share of moderation fees your team takes (%)</span>
+          <input inputMode="numeric" value={share} onChange={(e) => setShare(e.target.value)} />
+          <span className="field-hint">100 takes the whole fee the contract declares; less is a discount for the people who pay it.</span>
+        </label>
+        <fieldset className="split-fields">
+          <legend className="field-label">How your team&apos;s earnings are split (must add up to 100)</legend>
+          <div className="form-row">
+            {SPLIT_PARTS.map(([part, text]) => (
+              <label key={part} className="field narrow">
+                <span className="field-hint">{text} %</span>
+                <input
+                  inputMode="numeric"
+                  value={Number.isNaN(split[part]) ? '' : String(split[part])}
+                  onChange={(e) => setSplit((s) => ({ ...s, [part]: e.target.value === '' ? NaN : Number(e.target.value) }))}
+                />
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <SplitExample share={shareOk ? (shareValue ?? 100) : undefined} split={split} />
+        {shareNote(shareValue) && <p className="fine-print">{shareNote(shareValue)}</p>}
+        {Number.isInteger(split.equal) && split.equal > 0 && (
+          <p className="fine-print">
+            If you apply with no other members, the {split.equal}% shared equally goes to you too.
+          </p>
+        )}
+        {description.trim() !== '' && <FieldProblems problems={problems} />}
       </fieldset>
-      <SplitExample share={shareOk ? (shareValue ?? 100) : undefined} split={split} />
-      {shareNote(shareValue) && <p className="fine-print">{shareNote(shareValue)}</p>}
-      {Number.isInteger(split.equal) && split.equal > 0 && (
-        <p className="fine-print">
-          If you apply with no other members, the {split.equal}% shared equally goes to you too.
-        </p>
-      )}
-      {description.trim() !== '' && <FieldProblems problems={problems} />}
       {!review ? (
         <>
           {!ready && (
             <div className="checklist-box">
-              <p className="meta">Before you can review the charter:</p>
+              <p className="meta">{canReview ? 'Before you can file the charter:' : 'Before you can review the charter:'}</p>
               <ul className="checklist">
                 {checklist.map(([done, text]) => (
                   <li key={text} className={done ? 'done' : ''}>
@@ -307,7 +315,7 @@ export function CharterWizard({
               </ul>
             </div>
           )}
-          <button className="vote-button" disabled={!ready} onClick={() => setReview(true)}>
+          <button className="vote-button" disabled={!canReview} onClick={() => setReview(true)}>
             Review the charter
           </button>
         </>

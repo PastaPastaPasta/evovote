@@ -5,6 +5,7 @@ import { base58Encode } from '../../model/bytes';
 import { FieldTable } from './FieldTable';
 import { IndexRules } from './IndexRules';
 import { technicalText } from '../charters/PaidWrite';
+import { ContestedName, homographMask } from './ContestedName';
 import { CopyButton } from './CopyButton';
 import { choiceHeading, currentVoteText } from './VoteModal';
 
@@ -89,5 +90,30 @@ describe('technicalText', () => {
     expect(technicalText({ code: 40112, message: 'Already applied.', detail: 'raw' })).toBe('code 40112 · raw');
     expect(technicalText({ code: 49999, message: 'm', detail: 'raw (consensus error 49999)' })).toBe('raw (consensus error 49999)');
     expect(technicalText({ message: 'same', detail: 'same' })).toBe('');
+  });
+});
+
+describe('ContestedName', () => {
+  const marked = (label: string, registered?: string) =>
+    [...label].filter((_, i) => homographMask(label, registered)[i]).join('');
+
+  it('should mark the letters Platform rewrites, not digits already in form or hyphens', () => {
+    expect(marked('Theroadnottaken')).toBe('oo');
+    expect(marked('al1ce')).toBe('l');
+    expect(marked('b0b')).toBe('');
+    expect(marked('my-name')).toBe('');
+  });
+
+  it('should compare with the registered label, and mark nothing it cannot line up', () => {
+    expect(marked('b0b', 'b0b')).toBe('');
+    expect(marked('bob', 'b0b')).toBe('o');
+    expect(marked('bob', 'b0bby')).toBe('');
+  });
+
+  it('should render the marked letters as highlights', () => {
+    const html = renderToStaticMarkup(<ContestedName label="Bob-1" />);
+    expect(html).toContain('<em class="homograph" title="Registers as 0">o</em>');
+    expect(html).not.toMatch(/<em[^>]*>-/);
+    expect(html).not.toMatch(/<em[^>]*>1/);
   });
 });
