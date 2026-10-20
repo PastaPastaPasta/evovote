@@ -5,7 +5,7 @@ import { kindFor } from '../../kinds/registry';
 import type { ContestKind, KindId } from '../../kinds/types';
 import type { Contest, ContestSummary } from '../../model/contest';
 import type { Network } from '../../sdk/network';
-import { fmt, plural } from '../format';
+import { dateText, fmt, plural } from '../format';
 
 /**
  * The directory's pure logic: what a row says, where it sorts, and what a
@@ -302,9 +302,9 @@ export function outcomeOf(c: Contest): Outcome {
   return { kind: 'no winner', unopposed: false, decidedAtMs };
 }
 
-/** "Oct 15, 2026": the decided date on a row. */
+/** "Oct 15": the decided date on a row (the site's list date). */
 export function shortDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return dateText(ms, { time: false });
 }
 
 /** A username that is not the contest's own name, to tell its winner apart. */

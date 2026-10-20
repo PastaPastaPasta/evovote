@@ -91,13 +91,6 @@ export function KeyringPanel({ network }: { network: Network }) {
 
   return (
     <>
-      <p className="drawer-note">
-        ProTxHashes and labels are saved in this browser. Voting keys are held
-        <strong> in memory only</strong>: never stored or sent anywhere, and gone when you
-        close the tab. Each key is checked against the masternode's voter identity on
-        Platform before it is accepted. Signing happens locally.
-      </p>
-
       {masternodes.length === 0 ? (
         <p className="page-note">
           Add a masternode to vote. You need its ProTxHash and the private key for its
@@ -198,6 +191,13 @@ export function KeyringPanel({ network }: { network: Network }) {
           </ul>
         )}
       </details>
+
+      <p className="drawer-note">
+        ProTxHashes and labels are saved in this browser. Voting keys are held
+        <strong> in memory only</strong>: never stored or sent anywhere, and gone when you
+        close the tab. Each key is checked against the masternode's voter identity on
+        Platform before it is accepted. Signing happens locally.
+      </p>
 
       <p className="fine-print">
         The key must be the one for the masternode's registered <code>votingAddress</code>,

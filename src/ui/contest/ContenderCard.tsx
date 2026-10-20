@@ -306,7 +306,12 @@ export function ContenderCard({
           </div>
         )}
         {canVote && (
-          <button type="button" className="vote-button" onClick={onVote}>
+          <button
+            type="button"
+            className="vote-button"
+            onClick={onVote}
+            aria-label={`Vote for ${team ?? name ?? shortId(contender.identityId)}`}
+          >
             Vote for this
           </button>
         )}
