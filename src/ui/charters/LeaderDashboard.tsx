@@ -19,7 +19,7 @@ import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
 import { freeQuietly } from '../../sdk/free';
 import { targetName } from '../../kinds/charter';
-import { dateText, firstSentence, shortId } from '../format';
+import { dateText, endDate, firstSentence, shortId } from '../format';
 import { IdentityName } from '../components/IdentityName';
 import { TechnicalDetail } from '../components/TechnicalDetail';
 import { BoundKeySetup } from '../identity/BoundKeySetup';
@@ -85,8 +85,8 @@ function timingRows(pre: ApplyPreflight): Array<[string, string]> {
     }
   } else {
     rows.push(['Teams applied so far', String(contenders)]);
-    if (t.joinClosesAtMs) rows.push(['Applications close', dateText(t.joinClosesAtMs)]);
-    if (t.endsAtMs) rows.push(['Voting ends', dateText(t.endsAtMs)]);
+    if (t.joinClosesAtMs) rows.push(['Applications close', endDate(t.joinClosesAtMs)]);
+    if (t.endsAtMs) rows.push(['Voting ends', endDate(t.endsAtMs)]);
   }
   return rows;
 }

@@ -2,7 +2,7 @@ import { useState, type CSSProperties, type ReactNode } from 'react';
 import type { Comment } from '../../discussion/reads';
 import { hueIndex, initialOf, relativeTime } from '../../discussion/present';
 import { displayText } from '../../discussion/text';
-import { shortId } from '../format';
+import { deadlineText, shortId } from '../format';
 
 export const commentAnchor = (id: string): string => `comment-${id}`;
 
@@ -43,7 +43,7 @@ function Time({ ms, now }: { ms: number; now: number }) {
   const when = new Date(ms);
   if (!Number.isFinite(when.getTime()) || ms <= 0) return null;
   return (
-    <time dateTime={when.toISOString()} title={when.toLocaleString()}>
+    <time dateTime={when.toISOString()} title={deadlineText(ms, now)}>
       {relativeTime(ms, now)}
     </time>
   );

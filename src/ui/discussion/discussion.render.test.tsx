@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { deadlineText } from '../../model/text';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Comment } from '../../discussion/reads';
 import { base58Encode } from '../../model/bytes';
@@ -105,7 +106,8 @@ describe('comment rendering', () => {
   it('should show a relative time with the full date in the tooltip', () => {
     const html = render(comment());
     expect(html).toContain('3 h ago');
-    expect(html).toContain(`title="${new Date(1_700_000_000_000).toLocaleString()}"`);
+    // The site's deadline format, with the time zone.
+    expect(html).toContain(`title="${deadlineText(1_700_000_000_000, NOW)}"`);
   });
 
   it('should say whom a nested reply answers, and mark a reply whose parent is not loaded', () => {

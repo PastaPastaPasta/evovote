@@ -1,4 +1,4 @@
-import { dateText, plural } from '../model/text';
+import { deadlineText, plural } from '../model/text';
 import { electedOf, electionOpensAtMs, type ContractModeration } from './declaration';
 
 /**
@@ -149,7 +149,7 @@ export function canApply(timing: ElectionTiming, now = Date.now()): ApplyCheck {
         reason:
           timing.opensAtMs === Number.POSITIVE_INFINITY
             ? 'This contract declares an election delay but has no recorded creation time, so its election never opens.'
-            : `Applications open ${dateText(timing.opensAtMs ?? 0)}; until then Platform refuses them.`,
+            : `Applications open ${deadlineText(timing.opensAtMs ?? 0)}; until then Platform refuses them.`,
       };
     case 'seated':
     case 'decided':

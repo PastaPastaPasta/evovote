@@ -18,7 +18,7 @@ import { targetName } from '../../kinds/charter';
 import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
 import { CopyButton } from '../components/CopyButton';
-import { dateText, firstSentence, shortId } from '../format';
+import { dateText, endDate, firstSentence, shortId } from '../format';
 import { RenewWallet } from '../identity/RenewWallet';
 import { SignInPanel } from '../identity/SignInPanel';
 import { SigningProblemNote } from '../identity/SigningProblemNote';
@@ -58,7 +58,7 @@ function SignedInWith({ session }: { session: IdentitySession }) {
             Dash Wallet{walletKey ? ` · key #${walletKey.keyId} for comments` : ''}
             {walletKey?.totalBudget !== undefined &&
               ` · ${dashText(walletKey.remainingBudget ?? walletKey.totalBudget)} of ${dashText(walletKey.totalBudget)} allowance left`}
-            {walletKey?.expiresAt !== undefined && ` · until ${dateText(walletKey.expiresAt)}`}
+            {walletKey?.expiresAt !== undefined && ` · until ${endDate(walletKey.expiresAt)}`}
           </dd>
         </div>
       )}

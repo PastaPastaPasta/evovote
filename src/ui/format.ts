@@ -1,18 +1,9 @@
-import { dateText } from '../model/text';
+import { deadlineText } from '../model/text';
 
-export { dateText, plural } from '../model/text';
+export { dateText, deadlineText, plural, shortId } from '../model/text';
 
 /** A count with thousands separators: "1,036". */
 export const fmt = (n: number) => n.toLocaleString();
-
-/**
- * The site's one short-id format: the first and last six characters. Every
- * id shown in running text uses the default; the full id stays available
- * on hover (`title`) or through a copy button.
- */
-export function shortId(id: string, chars = 6): string {
-  return id.length <= chars * 2 + 1 ? id : `${id.slice(0, chars)}…${id.slice(-chars)}`;
-}
 
 export interface Countdown {
   text: string;
@@ -34,11 +25,10 @@ export function countdown(endsAtMs: number, now = Date.now()): Countdown {
   return { text, urgent: delta < 24 * 3_600_000, past: false };
 }
 
-/** A contest's end (or any moment) in the site's date format. */
+/** A contest's end (or any deadline) in the site's deadline format, with the time zone. */
 export function endDate(endsAtMs: number): string {
-  return dateText(endsAtMs);
+  return deadlineText(endsAtMs);
 }
-
 
 /** `text` cut to at most `max` characters at a word boundary, with an ellipsis when cut. */
 export function excerpt(text: string, max: number): string {

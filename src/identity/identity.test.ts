@@ -190,7 +190,7 @@ describe('signInKeyRefusal', () => {
     expect(signInKeyRefusal(transfer, keys, contracts)).toMatch(/^Key #4 is a TRANSFER key \(it withdraws and transfers credits\)/);
     expect(signInKeyRefusal(medium, keys, contracts)).toMatch(/^Key #5 is a MEDIUM authentication key; Platform needs HIGH or CRITICAL/);
     expect(signInKeyRefusal(master, keys, contracts)).toMatch(/^That is the identity's MASTER key\. Never paste it to sign in\. Use one of/);
-    expect(signInKeyRefusal(elsewhere, keys, contracts)).toMatch(/^Key #6 is bound to contract GWRSAV…, so it can only sign there\./);
+    expect(signInKeyRefusal(elsewhere, keys, contracts)).toMatch(/^Key #6 is bound to contract GWRSAV…4S31Ec, so it can only sign there\./);
     expect(signInKeyRefusal(key({ keyId: 7, disabled: true }), keys, contracts)).toMatch(/^Key #7 of this identity is disabled\./);
   });
 

@@ -1,3 +1,4 @@
+import { dateText } from '../model/text';
 import type { Comment } from './reads';
 
 /**
@@ -63,12 +64,7 @@ export function relativeTime(ms: number, now = Date.now()): string {
   if (hours < 24) return `${hours} h ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
-  const date = new Date(ms);
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(date.getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}),
-  });
+  return dateText(ms, { time: false, now });
 }
 
 /** Whether a read failed because the node is busy (worth retrying shortly). */

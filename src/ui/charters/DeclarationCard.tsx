@@ -1,4 +1,4 @@
-import { dateText } from '../format';
+import { endDate } from '../format';
 import {
   durationText,
   electionOpensAtMs,
@@ -24,7 +24,7 @@ function electionDelayText(delaySeconds: number | undefined, opensAt: number | u
   if (!delaySeconds) return 'None: teams can apply as soon as the contract exists';
   const base = `${durationText(delaySeconds)} after the contract was created`;
   if (opensAt === Number.POSITIVE_INFINITY) return `${base}. The contract has no recorded creation time, so its election never opens.`;
-  if (opensAt) return `${base} (${opensAt > Date.now() ? 'opens' : 'opened'} ${dateText(opensAt)})`;
+  if (opensAt) return `${base} (${opensAt > Date.now() ? 'opens' : 'opened'} ${endDate(opensAt)})`;
   return base;
 }
 

@@ -38,7 +38,7 @@ export function JoinPanel({
     return (
       <p className="page-note ok">
         You asked to join this team
-        {mine.createdAtMs ? ` on ${dateText(mine.createdAtMs)}` : ''}. The leader decides whether to list you
+        {mine.createdAtMs ? ` on ${dateText(mine.createdAtMs, { time: false })}` : ''}. The leader decides whether to list you
         when applying for the seat.
       </p>
     );

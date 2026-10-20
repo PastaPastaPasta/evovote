@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterFirstSentence, dateText, excerpt, firstSentence, shortId } from './format';
+import { afterFirstSentence, dateText, deadlineText, endDate, excerpt, firstSentence, shortId } from './format';
 
 describe('shortId', () => {
   it('should keep six characters each side by default', () => {
@@ -18,6 +18,17 @@ describe('dateText', () => {
   });
   it('should show the year for another year', () => {
     expect(dateText(new Date(2025, 0, 2).getTime(), { now })).toMatch(/2025/);
+  });
+});
+
+describe('deadlineText', () => {
+  const now = new Date(2026, 9, 20, 12, 0).getTime();
+  it('should give the list date with the time and the time zone', () => {
+    const ms = new Date(2026, 9, 21, 16, 5).getTime();
+    const text = deadlineText(ms, now);
+    expect(text.startsWith(dateText(ms, { now }))).toBe(true);
+    expect(text.length).toBeGreaterThan(dateText(ms, { now }).length);
+    expect(endDate(ms)).toBe(deadlineText(ms));
   });
 });
 

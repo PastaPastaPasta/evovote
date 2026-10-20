@@ -1,3 +1,4 @@
+import { shortId } from '../model/text';
 import { freeQuietly } from '../sdk/free';
 
 /**
@@ -158,7 +159,7 @@ function boundsText(bounds: KeyBounds, contractName: (id: string) => string): st
     case 'documentType':
       return `${bounds.documentTypeName} documents of ${contractName(bounds.contractId)}`;
     case 'contractGroup':
-      return `the contract group ${bounds.groupId.slice(0, 6)}…`;
+      return `the contract group ${shortId(bounds.groupId)}`;
     case 'unknown':
       return 'a contract EvoVote cannot read';
   }
@@ -173,7 +174,7 @@ export function signInKeyRefusal(
   k: KeyInfo,
   keys: readonly KeyInfo[],
   contracts: readonly string[],
-  contractName: (id: string) => string = (id) => `contract ${id.slice(0, 6)}…`,
+  contractName: (id: string) => string = (id) => `contract ${shortId(id)}`,
 ): string | undefined {
   const usable = (key: KeyInfo) => isDocumentSigningKey(key) && contracts.some((c) => boundsAllow(key.bounds, c, key.bounds?.kind === 'documentType' ? key.bounds.documentTypeName : undefined));
   const alternatives = keys.filter((key) => key.keyId !== k.keyId && usable(key));
