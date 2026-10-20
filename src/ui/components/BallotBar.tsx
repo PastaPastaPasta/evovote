@@ -18,18 +18,24 @@ export function contenderColor(rank: number): string {
 
 /**
  * The ballot bar: one segment per contender (ranked by tally), then abstain,
- * then lock (hatched). Segment width is the share of all votes cast.
+ * then lock (hatched). Segment width is the share of all votes cast. With no
+ * votes the full bar says so; the mini bar stays an empty track (the row's
+ * vote count says it, and text does not fit in 10 px).
  */
 export function BallotBar({
   state,
   mini = false,
   showLock = true,
+  ended = false,
 }: {
   state: Tally;
   mini?: boolean;
   /** False for resolution-1 contests, which have no Lock. */
   showLock?: boolean;
+  /** The contest is over: "no votes cast", never "no votes yet". */
+  ended?: boolean;
 }) {
+  const none = ended ? 'No votes cast' : 'No votes cast yet';
   const total = state.total;
   const segments: { key: string; share: number; color: string; hatched?: boolean; title: string }[] = [];
   if (total > 0) {
@@ -67,13 +73,11 @@ export function BallotBar({
       className={mini ? 'ballot-bar mini' : 'ballot-bar'}
       role="img"
       aria-label={
-        total === 0
-          ? 'No votes cast yet'
-          : `${total} votes: ` + segments.map((s) => s.title).join(', ')
+        total === 0 ? none : `${total} votes: ` + segments.map((s) => s.title).join(', ')
       }
     >
       {segments.length === 0 ? (
-        <div className="ballot-empty">no votes yet</div>
+        !mini && <div className="ballot-empty">{none.toLowerCase()}</div>
       ) : (
         segments.map((s) => (
           <div

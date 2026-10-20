@@ -1345,3 +1345,293 @@ a:focus-visible {
 .comment-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
 .comment-reply-to { margin: 6px 0 0; }
 .discussion button:disabled { cursor: default; opacity: .55; }
+
+/* ── directory ── (OverviewPage: intro, status, rows, paging) */
+
+.dir-intro {
+  margin: 0 0 22px;
+}
+
+.dir-intro h1 {
+  font-size: clamp(24px, 4.2vw, 32px);
+  line-height: 1.15;
+  margin: 0 0 6px;
+  color: var(--ink);
+}
+
+.dir-intro-line {
+  margin: 0 0 16px;
+  font-size: 16px;
+  color: var(--ink-2);
+  max-width: 62ch;
+}
+
+.dir-entry {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.dir-entry a,
+.dir-entry button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.dir-entry a:hover,
+.dir-entry button:hover {
+  border-color: var(--blue);
+}
+
+.dir-entry strong {
+  font-size: 15px;
+  color: var(--blue-deep);
+}
+
+.dir-entry span {
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.4;
+}
+
+.dir-status {
+  margin: 4px 0 6px;
+  font-size: 15px;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.dir-status strong {
+  font-weight: 600;
+}
+
+.dir-issues {
+  margin: 8px 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--amber);
+  background: var(--amber-tint);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 14px;
+}
+
+.dir-issues p {
+  margin: 0 0 4px;
+}
+
+.dir-issues summary {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.dir-issues ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.dir-browse {
+  margin: 4px 0 10px;
+}
+
+.dir-browse summary {
+  cursor: pointer;
+  color: var(--blue-deep);
+  font-size: 14px;
+}
+
+.dir-list:focus {
+  outline: none;
+}
+
+.dir-section-head {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 26px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.dir-section-head .section-title {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.dir-section-head .legend {
+  margin-left: auto;
+}
+
+.dir-sort button {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  border-radius: var(--radius);
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+.dir-sort button[aria-pressed='true'] {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+/* Fixed minimums keep bars and counts aligned whatever the status says. */
+.contest-list .ledger-row {
+  grid-template-columns: minmax(160px, 1.3fr) minmax(110px, 1fr) minmax(56px, auto) minmax(13ch, auto);
+}
+
+.contest-list .ledger-name {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.dir-title {
+  display: flex;
+  align-items: center;
+  gap: 8px 10px;
+  flex-wrap: wrap;
+}
+
+.dir-name {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+/* Only the normalized form is known: say so quietly. */
+.dir-name.normalized {
+  font-weight: 500;
+  color: var(--ink-2);
+  text-decoration: underline dotted var(--line-strong);
+  text-underline-offset: 4px;
+}
+
+.dir-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.contest-list .search {
+  width: min(420px, 100%);
+}
+
+.dir-result-note {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* "2 contenders" is information, not a warning. */
+.contest-list .contest-flag {
+  color: var(--ink-2);
+  background: var(--paper);
+  border-color: var(--line-strong);
+}
+
+.contest-list .ledger-ends {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.dir-outcome {
+  font-weight: 600;
+}
+
+.dir-outcome.awarded {
+  color: var(--win);
+}
+
+.dir-outcome.locked {
+  color: var(--lock);
+}
+
+.dir-date {
+  font-size: 11px;
+}
+
+.ledger-row.skeleton,
+.ledger-row.skeleton:hover {
+  background: none;
+}
+
+.dir-skel {
+  display: block;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--line) 25%, var(--paper) 50%, var(--line) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+
+
+.dir-more {
+  display: block;
+  margin: 18px auto 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dir-skel {
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .contest-list .ledger-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+  }
+
+  .dir-entry {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .dir-entry a,
+  .dir-entry button {
+    padding: 9px 12px;
+  }
+
+  /* On a phone the three entry points are just their titles. */
+  .dir-entry span {
+    display: none;
+  }
+
+  .dir-intro-line {
+    font-size: 15px;
+  }
+
+  .contest-list .kind-title {
+    font-size: 14px;
+  }
+
+  .dir-section-head .legend {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+.dir-heading {
+  font-size: clamp(22px, 3.6vw, 28px);
+  line-height: 1.2;
+  margin: 6px 0 4px;
+  color: var(--ink);
+}
