@@ -56,7 +56,7 @@ export function OpenContractForm({ network }: { network: Network }) {
           recent:{' '}
           {recent.map((id) => (
             <a key={id} className="mono" href={`#/c/${id}`} title={id}>
-              {shortId(id, 6)}
+              {shortId(id)}
             </a>
           ))}
         </p>

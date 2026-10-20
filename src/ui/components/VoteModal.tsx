@@ -19,7 +19,7 @@ function choiceText(choice: VoteChoice | undefined): string {
   if (!choice) return 'none';
   switch (choice.type) {
     case 'identity':
-      return shortId(choice.identityId, 6);
+      return shortId(choice.identityId);
     case 'abstain':
       return 'abstain';
     case 'lock':
@@ -29,7 +29,7 @@ function choiceText(choice: VoteChoice | undefined): string {
 
 function choiceLabel(choice: VoteChoice): string {
   return choice.type === 'identity'
-    ? `Vote for ${shortId(choice.identityId, 6)}`
+    ? `Vote for ${shortId(choice.identityId)}`
     : choice.type === 'abstain'
       ? 'Vote abstain'
       : 'Vote lock';
@@ -228,7 +228,7 @@ export function VoteModal({
                         onChange={() => toggle(mn.id)}
                       />
                       <span className="mn-pick-label">{mn.label}</span>
-                      <span className="mono-label">{shortId(mn.proTxHash, 6)}</span>
+                      <span className="mono-label mono">{shortId(mn.proTxHash)}</span>
                       {current !== 'loading' && (
                         <span className="mono-label">
                           {votes === undefined
@@ -286,7 +286,7 @@ export function VoteModal({
                   return (
                     <li key={mn.id} className={`mn-status ${status.step}`}>
                       <span className="mn-pick-label">{mn.label}</span>
-                      <span className="mono-label">{shortId(mn.proTxHash, 6)}</span>
+                      <span className="mono-label mono">{shortId(mn.proTxHash)}</span>
                       <span className="mn-status-text">
                         {status.step === 'queued' && 'waiting'}
                         {status.step === 'sending' && 'signing, broadcasting, verifying…'}

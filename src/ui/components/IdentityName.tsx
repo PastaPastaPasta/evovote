@@ -19,7 +19,7 @@ export function IdentityName({ sdk, id }: { sdk: EvoSDK; id: string }) {
   }, [sdk, id]);
   return (
     <span className="identity-name" title={id}>
-      {name ? <strong>{name}</strong> : <span className="mono">{shortId(id, 6)}</span>}
+      {name ? <strong>{name}</strong> : <span className="mono">{shortId(id)}</span>}
     </span>
   );
 }

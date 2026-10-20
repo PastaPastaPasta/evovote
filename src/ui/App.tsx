@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Contest, VoteChoice } from '../model/contest';
 import { loadSdk, type SdkHandle } from '../sdk/connection';
 import { errorMessage } from '../sdk/errors';
@@ -7,6 +7,7 @@ import { useIdentitySession } from '../identity/session';
 import { initKeyring, useMasternodes } from '../voting/keyring';
 import { KeyringPanel, MnDrawer } from './components/KeyringPanel';
 import { VoteModal } from './components/VoteModal';
+import { TechnicalDetail } from './components/TechnicalDetail';
 import { AboutPage } from './pages/AboutPage';
 import { ContestPage } from './pages/ContestPage';
 import { ContractPage } from './pages/ContractPage';
@@ -16,7 +17,7 @@ import { ModeratedDirectoryPage } from './pages/ModeratedDirectoryPage';
 import { ProposalPage } from './pages/ProposalPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
-import { useRoute, type Route } from './router';
+import { navSection, sameView, useRoute, type NavSection, type Route } from './router';
 import { useTheme, type ThemePref } from './theme';
 import { shortId } from './format';
 
@@ -88,7 +89,9 @@ function Page({
     case 'mn':
       return (
         <div className="about-page">
-          <h1>My masternodes</h1>
+          <header className="page-header">
+            <h1 className="page-title">Vote with a masternode</h1>
+          </header>
           <KeyringPanel network={network} />
         </div>
       );
@@ -112,7 +115,7 @@ function Page({
         />
       );
     case 'me':
-      return <IdentityPage network={network} />;
+      return <IdentityPage sdk={handle.sdk} network={network} />;
     case 'notFound':
       return (
         <PlaceholderPage title="Not found">
@@ -120,6 +123,45 @@ function Page({
         </PlaceholderPage>
       );
   }
+}
+
+const NAV: Array<{ href: string; label: string; section: NavSection }> = [
+  { href: '#/', label: 'Contests', section: 'contests' },
+  { href: '#/m', label: 'Moderation', section: 'moderation' },
+  { href: '#/about', label: 'About', section: 'about' },
+];
+
+/**
+ * On a route change: back to the top, and focus the new page's h1 so a
+ * screen reader announces it and Tab starts from the page, not the header.
+ * The h1 can render a moment late (pages show their header while loading),
+ * so it is looked for a few times. Switching tabs on the contest list keeps
+ * the scroll and focus.
+ */
+function useRouteFocus(route: Route): void {
+  const previous = useRef<Route | null>(null);
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = route;
+    if (!before || sameView(before, route)) return;
+    window.scrollTo(0, 0);
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const focus = () => {
+      const h1 = document.querySelector<HTMLElement>('#main h1');
+      if (h1) {
+        if (!h1.hasAttribute('tabindex')) h1.tabIndex = -1;
+        h1.focus({ preventScroll: true });
+      } else if (tries++ < 20) {
+        timer = setTimeout(focus, 100);
+      } else {
+        // A page with no h1 (the contest list): start from the content.
+        document.getElementById('main')?.focus({ preventScroll: true });
+      }
+    };
+    focus();
+    return () => clearTimeout(timer);
+  }, [route]);
 }
 
 export function App() {
@@ -132,10 +174,12 @@ export function App() {
   );
   const [voteRound, setVoteRound] = useState(0);
   const route = useRoute();
+  const section = navSection(route);
   const masternodes = useMasternodes();
   const session = useIdentitySession();
-  const identityLabel = session ? (session.names[0] ?? shortId(session.identityId, 4)) : 'Sign in';
+  const identityLabel = session ? (session.names[0] ?? shortId(session.identityId)) : 'Sign in';
   const { pref: themePref, cycle: cycleTheme } = useTheme();
+  useRouteFocus(route);
 
   useEffect(() => {
     initKeyring(network);
@@ -152,61 +196,82 @@ export function App() {
     };
   }, [network]);
 
+  const themeLabel = `Theme: ${themePref === 'system' ? 'match system' : themePref}. Change theme`;
   return (
     <div className={`app network-${network}`}>
+      <a
+        className="skip-link"
+        href="#main"
+        onClick={(e) => {
+          // Hash routes: a plain #main link would navigate away.
+          e.preventDefault();
+          document.getElementById('main')?.focus();
+        }}
+      >
+        Skip to content
+      </a>
       <header className="topbar">
-        <a className="brand" href="#/">
+        <a className="brand" href="#/" aria-label="EvoVote home">
           <img className="brand-glyph" src="./favicon.svg" alt="" />
-          <span>
-            <span className="brand-mark">EVO</span>VOTE
+          <span className="brand-word">
+            <span className="brand-mark">Evo</span>Vote
           </span>
-          <span className="brand-tag">contested resources on Dash Platform</span>
+          <span className="brand-tag">Contested resources on Dash Platform</span>
         </a>
-        <nav className="topbar-nav">
-          <a href="#/m">Moderators</a>
-          <a href="#/me">{identityLabel}</a>
-          <a href="#/about">About</a>
-          <button
-            className="theme-toggle"
-            onClick={cycleTheme}
-            title={`Theme: ${themePref} — click to change`}
-            aria-label={`Theme: ${themePref} — click to change`}
-          >
-            <ThemeIcon pref={themePref} />
-          </button>
-          <button className="mn-button" onClick={() => setDrawerOpen(true)}>
-            Masternodes
-            {masternodes.length > 0 && <span className="mn-count">{masternodes.length}</span>}
-          </button>
-          <select
-            className="network-select"
-            value={network}
-            aria-label="Network"
-            onChange={(e) => switchNetwork(e.target.value as Network)}
-          >
-            <option value="testnet">testnet</option>
-            <option value="mainnet">mainnet</option>
-          </select>
+        <nav className="topbar-nav" aria-label="Main">
+          {NAV.map((item) => (
+            <a key={item.href} href={item.href} aria-current={section === item.section ? 'page' : undefined}>
+              {item.label}
+            </a>
+          ))}
         </nav>
+        <label className={`network-control network-control-${network}`} title="Network">
+          <span className="visually-hidden">Network</span>
+          <select value={network} onChange={(e) => switchNetwork(e.target.value as Network)}>
+            <option value="testnet">Testnet</option>
+            <option value="mainnet">Mainnet</option>
+          </select>
+        </label>
+        <button className="icon-button theme-toggle" onClick={cycleTheme} title={themeLabel} aria-label={themeLabel}>
+          <ThemeIcon pref={themePref} />
+        </button>
+        <button className="mn-button" onClick={() => setDrawerOpen(true)}>
+          <span className="mn-button-long">Vote with masternode</span>
+          <span className="mn-button-short">Masternodes</span>
+          {masternodes.length > 0 && (
+            <span className="mn-count" aria-label={`${masternodes.length} added`}>
+              {masternodes.length}
+            </span>
+          )}
+        </button>
+        <a
+          className={session ? 'signin-link signed-in' : 'signin-link'}
+          href="#/me"
+          aria-current={section === 'me' ? 'page' : undefined}
+          title={session ? `Signed in as ${identityLabel}` : undefined}
+        >
+          {identityLabel}
+        </a>
       </header>
 
       {network === 'mainnet' && (
         <div className="network-banner" role="note">
-          v2 targets testnet; mainnet support arrives with protocol 14.
+          EvoVote v2 is built for testnet. Mainnet support arrives with protocol 14.
         </div>
       )}
 
-      <main className="content">
+      <main className="content" id="main" tabIndex={-1}>
         {sdkState.status === 'loading' && (
-          <div className="sdk-loading">
+          <div className="sdk-loading" role="status">
             <div className="spinner" aria-hidden="true" />
             <p>Connecting to Dash Platform ({network})…</p>
-            <p className="mono-label">first load fetches the SDK, then it's cached</p>
+            <p className="mono-label">The first visit downloads the Platform SDK; later visits use the cached copy.</p>
           </div>
         )}
         {sdkState.status === 'error' && (
-          <div className="sdk-loading">
-            <p className="error">Could not connect to Platform: {sdkState.message}</p>
+          <div className="sdk-loading" role="alert">
+            <p className="error">Could not connect to Dash Platform.</p>
+            <TechnicalDetail>{sdkState.message}</TechnicalDetail>
             <button className="vote-button" onClick={() => location.reload()}>
               Retry
             </button>
@@ -225,14 +290,12 @@ export function App() {
 
       <footer className="footer">
         <span>
-          Reads and votes go straight to Dash Platform from your browser — no backend, no
-          tracking.
+          Reads and votes go straight from your browser to Dash Platform. No backend, no tracking.
         </span>
-        <span>
+        <span className="footer-links">
           <a href="https://github.com/PastaPastaPasta/evovote" target="_blank" rel="noreferrer">
-            source
-          </a>{' '}
-          ·{' '}
+            Source
+          </a>
           <a href="https://dash.org" target="_blank" rel="noreferrer">
             dash.org
           </a>

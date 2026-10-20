@@ -99,6 +99,41 @@ export function parseRoute(hash: string): Route {
   return { page: 'notFound', path };
 }
 
+/** The header section a route belongs to, for `aria-current`. */
+export type NavSection = 'contests' | 'moderation' | 'about' | 'me' | 'mn' | 'other';
+
+export function navSection(route: Route): NavSection {
+  switch (route.page) {
+    case 'home':
+    case 'kind':
+    case 'poll':
+    case 'contract':
+      return 'contests';
+    case 'moderatedDirectory':
+    case 'moderated':
+      return 'moderation';
+    case 'about':
+      return 'about';
+    case 'me':
+      return 'me';
+    case 'mn':
+      return 'mn';
+    case 'notFound':
+      return 'other';
+  }
+}
+
+/**
+ * Whether two routes show the same view: a v1 redirect to the same poll, or
+ * a tab switch on the contest list (which keeps its list and scroll).
+ */
+export function sameView(a: Route, b: Route): boolean {
+  const list = (r: Route) => r.page === 'home' || r.page === 'kind';
+  if (list(a) && list(b)) return true;
+  if (a.page === 'poll' && b.page === 'poll') return a.keyString === b.keyString;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export function pollHref(keyString: string): string {
   return `#/p/${keyString}`;
 }

@@ -8,6 +8,8 @@ import { documentSigningProblem, heldBoundKeyHex, withDocumentSigner, type Ident
 import { utf8Length } from '../../model/bytes';
 import type { SdkHandle } from '../../sdk/connection';
 import { BoundKeySetup } from '../identity/BoundKeySetup';
+import { TechnicalDetail } from '../components/TechnicalDetail';
+import { dateText, firstSentence } from '../format';
 import { useAsync } from '../useAsync';
 import { FieldProblems } from './FieldProblems';
 import { PaidWrite } from './PaidWrite';
@@ -35,16 +37,32 @@ export function JoinPanel({
     return (
       <p className="page-note ok">
         You asked to join this team
-        {mine.createdAtMs ? ` on ${new Date(mine.createdAtMs).toLocaleString()}` : ''}. The leader decides whether
-        to list you when applying for the seat.
+        {mine.createdAtMs ? ` on ${dateText(mine.createdAtMs)}` : ''}. The leader decides whether to list you
+        when applying for the seat.
       </p>
     );
   }
   const signing = documentSigningProblem(session, CHARTERS_CONTRACT_ID);
   if (signing) return <p className="page-note error">{signing}</p>;
-  if (leaderReady.status === 'loading') return <p className="mono-label">Checking the leader&apos;s keys…</p>;
+  if (leaderReady.status === 'loading') {
+    return (
+      <p className="meta" role="status">
+        Checking that the leader can receive join requests…
+      </p>
+    );
+  }
   if (leaderReady.status === 'error') {
-    return <p className="page-note error">Could not read the leader&apos;s keys: {leaderReady.message}</p>;
+    return (
+      <div className="page-note error">
+        <p>
+          Could not check whether the leader can receive join requests.{' '}
+          <button className="link-button" onClick={leaderReady.reload}>
+            Try again
+          </button>
+        </p>
+        <TechnicalDetail>{leaderReady.message}</TechnicalDetail>
+      </div>
+    );
   }
   if (!leaderReady.value) {
     return (
@@ -65,7 +83,10 @@ export function JoinPanel({
       <BoundKeySetup handle={handle} session={session} spec={JOIN_ENCRYPTION} what="encryption key for join requests" />
       <h3>2. Your message to the leader</h3>
       <label className="field">
-        <span className="mono-label">Why you want to join (only the leader can read it; at most {MAX_JOIN_MESSAGE_BYTES} bytes)</span>
+        <span className="field-label">Why you want to join</span>
+        <span className="field-hint">
+          Only the leader can read it. At most {MAX_JOIN_MESSAGE_BYTES} bytes ({bytes} used).
+        </span>
         <textarea rows={4} value={message} onChange={(e) => setMessage(e.target.value)} />
       </label>
       {message && <FieldProblems problems={problems} />}
@@ -80,9 +101,10 @@ export function JoinPanel({
           title="Ask to join"
           priceKey={String(bytes)}
           summary={[
-            ['proposal', proposal.id],
-            ['message', `${bytes} bytes, encrypted to the leader`],
+            ['Team', firstSentence(proposal.description)],
+            ['Message', `${bytes} bytes, encrypted so only the leader can read it`],
           ]}
+          permanent="join request"
           estimate={() => estimateJoinRequest(handle, message)}
           blockers={[...problems, ...(privateKeyHex ? [] : ['Add or load your encryption key first (step 1).'])]}
           confirmLabel="Sign and send the join request"
@@ -99,11 +121,12 @@ export function JoinPanel({
           onDone={(outcome) => {
             if (outcome.status === 'confirmed') onJoined();
           }}
-        >
-          <button className="link-button" onClick={() => setReview(false)}>
-            ← Edit
-          </button>
-        </PaidWrite>
+          secondary={
+            <button className="link-button" onClick={() => setReview(false)}>
+              ← Edit
+            </button>
+          }
+        />
       )}
     </div>
   );

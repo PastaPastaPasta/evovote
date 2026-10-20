@@ -9,6 +9,7 @@ import {
   type BrowsedType,
   type ContractView,
 } from '../../discovery/contractBrowser';
+import { knownContractById } from '../../config/knownContracts';
 import { kindFor } from '../../kinds/registry';
 import { phaseOf, type Phase } from '../../model/contest';
 import { displayIndexValue } from '../../model/indexValue';
@@ -178,22 +179,30 @@ export function ContractPage({
   }, [exists, network, contractId]);
 
   const sweeping = view.types.some((t) => t.sweeping);
+  const known = knownContractById(contractId);
   const capped = !sweeping && view.caps.some((c) => c.limit === limit);
 
   return (
     <div className="contest-page contract-page">
-      <a href="#/" className="back-link">
-        ← All contests
-      </a>
-      <h1 className="contest-title">
-        Contract <span className="mono" title={contractId}>{shortId(contractId, 6)}</span>{' '}
-        <CopyButton text={contractId} label="Copy contract id" />
-      </h1>
-      <p className="mono-label poll-meta">
-        {contractId} · {network}
-      </p>
+      <header className="page-header">
+        <a href="#/" className="back-link">
+          ← All contests
+        </a>
+        <h1 className="page-title">{known?.name ?? `Contract ${shortId(contractId)}`}</h1>
+        <p className="page-byline">
+          <span>
+            Contract <span className="mono" title={contractId}>{shortId(contractId)}</span>{' '}
+            <CopyButton text={contractId} label="Copy contract id" />
+          </span>
+          {known?.note && <span>{known.note}</span>}
+        </p>
+      </header>
 
-      {view.load === 'loading' && <p className="page-note">Reading the contract from Platform…</p>}
+      {view.load === 'loading' && (
+        <p className="page-note" role="status">
+          Reading the contract from Platform…
+        </p>
+      )}
       {view.load === 'not-found' && (
         <p className="page-note error">No data contract with this id exists on {network}.</p>
       )}

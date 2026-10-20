@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dpnsKeyString } from '../kinds/dpns';
 import { resolveNetwork } from '../sdk/network';
-import { isContractIdLike, parseRoute } from './router';
+import { isContractIdLike, navSection, parseRoute, sameView } from './router';
 
 const CONTRACT = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
 
@@ -81,5 +81,22 @@ describe('resolveNetwork', () => {
     expect(resolveNetwork('', 'mainnet')).toBe('mainnet');
     expect(resolveNetwork('', null)).toBe('testnet');
     expect(resolveNetwork('?network=bogus', 'nonsense')).toBe('testnet');
+  });
+});
+
+describe('navSection and sameView', () => {
+  it('should map routes to header sections', () => {
+    expect(navSection(parseRoute('#/'))).toBe('contests');
+    expect(navSection(parseRoute(`#/c/${CONTRACT}`))).toBe('contests');
+    expect(navSection(parseRoute(`#/m/${CONTRACT}/charter/abc`))).toBe('moderation');
+    expect(navSection(parseRoute('#/about'))).toBe('about');
+    expect(navSection(parseRoute('#/me'))).toBe('me');
+  });
+
+  it('should keep the view for list tab switches only', () => {
+    expect(sameView(parseRoute('#/'), parseRoute('#/k/dpns'))).toBe(true);
+    expect(sameView(parseRoute('#/m'), parseRoute(`#/m/${CONTRACT}`))).toBe(false);
+    expect(sameView(parseRoute(`#/m/${CONTRACT}`), parseRoute(`#/m/${CONTRACT}`))).toBe(true);
+    expect(sameView(parseRoute('#/about'), parseRoute('#/me'))).toBe(false);
   });
 });

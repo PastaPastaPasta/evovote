@@ -55,7 +55,7 @@ export function validateRewardSplit(split: RewardSplit): string[] {
     problems.push('Each part of the reward split must be a whole number from 0 to 100.');
   } else if (parts.reduce((a, b) => a + b, 0) !== 100) {
     problems.push(
-      `The reward split must add up to 100 (it adds up to ${parts.reduce((a, b) => a + b, 0)}). Platform refuses any other split (10422).`,
+      `The three parts of the reward split must add up to 100; now they add up to ${parts.reduce((a, b) => a + b, 0)}.`,
     );
   }
   return problems;
@@ -88,7 +88,7 @@ export function validateCharter(input: CharterInput): string[] {
  */
 export function splitNotes(split: RewardSplit | undefined, memberCount: number): string[] {
   if (split && memberCount === 0 && split.equal > 0) {
-    return [`With no members, the ${split.equal}% equal share of every claim goes to the leader.`];
+    return [`With no other members, the ${split.equal}% shared equally goes to the leader too.`];
   }
   return [];
 }
@@ -96,8 +96,8 @@ export function splitNotes(split: RewardSplit | undefined, memberCount: number):
 /** Notes on what a share means, for the confirm step. */
 export function shareNote(share: number | undefined): string | undefined {
   if (share === undefined || share === 100) return undefined;
-  if (share === 0) return 'A share of 0 means the team takes no moderators fees at all.';
-  return `The team takes ${share}% of each declared moderators fee; actions may agree to that discount once the team is seated.`;
+  if (share === 0) return 'At 0% the team takes none of the moderation fees: it moderates for free.';
+  return `The team takes ${share}% of each moderation fee the contract declares, leaving the rest with the people who pay it.`;
 }
 
 interface MembersInput {
@@ -117,7 +117,9 @@ export function validateMembers({ leaderId, members, joiners }: MembersInput): s
   const strangers = members.filter((m) => m !== leaderId && !joiners.has(m));
   if (strangers.length > 0) {
     problems.push(
-      `${strangers.length} member(s) have not asked to join this proposal; Platform refuses them (40120).`,
+      strangers.length === 1
+        ? 'One chosen member has not asked to join this proposal, so Platform would refuse the application.'
+        : `${strangers.length} chosen members have not asked to join this proposal, so Platform would refuse the application.`,
     );
   }
   return problems;

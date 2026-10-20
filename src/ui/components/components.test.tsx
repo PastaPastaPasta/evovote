@@ -21,7 +21,7 @@ describe('FieldTable', () => {
       />,
     );
     expect(html).toContain(`title="${ID}"`);
-    expect(html).toContain(`${ID.slice(0, 8)}…${ID.slice(-8)}`);
+    expect(html).toContain(`${ID.slice(0, 6)}…${ID.slice(-6)}`);
     expect(html).toContain('aria-label="Copy $ownerId"');
     expect(html).toContain(`0x${'ab'.repeat(20)}…`);
     expect(html).toContain('show all 300 characters');

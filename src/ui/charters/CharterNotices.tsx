@@ -3,12 +3,12 @@ export function CharterNotices() {
   return (
     <ul className="charter-notices">
       <li>
-        <strong>The seat is permanent on protocol 14.</strong> Once a team wins, no other team can apply for this
-        contract, and challenges do not exist yet.
+        <strong>A win is permanent.</strong> On protocol 14 the winning team keeps this seat for good: no other
+        team can apply afterwards, and nobody can challenge it yet.
       </li>
       <li>
-        <strong>A tie goes to the earliest application.</strong> There is no Lock: the contest always ends with a
-        winner, and a lone applicant wins when the join window closes.
+        <strong>There is always a winner.</strong> Masternodes cannot block the seat. A tie goes to the team that
+        applied first, and a team that applies alone wins when the join window closes.
       </li>
     </ul>
   );
