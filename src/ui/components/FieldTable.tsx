@@ -32,7 +32,7 @@ function Value({ name, value }: { name: string; value: FieldValue }) {
       return (
         <>
           <span className="mono" title={value.id}>
-            {shortId(value.id, 8)}
+            {shortId(value.id)}
           </span>{' '}
           <CopyButton text={value.id} label={`Copy ${name}`} />
         </>

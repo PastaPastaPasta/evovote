@@ -108,8 +108,8 @@ export function KeyringPanel({ network }: { network: Network }) {
             <li key={mn.id} className="mn-row">
               <div className="mn-row-head">
                 <span className="mn-pick-label">{mn.label}</span>
-                <span className="mono-label" title={mn.proTxHash}>
-                  {shortId(mn.proTxHash, 8)}
+                <span className="mono-label mono" title={mn.proTxHash}>
+                  {shortId(mn.proTxHash)}
                 </span>
                 <button className="link-button danger" onClick={() => removeMasternode(mn.id)}>
                   Remove
@@ -223,13 +223,15 @@ export function MnDrawer({ network, onClose }: { network: Network; onClose: () =
         className="drawer"
         role="dialog"
         aria-modal="true"
-        aria-label="My masternodes"
+        aria-label="Vote with a masternode"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="drawer-header">
-          <h2>My masternodes</h2>
-          <button className="link-button" onClick={onClose}>
-            Close
+          <h2>Vote with a masternode</h2>
+          <button className="icon-button drawer-close" onClick={onClose} aria-label="Close" autoFocus>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
           </button>
         </header>
         <KeyringPanel network={network} />

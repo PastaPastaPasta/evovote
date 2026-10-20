@@ -1,3 +1,8 @@
+/**
+ * The site's one short-id format: the first and last six characters. Every
+ * id shown in running text uses the default; the full id stays available
+ * on hover (`title`) or through a copy button.
+ */
 export function shortId(id: string, chars = 6): string {
   return id.length <= chars * 2 + 1 ? id : `${id.slice(0, chars)}…${id.slice(-chars)}`;
 }
@@ -22,15 +27,56 @@ export function countdown(endsAtMs: number, now = Date.now()): Countdown {
   return { text, urgent: delta < 24 * 3_600_000, past: false };
 }
 
-export function endDate(endsAtMs: number): string {
-  return new Date(endsAtMs).toLocaleString(undefined, {
+/**
+ * The site's one date format: "Oct 19, 4:05 PM" (the year is added when it
+ * is not this year). `time: false` gives the day alone, "Oct 19".
+ */
+export function dateText(ms: number, { time = true, now = Date.now() }: { time?: boolean; now?: number } = {}): string {
+  const date = new Date(ms);
+  const otherYear = date.getFullYear() !== new Date(now).getFullYear();
+  return date.toLocaleString(undefined, {
     month: 'short',
     day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
+    ...(otherYear ? { year: 'numeric' } : {}),
+    ...(time ? { hour: 'numeric', minute: '2-digit' } : {}),
   });
+}
+
+/** A contest's end (or any moment) in the site's date format. */
+export function endDate(endsAtMs: number): string {
+  return dateText(endsAtMs);
 }
 
 export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+/** `text` cut to at most `max` characters at a word boundary, with an ellipsis when cut. */
+export function excerpt(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  // A single very long word is cut mid-word rather than dropped.
+  return `${(space > max * 0.5 ? cut.slice(0, space) : cut).replace(/[\s,;:.-]+$/, '')}…`;
+}
+
+/**
+ * A title for free text: its first sentence (or line), at most `max`
+ * characters. "Team A. We remove spam…" gives "Team A".
+ */
+export function firstSentence(text: string, max = 80): string {
+  return excerpt(splitFirstSentence(text)[0].replace(/[.]$/, ''), max);
+}
+
+/** The text after its first sentence (what an excerpt under a `firstSentence` title shows). */
+export function afterFirstSentence(text: string): string {
+  return splitFirstSentence(text)[1];
+}
+
+function splitFirstSentence(text: string): [string, string] {
+  const trimmed = text.trim();
+  const line = trimmed.split(/\n/)[0].trim();
+  const sentence = line.match(/^(.+?[.!?])(\s|$)/)?.[1] ?? line;
+  return [sentence, trimmed.slice(trimmed.indexOf(sentence) + sentence.length).trim()];
 }
