@@ -1381,6 +1381,9 @@ a:focus-visible {
   flex-wrap: wrap;
   gap: 4px 10px;
   align-items: baseline;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  margin: 0;
 }
 .wallet-qr {
   display: grid;
@@ -1504,6 +1507,16 @@ a:focus-visible {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--paper);
+}
+.wallet-candidate-none {
+  color: var(--ink-2);
+  font-size: 15px;
+}
+.wallet-candidate-id {
+  font-size: 13px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+  flex-basis: 100%;
 }
 .wallet-candidates {
   list-style: none;

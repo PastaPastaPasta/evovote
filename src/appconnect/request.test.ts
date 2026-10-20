@@ -61,8 +61,11 @@ describe("EvoVote's App Connect request", () => {
 });
 
 describe('appConnectCallbackUrl', () => {
-  it('returns to the page root with the request hash, dropping query and fragment', () => {
-    expect(appConnectCallbackUrl('https://example.org/evovote/?network=testnet#/me', 'ab'.repeat(20))).toBe(
+  it('returns to the page root with the request hash, keeping only the network', () => {
+    expect(appConnectCallbackUrl('https://example.org/evovote/?network=testnet&x=1#/me', 'ab'.repeat(20))).toBe(
+      `https://example.org/evovote/?network=testnet&ac_r=${'ab'.repeat(20)}`,
+    );
+    expect(appConnectCallbackUrl('https://example.org/evovote/?x=1', 'ab'.repeat(20))).toBe(
       `https://example.org/evovote/?ac_r=${'ab'.repeat(20)}`,
     );
   });

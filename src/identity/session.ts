@@ -1,8 +1,7 @@
 import { useSyncExternalStore } from 'react';
-import type { AppConnectHealth, RenewSoonReason } from '../appconnect/health';
+import { boundsMatch, type AppConnectHealth, type RenewSoonReason } from '../appconnect/health';
 import { toAppConnectIdentityKey, type WasmIdentityKeyLike } from '../appconnect/keyMapping';
 import {
-  boundsEqual,
   selectSigningKey,
   type AppConnectGrant,
   type AppConnectSessionKey,
@@ -49,7 +48,6 @@ export type SignedInVia = 'wallet' | 'key';
 
 /** The public side of the wallet's key ring (no private keys). */
 export interface WalletView {
-  appId: string;
   keys: AppConnectSessionKey[];
   health: AppConnectHealth;
   renewSoon: RenewSoonReason | null;
@@ -127,6 +125,13 @@ let restoring = false;
 let signOutNotice: SignOutNotice = null;
 const listeners = new Set<() => void>();
 
+/** Drop every private key this module holds (the wallet's ring is not here). */
+function dropHeldKeys(notice: SignOutNotice): void {
+  pastedWif = null;
+  heldKeys.clear();
+  signOutNotice = notice;
+}
+
 function notify(): void {
   for (const listener of listeners) listener();
 }
@@ -143,17 +148,17 @@ function subscribe(listener: () => void): () => void {
 
 /** The signed-in identity, or null. Re-renders on sign-in, refresh and sign-out. */
 export function useIdentitySession(): IdentitySession | null {
-  return useSyncExternalStore(subscribe, () => session);
+  return useSyncExternalStore(subscribe, () => session, () => session);
 }
 
 /** True while a wallet sign-in from an earlier visit is being restored. */
 export function useSessionRestoring(): boolean {
-  return useSyncExternalStore(subscribe, () => restoring);
+  return useSyncExternalStore(subscribe, () => restoring, () => restoring);
 }
 
 /** What the last sign-out should explain (wallet keys stay on the identity). */
 export function useSignOutNotice(): SignOutNotice {
-  return useSyncExternalStore(subscribe, () => signOutNotice);
+  return useSyncExternalStore(subscribe, () => signOutNotice, () => signOutNotice);
 }
 
 export function dismissSignOutNotice(): void {
@@ -270,9 +275,8 @@ export async function signIn(network: Network, wif: string, chosenId?: string): 
     const ring = walletSessions(network);
     const stored = ring?.current();
     if (stored) await ring?.logout(stored.identityId);
+    dropHeldKeys(null);
     pastedWif = trimmed;
-    heldKeys.clear();
-    signOutNotice = null;
     publish({ network, identityId, ...loaded, names: await namesOf(handle, identityId), via: 'key', pastedKey: key });
     return { ok: true };
   } catch (e) {
@@ -297,7 +301,8 @@ export async function addStepKey(wif: string): Promise<{ ok: true } | { ok: fals
     if (!loaded) return { ok: false, error: 'The identity could not be read. Try again.' };
     const key = keyMatching(loaded.keys, pasted.publicKeyHex, pasted.hash160);
     if (!key) return { ok: false, error: `This key is not one of ${current.names[0] ?? 'this identity'}'s keys.` };
-    const refusal = signInKeyRefusal(key, loaded.keys, writableContracts(current.network), contractName(current.network));
+    // The wallet's key already signs comments: a step key is for charter writes.
+    const refusal = signInKeyRefusal(key, loaded.keys, [CHARTERS_CONTRACT_ID], contractName(current.network));
     if (refusal) return { ok: false, error: refusal };
     if (session?.identityId !== current.identityId) return { ok: false, error: 'You signed out meanwhile.' };
     pastedWif = trimmed;
@@ -321,7 +326,6 @@ function walletView(ring: WalletSessions, identityId: string): WalletView | unde
   if (!active) return undefined;
   const status = ring.getStatus();
   return {
-    appId: active.appId,
     keys: active.authKeys,
     health: status.health ?? 'ok',
     renewSoon: status.renewSoon,
@@ -335,9 +339,7 @@ function watchRing(ring: WalletSessions): void {
   watchedRings.add(ring);
   ring.onSignedOut((identityId) => {
     if (session?.identityId !== identityId || session.via !== 'wallet') return;
-    pastedWif = null;
-    heldKeys.clear();
-    signOutNotice = 'wallet-revoked';
+    dropHeldKeys('wallet-revoked');
     publish(null);
   });
   ring.subscribe(() => {
@@ -355,10 +357,37 @@ async function publishWalletSession(network: Network, ring: WalletSessions, iden
   const names = await namesOf(handle, identityId);
   const wallet = walletView(ring, identityId);
   if (!wallet) throw new Error('Signed out while the wallet was connecting.');
-  pastedWif = null;
-  heldKeys.clear();
+  // A renewal keeps the keys loaded for this identity (a step key, a charter decryption key).
+  const same = session?.identityId === identityId ? session : null;
+  if (!same) dropHeldKeys(null);
   signOutNotice = null;
-  publish({ network, identityId, ...loaded, names, via: 'wallet', wallet });
+  const pastedKey = same?.pastedKey ? loaded.keys.find((k) => k.keyId === same.pastedKey?.keyId) : undefined;
+  publish({ network, identityId, ...loaded, names, via: 'wallet', wallet, ...(pastedKey ? { pastedKey } : {}) });
+}
+
+/** Read the identity, retrying a lagging or failed read a few times. */
+async function publishWithRetries(network: Network, ring: WalletSessions, identityId: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await publishWalletSession(network, ring, identityId);
+      return;
+    } catch (e) {
+      if (attempt >= 2 || !ring.current(identityId)) throw e;
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    }
+  }
+}
+
+/**
+ * The wallet's keys are stored and active, but the identity could not be
+ * read yet: try again without asking the wallet for a new (paid) grant.
+ */
+export async function resumeWalletSession(network: Network): Promise<boolean> {
+  const ring = walletSessions(network);
+  const active = ring?.current();
+  if (!ring || !active) return false;
+  await publishWalletSession(network, ring, active.identityId);
+  return true;
 }
 
 /**
@@ -367,11 +396,14 @@ async function publishWalletSession(network: Network, ring: WalletSessions, iden
  */
 export async function signInWithWallet(network: Network, grant: AppConnectGrant): Promise<void> {
   const ring = walletSessions(network);
-  if (!ring) throw new Error('Wallet sign-in is not set up on this site.');
+  if (!ring) {
+    for (const granted of [...grant.authKeys, ...grant.encryptionKeys]) granted.privateKey.fill(0);
+    throw new Error('Wallet sign-in is not set up on this site.');
+  }
   watchRing(ring);
   const adopted = await ring.adopt(grant);
-  // A failed read leaves the keys stored: a reload restores the sign-in.
-  await publishWalletSession(network, ring, adopted.identityId);
+  // A failed read leaves the keys stored and active: `resumeWalletSession` (or a reload) finishes it.
+  await publishWithRetries(network, ring, adopted.identityId);
 }
 
 /**
@@ -387,7 +419,14 @@ export async function restoreWalletSession(network: Network): Promise<void> {
   notify();
   try {
     const restored = await ring.restore();
-    if (restored && !session) await publishWalletSession(network, ring, restored.identityId);
+    // `session` may have changed while restoring: a key sign-in that finished first replaces the stored wallet sign-in.
+    const now = session as IdentitySession | null;
+    if (restored && now?.via === 'key') await ring.logout(restored.identityId);
+    else if (restored && !now) {
+      await publishWithRetries(network, ring, restored.identityId);
+      // Show the allowance as it is now, and catch a revoke since the last visit.
+      void ring.refresh();
+    }
   } catch (e) {
     console.warn('Wallet sign-in: could not restore the session', e);
   } finally {
@@ -417,9 +456,7 @@ export async function refreshIdentity(): Promise<void> {
  */
 export async function signOut(): Promise<void> {
   const current = session;
-  pastedWif = null;
-  heldKeys.clear();
-  signOutNotice = current?.via === 'wallet' ? 'wallet-signed-out' : null;
+  dropHeldKeys(current?.via === 'wallet' ? 'wallet-signed-out' : null);
   publish(null);
   if (current?.via === 'wallet') await walletSessions(current.network)?.logout(current.identityId);
 }
@@ -507,13 +544,11 @@ export async function withDocumentSigner<T>(
   fn: (s: DocumentSigner) => Promise<T>,
 ): Promise<T> {
   const s = session;
-  const ring = s?.via === 'wallet' ? walletSessions(s.network) : null;
-  const active = s && ring ? ring.current(s.identityId) : null;
+  if (!s) throw new SigningUnavailableError('signed-out', SIGNED_OUT_MESSAGE);
+  const ring = s.via === 'wallet' ? walletSessions(s.network) : null;
+  const active = ring?.current(s.identityId) ?? null;
   const resolution = resolveSigning(s, target, active?.authKeys, Date.now());
-  if (resolution.kind === 'problem' || !s) {
-    const problem = resolution.kind === 'problem' ? resolution.problem : { reason: 'signed-out' as const, message: SIGNED_OUT_MESSAGE };
-    throw new SigningUnavailableError(problem.reason, problem.message);
-  }
+  if (resolution.kind === 'problem') throw new SigningUnavailableError(resolution.problem.reason, resolution.problem.message);
   const identity = await handle.sdk.identities.fetch(s.identityId);
   if (!identity) throw new Error('The identity could not be read.');
   const owned: unknown[] = [identity];
@@ -530,14 +565,16 @@ export async function withDocumentSigner<T>(
     if (wallet) {
       // The key as it is now: the wallet may have revoked or replaced it since.
       const chain = toAppConnectIdentityKey(identityKey as unknown as WasmIdentityKeyLike);
-      const sameBounds =
-        chain?.bounds && wallet.key.bounds ? boundsEqual(chain.bounds, wallet.key.bounds) : chain?.bounds === wallet.key.bounds;
-      if (!chain || chain.disabledAt !== undefined || !sameBounds) {
+      if (!chain || chain.disabledAt !== undefined || !boundsMatch(chain.bounds, wallet.key.bounds)) {
         await wallet.ring.refresh();
         if (!wallet.ring.current(s.identityId)) {
           throw new SigningUnavailableError('signed-out', "Dash Wallet revoked this browser's key. Sign in again.");
         }
         throw new SigningUnavailableError('renew', RENEW_MESSAGE);
+      }
+      // Signed out (here or in another tab) during the reads above: sign nothing.
+      if (session?.identityId !== s.identityId || !wallet.ring.current(s.identityId)) {
+        throw new SigningUnavailableError('signed-out', SIGNED_OUT_MESSAGE);
       }
       const bytes = await wallet.ring.privateKey(wallet.active, wallet.key.keyRef);
       if (!bytes) {

@@ -104,6 +104,7 @@ export function useWalletReturn(): WalletReturnState | null {
       return () => listeners.delete(listener);
     },
     () => returnState,
+    () => returnState,
   );
 }
 
@@ -122,16 +123,17 @@ export function handleWalletReturn(win: Window = window): void {
   if (!ret) return;
   win.history.replaceState(null, '', withoutWalletReturn(win.location.href, '#/me'));
   const message: ConnectCallbackMessage = { type: 'app-connect-callback', requestHash: ret.requestHash, status: ret.status };
-  const failed = ret.status !== null && ret.status !== 'ok';
+  const failed: WalletReturnState | null =
+    ret.status !== null && ret.status !== 'ok' ? { phase: 'status', requestHash: ret.requestHash, status: ret.status } : null;
   if (typeof BroadcastChannel === 'undefined') {
-    setReturnState(failed ? { phase: 'status', requestHash: ret.requestHash, status: ret.status as string } : { phase: 'here', requestHash: ret.requestHash });
+    setReturnState(failed ?? { phase: 'here', requestHash: ret.requestHash });
     return;
   }
   const channel = new BroadcastChannel(APP_CONNECT_CHANNEL);
   // A decline is shown here, and passed on so the tab with the QR code can say so too.
   channel.postMessage(message);
   if (failed) {
-    setReturnState({ phase: 'status', requestHash: ret.requestHash, status: ret.status as string });
+    setReturnState(failed);
     channel.close();
     return;
   }

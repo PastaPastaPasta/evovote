@@ -43,9 +43,9 @@ export function buildEvoVoteRequest(input: EvoVoteRequestInput): AppConnectReque
 export const CALLBACK_REQUEST_PARAM = 'ac_r';
 
 /**
- * The wallet's return link: this page (no query, no fragment: EvoVote routes
- * by hash, and the wallet appends `&ac=<status>` to the query) with the
- * request hash. Undefined where a wallet could not open it: the profile only
+ * The wallet's return link: this page with the request hash, keeping only
+ * `?network=` (no fragment: EvoVote routes by hash, and the wallet appends
+ * `&ac=<status>` to the query). Undefined where a wallet could not open it: the profile only
  * allows https callbacks, so a local http build polls instead.
  */
 export function appConnectCallbackUrl(pageUrl: string, requestHashHex: string): string | undefined {
@@ -56,8 +56,10 @@ export function appConnectCallbackUrl(pageUrl: string, requestHashHex: string): 
     return undefined;
   }
   if (url.protocol !== 'https:') return undefined;
+  const network = url.searchParams.get('network');
   url.search = '';
   url.hash = '';
+  if (network) url.searchParams.set('network', network);
   url.searchParams.set(CALLBACK_REQUEST_PARAM, requestHashHex);
   return url.toString();
 }

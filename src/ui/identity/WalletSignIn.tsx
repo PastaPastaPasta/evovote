@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { clearWalletReturn, useWalletReturn } from '../../appconnect/callback';
 import { APP_CONNECT_BUDGET } from '../../appconnect/config';
 import type { AppConnectUnavailableReason, VerifiedCandidate } from '../../appconnect/loginFlow';
-import { signInWithWallet } from '../../identity/session';
+import { resumeWalletSession, signInWithWallet } from '../../identity/session';
+import { walletSessions } from '../../appconnect/runtime';
 import { fetchUsernames } from '../../kinds/dpns';
 import { dashText } from '../../model/credits';
 import { loadSdk } from '../../sdk/connection';
@@ -53,10 +54,47 @@ function Spinner() {
   return <span className="wallet-spinner" aria-hidden="true" />;
 }
 
-function CandidateName({ network, id }: { network: Network; id: string }) {
+function useCandidateName(network: Network, id: string): string | undefined {
   const names = useAsync(async () => fetchUsernames((await loadSdk(network)).sdk, id), [network, id]);
-  const name = names.status === 'ok' ? names.value[0] : undefined;
+  return names.status === 'ok' ? names.value[0] : undefined;
+}
+
+function CandidateName({ network, id }: { network: Network; id: string }) {
+  const name = useCandidateName(network, id);
   return name ? <strong>{name}</strong> : <span className="mono">{shortId(id, 6)}</span>;
+}
+
+/** One answer: "Continue as <name>?" with the identity's username (or full id when it has none). */
+function SingleCandidate({
+  network,
+  id,
+  onAccept,
+  onReject,
+}: {
+  network: Network;
+  id: string;
+  onAccept: (identityId: string) => void;
+  onReject: () => void;
+}) {
+  const name = useCandidateName(network, id);
+  return (
+    <div className="wallet-confirm" data-testid="wallet-confirm">
+      <p className="wallet-state-title">Dash Wallet approved. Is this you?</p>
+      <div className="wallet-candidate">
+        {name ? <strong>{name}</strong> : <span className="wallet-candidate-none">Identity without a username</span>}
+        <span className="mono wallet-candidate-id">{id}</span>
+      </div>
+      <div className="wallet-actions">
+        <button className="vote-button" onClick={() => onAccept(id)}>
+          Continue as {name ? <strong>{name}</strong> : <span className="mono">{shortId(id, 6)}</span>}
+        </button>
+        <button className="vote-button ghost" onClick={onReject}>
+          That’s not me
+        </button>
+      </div>
+      <p className="wallet-note">Anyone who scans this code can answer it, so only continue if this is your identity.</p>
+    </div>
+  );
 }
 
 function ConfirmIdentity({
@@ -71,27 +109,7 @@ function ConfirmIdentity({
   onReject: () => void;
 }) {
   if (candidates.length === 1) {
-    const id = candidates[0].identityId;
-    return (
-      <div className="wallet-confirm" data-testid="wallet-confirm">
-        <p className="wallet-state-title">Dash Wallet approved. Is this you?</p>
-        <div className="wallet-candidate">
-          <CandidateName network={network} id={id} />
-          <span className="mono-label">{shortId(id, 8)}</span>
-        </div>
-        <div className="wallet-actions">
-          <button className="vote-button" onClick={() => onAccept(id)}>
-            Continue as <CandidateName network={network} id={id} />
-          </button>
-          <button className="vote-button ghost" onClick={onReject}>
-            That’s not me
-          </button>
-        </div>
-        <p className="wallet-note">
-          Anyone who scans this code can answer it, so only continue if this is your identity.
-        </p>
-      </div>
-    );
+    return <SingleCandidate network={network} id={candidates[0].identityId} onAccept={onAccept} onReject={onReject} />;
   }
   return (
     <div className="wallet-confirm" data-testid="wallet-chooser">
@@ -157,6 +175,10 @@ export function WalletSignIn({
   const [signing, setSigning] = useState<'idle' | 'running'>('idle');
   const [signInError, setSignInError] = useState<string | null>(null);
   const [restarted, setRestarted] = useState(false);
+  // After the wallet refused a code (declined, stale…), the next start makes a new one.
+  const [startFresh, setStartFresh] = useState(false);
+  // The wallet's keys are stored but the identity read failed: retry the read, not the grant.
+  const [resumable, setResumable] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -165,19 +187,18 @@ export function WalletSignIn({
     };
   }, []);
 
-  // Set below; the renewal's auto-accept runs from the hook's subscription.
-  const acceptRef = useRef<(identityId: string) => void>(() => undefined);
   const { state, walletStatus, actions } = useWalletSignIn(network, {
-    enabled: !held,
+    enabled: !held && !resumable,
     identityHint,
+    fresh: startFresh,
+    // Runs from the hook's subscription, after this render: `accept` is defined by then.
     onCandidates: (candidates) => {
       // A renewal names its identity: its verified answer is accepted without asking.
-      if (identityHint && candidates.some((c) => c.identityId === identityHint)) acceptRef.current(identityHint);
+      if (identityHint && candidates.some((c) => c.identityId === identityHint)) accept(identityHint);
     },
   });
 
-  const accept = useCallback(
-    (identityId: string) => {
+  const accept = (identityId: string) => {
       const grant = actions.accept(identityId);
       if (!grant) return;
       setSigning('running');
@@ -191,15 +212,16 @@ export function WalletSignIn({
         .catch((e: unknown) => {
           if (!mounted.current) return;
           setSigning('idle');
+          if (walletSessions(network)?.current()) {
+            // The keys are stored: only reading the identity failed. No new grant needed.
+            setResumable(true);
+            setSignInError(`Dash Wallet approved, but your identity could not be read: ${errorMessage(e)}`);
+            return;
+          }
           setSignInError(`Could not finish signing in: ${errorMessage(e)} Try again with a new code.`);
           actions.restart();
         });
-    },
-    [actions, network, onSignedIn],
-  );
-  useEffect(() => {
-    acceptRef.current = accept;
-  });
+  };
 
   if (walletReturn?.phase === 'checking') {
     return (
@@ -224,8 +246,42 @@ export function WalletSignIn({
     const copy = WALLET_STATUS_COPY[walletReturn.status] ?? UNKNOWN_STATUS;
     return (
       <StateCard title={copy.title} text={copy.text} tone="warn">
-        <button className="vote-button" onClick={clearWalletReturn}>
+        <button
+          className="vote-button"
+          onClick={() => {
+            setStartFresh(true);
+            clearWalletReturn();
+          }}
+        >
           Start again
+        </button>
+      </StateCard>
+    );
+  }
+
+  if (resumable) {
+    return (
+      <StateCard title="Almost signed in" text={signInError ?? undefined} tone="warn">
+        <button
+          className="vote-button"
+          onClick={() => {
+            setSigning('running');
+            resumeWalletSession(network)
+              .then(() => {
+                if (!mounted.current) return;
+                setResumable(false);
+                setSignInError(null);
+                setSigning('idle');
+                onSignedIn?.();
+              })
+              .catch((e: unknown) => {
+                if (!mounted.current) return;
+                setSigning('idle');
+                setSignInError(`Your identity still could not be read: ${errorMessage(e)}`);
+              });
+          }}
+        >
+          Try again
         </button>
       </StateCard>
     );

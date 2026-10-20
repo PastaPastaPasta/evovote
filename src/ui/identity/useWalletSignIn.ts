@@ -51,8 +51,15 @@ export function useWalletSignIn(
   {
     enabled = true,
     identityHint,
+    fresh = false,
     onCandidates,
-  }: { enabled?: boolean; identityHint?: string; onCandidates?: (candidates: VerifiedCandidate[]) => void } = {},
+  }: {
+    enabled?: boolean;
+    identityHint?: string;
+    /** Start with a new code instead of resuming the stored one (after the wallet refused it). */
+    fresh?: boolean;
+    onCandidates?: (candidates: VerifiedCandidate[]) => void;
+  } = {},
 ): { state: AppConnectLoginState; walletStatus: string | null; actions: WalletSignInActions } {
   // One instance per mount: a disposed instance never restarts, so React's
   // dev double-mount and a changed hint each get a fresh one.
@@ -76,7 +83,7 @@ export function useWalletSignIn(
       if (next.phase !== 'waiting') setWalletStatus(null);
       if (next.phase === 'confirm') candidatesRef.current?.(next.candidates);
     });
-    instance.start({ identityHint }).catch((error: unknown) => console.error('Wallet sign-in failed to start', error));
+    instance.start({ identityHint, fresh }).catch((error: unknown) => console.error('Wallet sign-in failed to start', error));
 
     const onFocus = () => instance.pollNow();
     window.addEventListener('focus', onFocus);
@@ -87,7 +94,9 @@ export function useWalletSignIn(
         if (!isConnectCallbackMessage(event.data) || event.data.requestHash !== instance.requestHashHex()) return;
         channel?.postMessage({ type: 'app-connect-callback-ack', requestHash: event.data.requestHash });
         if (event.data.status && event.data.status !== 'ok') setWalletStatus(event.data.status);
-        instance.pollNow();
+        // A timed-out tab is not polling any more: look again (or start fresh if the code ran out).
+        if (instance.getState().phase === 'timeout') void instance.checkAgain();
+        else instance.pollNow();
       };
     }
     return () => {
@@ -97,7 +106,7 @@ export function useWalletSignIn(
       instance.dispose();
       if (loginRef.current === instance) loginRef.current = null;
     };
-  }, [network, enabled, identityHint]);
+  }, [network, enabled, identityHint, fresh]);
 
   const actions = useMemo<WalletSignInActions>(() => {
     const report = (error: unknown) => console.error('Wallet sign-in', error);

@@ -60,7 +60,6 @@ describe('WalletSessions', () => {
     port.keys = [{ ...port.keys[0], disabledAt: 1 }];
     await sessions.refresh();
     expect(sessions.current()).toBeNull();
-    expect(sessions.getStatus().signedOutByWallet).toBe(true);
     expect(signedOut).toHaveBeenCalledWith(ALICE);
     expect(await sessions.keyStore().load('testnet')).toBeNull();
   });
@@ -79,7 +78,7 @@ describe('WalletSessions', () => {
     port.keys = [{ ...port.keys[0], disabledAt: 1 }, chainKeyFor(commentGrant(ALICE, DISCUSSION, { keyId: 8 }))];
     await tabA.refresh();
     expect(tabA.current(ALICE)?.authKeys[0].keyId).toBe(8);
-    expect(tabA.getStatus().signedOutByWallet).toBe(false);
+    expect(tabA.getStatus().identityId).toBe(ALICE);
   });
 
   it('applies the chain budget on refresh', async () => {
@@ -98,12 +97,22 @@ describe('WalletSessions', () => {
     const grant = commentGrant(ALICE, DISCUSSION);
     port.keys = [chainKeyFor(grant)];
     await sessions.adopt(grant);
+    port.budgets = new Map([[7, 0n]]);
     expect(await sessions.handleWriteFailure(ALICE, 20015)).toBe('allowance-spent');
-    expect(sessions.getStatus().renewRequired).toBe('allowance-spent');
+    expect(sessions.getStatus().health).toBe('renew-required');
     expect(await sessions.handleWriteFailure(ALICE, 40100)).toBeNull();
     port.keys = [{ ...port.keys[0], disabledAt: 1 }];
     expect(await sessions.handleWriteFailure(ALICE, 40208)).toBe('key-disabled');
     expect(sessions.current()).toBeNull();
+  });
+
+  it('does not sign out on a disabled-key code while the chain still shows the key live', async () => {
+    const { sessions, port } = ring();
+    const grant = commentGrant(ALICE, DISCUSSION);
+    port.keys = [chainKeyFor(grant)];
+    await sessions.adopt(grant);
+    expect(await sessions.handleWriteFailure(ALICE, 20006)).toBe('key-disabled');
+    expect(sessions.current(ALICE)).not.toBeNull();
   });
 
   it('lets a sign-out overtake an adoption still storing its keys', async () => {

@@ -232,10 +232,11 @@ describe('withDocumentSigner with a wallet sign-in', () => {
 
   it('marks the ring for renewal when Platform says the allowance is spent', async () => {
     await signInWithWalletKey();
+    port.budgets = new Map([[7, 0n]]);
     await session.withDocumentSigner(handle, COMMENT, async () => ({
       status: 'refused' as const,
       error: { code: 20015, message: 'spent', detail: 'spent' },
     }));
-    expect(ring.getStatus().renewRequired).toBe('allowance-spent');
+    expect(ring.getStatus().health).toBe('renew-required');
   });
 });

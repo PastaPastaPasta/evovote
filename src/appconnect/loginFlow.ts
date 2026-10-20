@@ -165,7 +165,7 @@ export class AppConnectLogin {
   }
 
   /**
-   * Checks the network and the group, then resumes a stored request (a
+   * Checks the network, then resumes a stored request (a
    * reload, or the wallet's return link) or starts a new one. `identityHint`
    * (renewal) accepts only that identity.
    */

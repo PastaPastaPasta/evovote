@@ -36,26 +36,17 @@ import { clearSensitiveBytes } from './protocol/legacy';
  * except as bytes handed straight to the SDK signer.
  */
 
-/** Why writes stopped until the user signs in with the wallet again. */
-export type RenewReason = 'expired' | 'allowance-spent' | 'insufficient-allowance';
-
 export interface WalletStatus {
   /** The identity with a wallet key ring in this tab, or null. */
   identityId: string | null;
   health: AppConnectHealth | null;
   renewSoon: RenewSoonReason | null;
-  /** Set when a write was refused for the allowance or expiry. */
-  renewRequired: RenewReason | null;
-  /** The wallet revoked this browser's keys; the ring was wiped. */
-  signedOutByWallet: boolean;
 }
 
 const EMPTY_STATUS: WalletStatus = {
   identityId: null,
   health: null,
   renewSoon: null,
-  renewRequired: null,
-  signedOutByWallet: false,
 };
 
 const REFRESH_INTERVAL_MS = 60 * 60_000;
@@ -81,8 +72,6 @@ export class WalletSessions {
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private firstRefresh: ReturnType<typeof setTimeout> | null = null;
   private budgetRefresh: ReturnType<typeof setTimeout> | null = null;
-  /** Bumped by every activation and deactivation, so an activation finishing late can tell it was overtaken. */
-  private activations = 0;
   /** Bumped by every sign-out; `signedOutAt` keeps each identity's latest, so an adoption can tell a sign-out overtook it. */
   private lifecycle = 0;
   private readonly signedOutAt = new Map<string, number>();
@@ -128,15 +117,11 @@ export class WalletSessions {
 
   private publish(session: AppConnectSession | null): void {
     if (!session) {
-      this.setStatus({ identityId: null, health: null, renewSoon: null, renewRequired: null });
+      this.setStatus(EMPTY_STATUS);
       return;
     }
     const { health, renewSoon } = appConnectStanding(primaryKey(session, this.config.discussionContractId), this.now());
     this.setStatus({ identityId: session.identityId, health, renewSoon });
-  }
-
-  dismissSignedOut(): void {
-    if (this.status.signedOutByWallet) this.setStatus({ signedOutByWallet: false });
   }
 
   /** The session for `identityId` (or any, without one) if this tab holds it. */
@@ -145,7 +130,8 @@ export class WalletSessions {
     return this.active;
   }
 
-  onSignedOut(listener: ((identityId: string) => void) | null): void {
+  /** Called when the wallet revoked this tab's grant and the ring was wiped (not on a sign-out). */
+  onSignedOut(listener: (identityId: string) => void): void {
     this.signedOutListener = listener;
   }
 
@@ -215,16 +201,13 @@ export class WalletSessions {
   }
 
   private activate(session: AppConnectSession): void {
-    this.activations++;
     this.active = session;
-    this.setStatus({ renewRequired: null, signedOutByWallet: false });
     this.publish(session);
     this.startRefresh();
   }
 
   /** Drops this tab's in-memory session; the stored ring is left alone. */
   private deactivate(): void {
-    this.activations++;
     this.active = null;
     this.stopRefresh();
     this.publish(null);
@@ -321,7 +304,6 @@ export class WalletSessions {
     await this.discard(session);
     // A sign-out overtook the revoke: it already ended this session.
     if (this.signedOutSince(session.identityId, startedAt)) return;
-    this.setStatus({ signedOutByWallet: true });
     this.signedOutListener?.(session.identityId);
   }
 
@@ -335,18 +317,12 @@ export class WalletSessions {
     if (!classification || !session || session.identityId !== identityId) return null;
     switch (classification.action) {
       case 'renew':
-        this.setStatus({
-          renewRequired:
-            classification.failure === 'expired'
-              ? 'expired'
-              : classification.failure === 'allowance-spent'
-                ? 'allowance-spent'
-                : 'insufficient-allowance',
-        });
+        // The re-read shows the spent allowance or the expiry: health turns `renew-required`.
         await this.refresh();
         break;
       case 'logout':
-        await this.signOutRevoked(session);
+        // The code is a hint, not proof: the re-read signs out only if the key really is gone.
+        await this.refresh();
         break;
       case 'invalidate':
       case 'handoff':

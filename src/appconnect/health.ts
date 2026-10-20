@@ -7,6 +7,7 @@ import {
   APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS,
   boundsEqual,
   type AppConnectIdentityKey,
+  type AppConnectKeyBounds,
   type AppConnectSession,
   type AppConnectSessionKey,
 } from './protocol';
@@ -23,6 +24,11 @@ export type AppConnectHealth = 'ok' | 'renew-soon' | 'renew-required';
 
 /** What `renew-soon` is about: the allowance running low, or the time left. */
 export type RenewSoonReason = 'allowance' | 'expiry';
+
+/** Whether two keys' bounds are the same (both unbound, or equal). */
+export function boundsMatch(a: AppConnectKeyBounds | undefined, b: AppConnectKeyBounds | undefined): boolean {
+  return a && b ? boundsEqual(a, b) : a === b;
+}
 
 /** The primary key: the one bound to the discussion contract (binding 0 of EvoVote's request). */
 export function primaryKey(session: AppConnectSession, discussionContractId: string): AppConnectSessionKey | undefined {
@@ -75,8 +81,7 @@ export function reconcileSessionWithChain(
   }
   for (const key of session.authKeys) {
     const chain = byId.get(key.keyId) as AppConnectIdentityKey;
-    const sameBounds = chain.bounds && key.bounds ? boundsEqual(chain.bounds, key.bounds) : chain.bounds === key.bounds;
-    if (!sameBounds || chain.securityLevel !== key.securityLevel) return { revoked: true };
+    if (!boundsMatch(chain.bounds, key.bounds) || chain.securityLevel !== key.securityLevel) return { revoked: true };
   }
   return {
     revoked: false,
