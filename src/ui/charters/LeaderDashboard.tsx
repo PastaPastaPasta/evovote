@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { CHARTER_DECRYPTION } from '../../charters/boundKeys';
 import { durationText } from '../../charters/declaration';
 import { CHARTERS_CONTRACT_ID, type CharterProposal, type JoinRequestMeta } from '../../charters/documents';
@@ -18,29 +18,48 @@ import { dashText } from '../../model/credits';
 import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
 import { freeQuietly } from '../../sdk/free';
-import { shortId } from '../format';
+import { targetName } from '../../kinds/charter';
+import { dateText, firstSentence, shortId } from '../format';
 import { IdentityName } from '../components/IdentityName';
 import { BoundKeySetup } from '../identity/BoundKeySetup';
 import { PaidWrite } from './PaidWrite';
 
 const APPLY_ACK =
-  'I understand: if this team wins, it holds the seat permanently (protocol 14 has no challenges); the contest fund is not refunded, win or lose; a tie goes to the earliest application; and an application Platform refuses still pays its fees.';
+  'I understand: if this team wins, it holds the seat permanently (protocol 14 has no challenges); the 0.5 DASH contest fund is not refunded, win or lose; a tie goes to the team that applied first; and an application Platform refuses still costs its fees.';
 
-/** What the application document says, read back from the built document. */
-function applicationRows(handle: SdkHandle, args: ApplicationArgs): Array<[string, string]> {
+/**
+ * What the application document says, read back from the built document
+ * and shown by name: the contract, the proposal's title and each member.
+ */
+function applicationRows(handle: SdkHandle, args: ApplicationArgs, proposal: CharterProposal): Array<[string, ReactNode]> {
   let doc: ReturnType<typeof buildApplication>;
   try {
     doc = buildApplication(handle.mod, args);
   } catch (e) {
-    return [['application', `could not be built: ${errorMessage(e)}`]];
+    return [['Application', `could not be built: ${errorMessage(e)}`]];
   }
   try {
     const s = documentSummary(doc);
     const members = Array.isArray(s.members) ? (s.members as string[]) : [];
+    const target = String(s.targetContractId);
     return [
-      ['target contract', String(s.targetContractId)],
-      ['proposal', String(s.submittedCharterId)],
-      ['members', members.length > 0 ? members.map((m) => shortId(m, 6)).join(', ') : 'none besides you'],
+      ['Seat', `Moderators of ${targetName(target)}`],
+      ['Proposal', String(s.submittedCharterId) === proposal.id ? firstSentence(proposal.description) : shortId(String(s.submittedCharterId))],
+      [
+        'Members',
+        members.length > 0 ? (
+          <>
+            {members.map((m, i) => (
+              <span key={m}>
+                {i > 0 && ', '}
+                <IdentityName sdk={handle.sdk} id={m} />
+              </span>
+            ))}
+          </>
+        ) : (
+          'None besides you'
+        ),
+      ],
     ];
   } finally {
     freeQuietly(doc);
@@ -49,25 +68,22 @@ function applicationRows(handle: SdkHandle, args: ApplicationArgs): Array<[strin
 
 function timingRows(pre: ApplyPreflight): Array<[string, string]> {
   const rows: Array<[string, string]> = [];
-  if (pre.joinWindowSeconds !== undefined && pre.voteWindowSeconds !== undefined) {
-    rows.push([
-      'windows',
-      `join ${durationText(pre.joinWindowSeconds)}, then vote ${durationText(pre.voteWindowSeconds)} once a second team applies`,
-    ]);
-  }
   const t = pre.status.timing;
   const contenders = pre.status.contest?.tally.contenders.length ?? 0;
   if (contenders === 0) {
     rows.push([
-      'if you apply first',
+      'If you apply first',
       pre.joinWindowSeconds !== undefined
-        ? `the contest opens; with no other applicant you win when the join window closes (${durationText(pre.joinWindowSeconds)})`
-        : 'the contest opens',
+        ? `The race opens. Other teams then have ${durationText(pre.joinWindowSeconds)} to apply; if none does, you win when that window closes.`
+        : 'The race opens.',
     ]);
+    if (pre.voteWindowSeconds !== undefined) {
+      rows.push(['If another team applies', `Masternodes get ${durationText(pre.voteWindowSeconds)} more to vote.`]);
+    }
   } else {
-    rows.push(['contenders now', String(contenders)]);
-    if (t.joinClosesAtMs) rows.push(['join window closes', new Date(t.joinClosesAtMs).toLocaleString()]);
-    if (t.endsAtMs) rows.push(['voting ends', new Date(t.endsAtMs).toLocaleString()]);
+    rows.push(['Teams applied so far', String(contenders)]);
+    if (t.joinClosesAtMs) rows.push(['Applications close', dateText(t.joinClosesAtMs)]);
+    if (t.endsAtMs) rows.push(['Voting ends', dateText(t.endsAtMs)]);
   }
   return rows;
 }
@@ -107,7 +123,7 @@ export function LeaderDashboard({
     }),
     [proposal.targetContractId, proposal.id, session.identityId, members],
   );
-  const appRows = useMemo(() => applicationRows(handle, args), [handle, args]);
+  const appRows = useMemo(() => applicationRows(handle, args, proposal), [handle, args, proposal]);
 
   const readMessages = async () => {
     if (!decryptionHex) return;
@@ -139,15 +155,23 @@ export function LeaderDashboard({
 
   return (
     <div className="wizard">
-      <h3>Join requests ({joiners.length})</h3>
+      <h3>1. Choose your members · {joiners.length} asked to join</h3>
       <BoundKeySetup handle={handle} session={session} spec={CHARTER_DECRYPTION} what="decryption key for join requests" />
       {decryptionHex && joiners.length > 0 && (
         <button className="vote-button ghost" disabled={decrypting} onClick={() => void readMessages()}>
           {decrypting ? 'Decrypting…' : 'Read their messages'}
         </button>
       )}
-      {decryptError && <p className="mono-label error">Could not read the messages: {decryptError}</p>}
-      {joiners.length === 0 && <p className="mono-label">Nobody has asked to join yet. You can still apply alone.</p>}
+      {decryptError && (
+        <div className="page-note error">
+          <p>Could not read the messages.</p>
+          <details className="technical">
+            <summary>Technical detail</summary>
+            <p className="mono">{decryptError}</p>
+          </details>
+        </div>
+      )}
+      {joiners.length === 0 && <p className="meta">Nobody has asked to join yet. You can still apply alone.</p>}
       <ul className="joiner-list">
         {joiners.map((r) => {
           const m = messages[r.memberId];
@@ -162,7 +186,7 @@ export function LeaderDashboard({
                   onChange={() => toggle(r.memberId)}
                 />{' '}
                 <IdentityName sdk={handle.sdk} id={r.memberId} />
-                {r.createdAtMs && <span className="mono-label"> · {new Date(r.createdAtMs).toLocaleDateString()}</span>}
+                {r.createdAtMs && <span className="meta"> · asked {dateText(r.createdAtMs, { time: false })}</span>}
               </label>
               {m?.message !== undefined && <blockquote className="join-message">{m.message}</blockquote>}
               {m?.error && <p className="mono-label error">{m.error}</p>}
@@ -170,25 +194,39 @@ export function LeaderDashboard({
           );
         })}
       </ul>
-      <p className="mono-label">
-        {members.length} of at most {MAX_ELECTED_MEMBERS} members chosen.
+      <p className="meta">
+        {members.length} of at most {MAX_ELECTED_MEMBERS} members chosen. Only people who asked to join can be listed.
       </p>
 
-      <h3>Apply for the seat</h3>
+      <h3>2. Apply for the seat</h3>
+      <p className="fine-print">
+        Applying costs a 0.5 DASH contest fund plus fees. The fund pays for the masternode vote and is not refunded,
+        win or lose. Nothing is signed until you confirm.
+      </p>
       {signing && <p className="page-note error">{signing}</p>}
       {!signing && preflight === null && (
         <button className="vote-button" onClick={() => void prepare()}>
           Check and prepare the application
         </button>
       )}
-      {preflight === 'loading' && <p className="mono-label">Reading the election, your balance and the fund…</p>}
-      {preflight && typeof preflight === 'object' && 'error' in preflight && (
-        <p className="page-note error">
-          Could not prepare the application: {preflight.error}{' '}
-          <button className="link-button" onClick={() => void prepare()}>
-            Retry
-          </button>
+      {preflight === 'loading' && (
+        <p className="meta" role="status">
+          Reading the election, your balance and the fund…
         </p>
+      )}
+      {preflight && typeof preflight === 'object' && 'error' in preflight && (
+        <div className="page-note error">
+          <p>
+            Could not prepare the application.{' '}
+            <button className="link-button" onClick={() => void prepare()}>
+              Try again
+            </button>
+          </p>
+          <details className="technical">
+            <summary>Technical detail</summary>
+            <p className="mono">{preflight.error}</p>
+          </details>
+        </div>
       )}
       {preflight && typeof preflight === 'object' && 'status' in preflight && (
         <PaidWrite
@@ -196,9 +234,11 @@ export function LeaderDashboard({
           identityId={session.identityId}
           title="Apply for the moderation seat"
           priceKey={`${members.join(',')}|${dashText(preflight.cost.total)}`}
-          summary={[...appRows, ...timingRows(preflight), ['tie rule', 'a tie goes to the earliest application']]}
+          summary={[...appRows, ...timingRows(preflight), ['If votes tie', 'The team that applied first wins.']]}
           estimate={async () => preflight.cost}
           blockers={preflight.blockers}
+          balanceChecked
+          permanent="application"
           warnings={[...preflight.warnings, ...splitNotes(proposal.rewardSplit, members.length)]}
           ack={APPLY_ACK}
           confirmLabel={`Sign and apply (${dashText(preflight.cost.total)})`}
@@ -227,11 +267,12 @@ export function LeaderDashboard({
           onDone={(outcome) => {
             if (outcome.status === 'confirmed') onApplied();
           }}
-        >
-          <button className="link-button" onClick={() => void prepare()}>
-            Check again
-          </button>
-        </PaidWrite>
+          secondary={
+            <button className="link-button" onClick={() => void prepare()}>
+              Check again
+            </button>
+          }
+        />
       )}
     </div>
   );

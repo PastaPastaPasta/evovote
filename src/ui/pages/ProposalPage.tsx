@@ -1,5 +1,5 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
-import { splitText, type CharterProposal, type CharterReason, type JoinRequestMeta } from '../../charters/documents';
+import type { CharterProposal, CharterReason, JoinRequestMeta } from '../../charters/documents';
 import { moderatedHref, proposalHref } from '../../charters/pollKey';
 import {
   fetchElectionStatus,
@@ -16,9 +16,11 @@ import { errorMessage } from '../../sdk/errors';
 import { CharterNotices } from '../charters/CharterNotices';
 import { JoinPanel } from '../charters/JoinPanel';
 import { LeaderDashboard } from '../charters/LeaderDashboard';
+import { OPEN_PHASES, proposalStanding, splitSentence, viewerNote } from '../charters/standing';
+import { CopyButton } from '../components/CopyButton';
 import { IdentityName } from '../components/IdentityName';
 import { ReadIssues } from '../components/ReadIssues';
-import { endDate, plural } from '../format';
+import { dateText, firstSentence, shortId } from '../format';
 import { SignInPanel } from '../identity/SignInPanel';
 import { useAsync } from '../useAsync';
 
@@ -77,12 +79,26 @@ export function ProposalPage({ handle, target, charterId }: { handle: SdkHandle;
   );
   if (view.status !== 'ok') {
     return (
-      <div className="contest-page">
-        {back}
+      <div className="contest-page proposal-page">
+        <header className="page-header">
+          {back}
+          <h1 className="page-title">Proposal</h1>
+        </header>
         {view.status === 'loading' ? (
-          <p className="page-note">Reading the proposal…</p>
+          <p className="page-note" role="status">
+            Reading the proposal from Platform…
+          </p>
         ) : (
-          <p className="page-note error">Could not read the proposal: {view.message}</p>
+          <div className="page-note error" role="alert">
+            <p>Could not read this proposal.</p>
+            <details className="technical">
+              <summary>Technical detail</summary>
+              <p className="mono">{view.message}</p>
+            </details>
+            <button className="vote-button ghost" onClick={view.reload}>
+              Try again
+            </button>
+          </div>
         )}
       </div>
     );
@@ -90,106 +106,136 @@ export function ProposalPage({ handle, target, charterId }: { handle: SdkHandle;
 
   const v = view.value;
   const p = v.proposal;
-  if (!p) {
+  if (!p || p.targetContractId !== target) {
     return (
-      <div className="contest-page">
-        {back}
-        <p className="page-note error">There is no proposal with this id on {network}.</p>
-      </div>
-    );
-  }
-  if (p.targetContractId !== target) {
-    return (
-      <div className="contest-page">
-        {back}
+      <div className="contest-page proposal-page">
+        <header className="page-header">
+          {back}
+          <h1 className="page-title">Proposal not found</h1>
+        </header>
         <p className="page-note error">
-          This proposal is for another contract. <a href={proposalHref(p.targetContractId, p.id)}>Open it there →</a>
+          {!p ? (
+            `There is no proposal with this id on ${network}.`
+          ) : (
+            <>
+              This proposal is for another contract. <a href={proposalHref(p.targetContractId, p.id)}>Open it there →</a>
+            </>
+          )}
         </p>
       </div>
     );
   }
 
-  const contender = v.status.contest?.tally.contenders.find((c) => c.identityId === p.leaderId);
   const seated = v.status.team;
+  const standing = proposalStanding(v.status, p);
   const isLeader = session?.identityId === p.leaderId;
+  const myJoin = session ? v.joinRequests.find((r) => r.memberId === session.identityId) : undefined;
+  const note = viewerNote({
+    standing,
+    role: isLeader ? 'leader' : myJoin ? 'joiner' : 'other',
+    onSeatedTeam: !!session && !!seated?.members.includes(session.identityId),
+  });
+  const open = OPEN_PHASES.has(v.status.timing.phase);
+  // The leader reads the join requests in the dashboard; nobody needs them twice.
+  const leaderDashboard = isLeader && standing.kind === 'not-applied' && !seated;
   return (
-    <div className="contest-page">
-      {back}
-      <header className="contest-header">
-        <h1 className="contest-title">
-          <span className="kind-title">
+    <div className="contest-page proposal-page">
+      <header className="page-header">
+        {back}
+        <h1 className="page-title">{firstSentence(p.description)}</h1>
+        <p className="page-byline">
+          <span>
             Proposal by <IdentityName sdk={sdk} id={p.leaderId} />
           </span>
-        </h1>
-        <p className="mono-label poll-meta">
-          charter {p.id}
-          {p.createdAtMs ? ` · filed ${endDate(p.createdAtMs)}` : ''}
+          {p.createdAtMs && <span>Filed {dateText(p.createdAtMs)}</span>}
         </p>
       </header>
       <ReadIssues failures={v.failures} caps={v.caps} />
-      {seated?.submittedCharterId === p.id && <p className="page-note ok">This team holds the seat.</p>}
-      {seated && seated.submittedCharterId !== p.id && (
-        <p className="page-note">Another team holds this contract&apos;s seat, permanently on protocol 14.</p>
-      )}
-      {contender && !seated && (
-        <p className="page-note">
-          This team has applied for the seat: {plural(contender.votes, 'vote')} so far.
-        </p>
-      )}
+      <p className={`status-banner tone-${note.tone}`} role="status">
+        {note.text}
+      </p>
 
-      <section className="charter-card">
-        <h2 className="section-title">Charter</h2>
+      <section className="hub-section">
+        <h2 className="section-title">The charter</h2>
         <p className="charter-description">{p.description}</p>
         <dl className="kv-table">
           <div>
-            <dt className="mono-label">moderators&apos; share</dt>
-            <dd>{p.moderatorsShare}% of each declared moderators fee</dd>
+            <dt>Share of moderation fees</dt>
+            <dd>
+              {p.moderatorsShare}% of each moderation fee the contract declares
+              {p.moderatorsShare === 0 && ' (the team moderates for free)'}
+            </dd>
           </div>
           <div>
-            <dt className="mono-label">reward split</dt>
-            <dd>{splitText(p.rewardSplit)}</dd>
+            <dt>How payouts are split</dt>
+            <dd>{splitSentence(p.rewardSplit)}</dd>
           </div>
         </dl>
-        <h3>Reasons the team may act on</h3>
-        {p.reasonIds.length === 0 && <p className="mono-label">None: this team could take no ban, suspension, warning or deletion.</p>}
+      </section>
+
+      <section className="hub-section">
+        <h2 className="section-title">Reasons the team may act on · {p.reasonIds.length}</h2>
+        <p className="meta">Every ban, suspension, warning or deletion the team makes must cite one of these.</p>
+        {p.reasonIds.length === 0 && (
+          <p>None: this team could not ban, suspend, warn or delete anything.</p>
+        )}
         <ul className="reason-list">
           {v.reasons.map((r) => (
             <li key={r.id}>
-              <strong className="mono">{r.code}</strong> {r.label}
-              {r.description && <span className="fine-print"> — {r.description}</span>}
+              <span className="reason-code mono">{r.code}</span>
+              <span>
+                <strong>{r.label}</strong>
+                {r.description && <span className="meta"> — {r.description}</span>}
+              </span>
             </li>
           ))}
           {v.missingReasons.map((id) => (
-            <li key={id} className="mono-label error">
-              reason {id} not found
-            </li>
-          ))}
-        </ul>
-        <CharterNotices />
-      </section>
-
-      <section className="charter-card">
-        <h2 className="section-title">People who asked to join · {v.joinRequests.length}</h2>
-        <p className="fine-print">Only the leader can read their messages.</p>
-        <ul className="joiner-list">
-          {v.joinRequests.map((r) => (
-            <li key={r.id}>
-              <IdentityName sdk={sdk} id={r.memberId} />
-              {r.createdAtMs && <span className="mono-label"> · {endDate(r.createdAtMs)}</span>}
+            <li key={id} className="meta error">
+              A cited reason could not be found ({shortId(id)}).
             </li>
           ))}
         </ul>
       </section>
 
-      {!seated && (
-        <section className="charter-card">
+      {!leaderDashboard && (
+        <section className="hub-section">
+          <h2 className="section-title">People who asked to join · {v.joinRequests.length}</h2>
+          <p className="meta">
+            {standing.kind === 'not-applied'
+              ? 'Their messages are encrypted: only the leader can read them. The leader picks members from this list when applying.'
+              : 'Their messages are encrypted: only the leader can read them.'}
+          </p>
+          {v.joinRequests.length === 0 ? (
+            <p>Nobody has asked to join.</p>
+          ) : (
+            <ul className="joiner-list">
+              {v.joinRequests.map((r) => (
+                <li key={r.id}>
+                  <IdentityName sdk={sdk} id={r.memberId} />
+                  {seated?.submittedCharterId === p.id && seated.members.includes(r.memberId) && (
+                    <span className="chip tone-won">on the team</span>
+                  )}
+                  {r.createdAtMs && <span className="meta"> · asked {dateText(r.createdAtMs, { time: false })}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {!seated && open && (!session || leaderDashboard || (!isLeader && !myJoin)) && (
+        <section className="hub-section take-part">
           {!session ? (
             <>
               <h2 className="section-title">Take part</h2>
-              <p>Sign in to ask to join this team, or, as its leader, to apply for the seat.</p>
+              <p>
+                {standing.kind === 'not-applied'
+                  ? 'Sign in with your Dash identity to ask to join this team, or, if you lead it, to apply for the seat.'
+                  : 'Sign in with your Dash identity to see where you stand.'}
+              </p>
               <SignInPanel network={network} />
             </>
-          ) : isLeader ? (
+          ) : leaderDashboard ? (
             <>
               <h2 className="section-title">Your team</h2>
               <LeaderDashboard
@@ -200,14 +246,25 @@ export function ProposalPage({ handle, target, charterId }: { handle: SdkHandle;
                 onApplied={view.reload}
               />
             </>
-          ) : (
+          ) : standing.kind === 'not-applied' ? (
             <>
               <h2 className="section-title">Ask to join this team</h2>
               <JoinPanel handle={handle} session={session} proposal={p} joinRequests={v.joinRequests} onJoined={view.reload} />
             </>
+          ) : (
+            <p className="meta">
+              This team has already applied with the members its leader chose, so a new request to join would not
+              count.
+            </p>
           )}
         </section>
       )}
+
+      {open && <CharterNotices />}
+
+      <p className="meta page-foot">
+        Proposal <span className="mono" title={p.id}>{shortId(p.id)}</span> <CopyButton text={p.id} label="Copy proposal id" />
+      </p>
     </div>
   );
 }

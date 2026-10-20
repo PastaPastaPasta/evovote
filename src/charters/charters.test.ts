@@ -257,13 +257,13 @@ describe('election phase', () => {
     expect(canApply({ phase: 'no-election' }, NOW)).toEqual({ ok: true });
     expect(canApply({ phase: 'join-window', joinClosesAtMs: NOW + LATE_APPLY_MARGIN_MS + 1 }, NOW)).toEqual({ ok: true });
     const late = canApply({ phase: 'join-window', joinClosesAtMs: NOW + 60_000 }, NOW);
-    expect(late.ok && late.warning).toMatch(/40111/);
+    expect(late.ok && late.warning).toMatch(/refuses/);
   });
 
   it('should refuse when an open contest\'s timing is unknown', () => {
     const t = electionTiming({ ...base, contest: { contenders: 1, hasWinner: false } }, NOW);
     expect(t.phase).toBe('voting');
-    expect(canApply(t, NOW)).toMatchObject({ ok: false, reason: expect.stringMatching(/unknown/) });
+    expect(canApply(t, NOW)).toMatchObject({ ok: false, reason: expect.stringMatching(/not known/) });
   });
 
   it('should time the contest from the first application when the end-date index lacks it', () => {
@@ -279,7 +279,7 @@ describe('election phase', () => {
 
   it('should warn right after the election opens (block time vs this clock)', () => {
     const check = canApply({ phase: 'no-election', opensAtMs: NOW - 60_000 }, NOW);
-    expect(check.ok && check.warning).toMatch(/40135/);
+    expect(check.ok && check.warning).toMatch(/block time/);
     expect(canApply({ phase: 'no-election', opensAtMs: NOW - LATE_APPLY_MARGIN_MS - 1 }, NOW)).toEqual({ ok: true });
   });
 });
@@ -299,7 +299,7 @@ describe('charter validation', () => {
   it('should require the reward split to sum to 100 in whole percents', () => {
     expect(validateRewardSplit({ leader: 40, equal: 30, actions: 30 })).toEqual([]);
     expect(validateRewardSplit({ leader: 100, equal: 0, actions: 0 })).toEqual([]);
-    expect(validateRewardSplit({ leader: 40, equal: 30, actions: 31 })[0]).toMatch(/101.*10422/);
+    expect(validateRewardSplit({ leader: 40, equal: 30, actions: 31 })[0]).toMatch(/add up to 101/);
     expect(validateRewardSplit({ leader: 40.5, equal: 29.5, actions: 30 })[0]).toMatch(/whole/);
     expect(validateRewardSplit({ leader: -10, equal: 60, actions: 50 })[0]).toMatch(/whole/);
     expect(validateRewardSplit({ leader: Number.NaN, equal: 50, actions: 50 })).toHaveLength(1);
@@ -324,13 +324,13 @@ describe('charter validation', () => {
     expect(validateMembers({ leaderId: LEADER, members: fifteen, joiners })).toEqual([]);
     expect(validateMembers({ leaderId: LEADER, members: [...joiners].slice(0, 16), joiners })[0]).toMatch(/15/);
     expect(validateMembers({ leaderId: LEADER, members: [LEADER], joiners: new Set([LEADER]) })[0]).toMatch(/leader/);
-    expect(validateMembers({ leaderId: LEADER, members: [MEMBER], joiners })[0]).toMatch(/40120/);
+    expect(validateMembers({ leaderId: LEADER, members: [MEMBER], joiners })[0]).toMatch(/not asked to join/);
     expect(validateMembers({ leaderId: LEADER, members: [id32(1), id32(1)], joiners })[0]).toMatch(/twice/);
     expect(validateMembers({ leaderId: LEADER, members: [], joiners })).toEqual([]);
   });
 
   it('should note where the equal share goes with no members', () => {
-    expect(splitNotes({ leader: 40, equal: 30, actions: 30 }, 0)[0]).toMatch(/30% equal share/);
+    expect(splitNotes({ leader: 40, equal: 30, actions: 30 }, 0)[0]).toMatch(/30% shared equally/);
     expect(splitNotes({ leader: 40, equal: 30, actions: 30 }, 2)).toEqual([]);
     expect(splitNotes({ leader: 100, equal: 0, actions: 0 }, 0)).toEqual([]);
     expect(splitNotes(undefined, 0)).toEqual([]);

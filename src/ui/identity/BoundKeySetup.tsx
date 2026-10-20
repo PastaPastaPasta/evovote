@@ -14,6 +14,11 @@ import type { SdkHandle } from '../../sdk/connection';
 import { shortId } from '../format';
 import { PaidWrite } from '../charters/PaidWrite';
 
+/** The backup file's name, also shown when the key is asked for again. */
+function backupFileName(spec: BoundKeySpec, identityId: string): string {
+  return `evovote-${spec.purpose.toLowerCase()}-key-${identityId.slice(0, 8)}.txt`;
+}
+
 function downloadBackup(key: GeneratedKey, spec: BoundKeySpec, identityId: string): void {
   const text = [
     `EvoVote ${spec.purpose.toLowerCase()} key backup`,
@@ -26,7 +31,7 @@ function downloadBackup(key: GeneratedKey, spec: BoundKeySpec, identityId: strin
   const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = `evovote-${spec.purpose.toLowerCase()}-key-${identityId.slice(0, 8)}.txt`;
+  a.download = backupFileName(spec, identityId);
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -59,6 +64,7 @@ export function BoundKeySetup({
   const [generated, setGenerated] = useState<GeneratedKey | null>(null);
   const [backedUp, setBackedUp] = useState(false);
   const [masterWif, setMasterWif] = useState('');
+  const [revealed, setRevealed] = useState(false);
 
   if (onChain && heldPrivateKeyFor(onChain)) {
     return (
@@ -81,7 +87,8 @@ export function BoundKeySetup({
     return (
       <div className="bound-key">
         <p>
-          Your identity has a {what} (key #{onChain.keyId}). Paste its private key to use it in this session.
+          Your identity has a {what} (key #{onChain.keyId}). Paste its private key to use it in this session. If
+          EvoVote created it, it is in the backup file <span className="mono">{backupFileName(spec, session.identityId)}</span>.
         </p>
         <div className="key-field">
           <input
@@ -97,7 +104,7 @@ export function BoundKeySetup({
             Load key
           </button>
         </div>
-        {importError && <p className="mono-label error">{importError}</p>}
+        {importError && <p className="meta error">{importError}</p>}
       </div>
     );
   }
@@ -107,7 +114,8 @@ export function BoundKeySetup({
       <div className="bound-key">
         <p>
           Your identity has no {what} yet. EvoVote can create one in your browser and add it to your identity.
-          Adding a key is an identity update, signed with your master key.
+          Signing in never needs your master key, but adding a key does: you paste it once to sign this one update,
+          and it is dropped right after.
         </p>
         <button
           className="vote-button ghost"
@@ -140,8 +148,13 @@ export function BoundKeySetup({
             : 'you cannot read your own join request or send a resignation later'}
           , and nobody can recover it.
         </p>
-        <p className="mono key-wif">{generated.wif}</p>
+        <p className="mono key-wif" aria-label={revealed ? 'Private key' : 'Private key, hidden'}>
+          {revealed ? generated.wif : '•'.repeat(24)}
+        </p>
         <div className="modal-actions">
+          <button className="vote-button ghost" onClick={() => setRevealed((r) => !r)} aria-pressed={revealed}>
+            {revealed ? 'Hide' : 'Reveal'}
+          </button>
           <button className="vote-button ghost" onClick={() => void navigator.clipboard?.writeText(generated.wif)}>
             Copy
           </button>
@@ -169,10 +182,9 @@ export function BoundKeySetup({
           title={`Add the ${what} to your identity`}
           priceKey={generated.publicKeyHex}
           summary={[
-            ['identity', <span className="mono">{shortId(session.identityId, 8)}</span>],
-            ['new key', `${spec.purpose} · MEDIUM · ECDSA_SECP256K1`],
-            ['bound to', `${shortId(spec.contractId, 6)} / ${spec.documentTypeName}`],
-            ['public key', <span className="mono">{shortId(generated.publicKeyHex, 10)}</span>],
+            ['Identity', session.names[0] ?? <span className="mono">{shortId(session.identityId)}</span>],
+            ['New key', `A ${what}, usable only with the moderation charters contract`],
+            ['Public key', <span className="mono">{shortId(generated.publicKeyHex)}</span>],
           ]}
           estimate={estimate}
           blockers={masterWif.trim() ? [] : ['Paste your master key to sign the update.']}
@@ -185,7 +197,8 @@ export function BoundKeySetup({
           }}
         >
           <label className="field">
-            <span className="mono-label">Master key (WIF): used for this update only, then dropped</span>
+            <span className="field-label">Your identity&apos;s master key (WIF)</span>
+            <span className="field-hint">Used to sign this one update, then dropped. It is never stored or sent anywhere.</span>
             <input
               type="password"
               autoComplete="off"

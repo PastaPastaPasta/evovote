@@ -12,10 +12,17 @@ function OutcomeNote<T>({ outcome, done }: { outcome: WriteOutcome<T>; done: str
   if (outcome.status === 'refused') {
     return (
       <div className="page-note error">
-        <p>
-          Platform refused it{outcome.error.code ? ` (code ${outcome.error.code})` : ''}: {outcome.error.message}
-        </p>
-        {outcome.error.detail !== outcome.error.message && <p className="mono-label">{outcome.error.detail}</p>}
+        <p>Platform refused it: {outcome.error.message}</p>
+        {(outcome.error.code || outcome.error.detail !== outcome.error.message) && (
+          <details className="technical">
+            <summary>Technical detail</summary>
+            <p className="mono">
+              {outcome.error.code ? `code ${outcome.error.code}` : ''}
+              {outcome.error.code && outcome.error.detail !== outcome.error.message ? ' · ' : ''}
+              {outcome.error.detail !== outcome.error.message ? outcome.error.detail : ''}
+            </p>
+          </details>
+        )}
       </div>
     );
   }
@@ -33,7 +40,12 @@ function OutcomeNote<T>({ outcome, done }: { outcome: WriteOutcome<T>; done: str
         No answer from Platform, and it could not be found by reading back. It may still land: wait a minute
         and reload this page before trying again, or you may pay twice.
       </p>
-      {outcome.error && <p className="mono-label">{outcome.error.detail}</p>}
+      {outcome.error && (
+        <details className="technical">
+          <summary>Technical detail</summary>
+          <p className="mono">{outcome.error.detail}</p>
+        </details>
+      )}
     </div>
   );
 }
@@ -53,11 +65,14 @@ export function PaidWrite<T>({
   blockers = [],
   warnings = [],
   ack,
+  permanent,
+  balanceChecked = false,
   confirmLabel,
   doneText,
   run,
   onDone,
   children,
+  secondary,
 }: {
   handle: SdkHandle;
   identityId: string;
@@ -70,11 +85,18 @@ export function PaidWrite<T>({
   warnings?: string[];
   /** A statement the user must tick before the button enables. */
   ack?: string;
+  /** What is filed ("charter"), for the line saying it can never be edited or deleted. */
+  permanent?: string;
+  /** True when `blockers` already include the balance check (no second message). */
+  balanceChecked?: boolean;
   confirmLabel: string;
   doneText: string;
   run: () => Promise<WriteOutcome<T>>;
   onDone?: (outcome: WriteOutcome<T>) => void;
+  /** Extra inputs shown above the confirm step (a key field). */
   children?: ReactNode;
+  /** A secondary action next to the confirm button ("← Edit", "Check again"). */
+  secondary?: ReactNode;
 }) {
   const priced = useAsync(
     async () => {
@@ -89,11 +111,12 @@ export function PaidWrite<T>({
   const [error, setError] = useState<string | null>(null);
 
   const allBlockers = [...blockers];
-  if (priced.status === 'ok' && priced.value.balance < priced.value.cost.total) {
+  if (!balanceChecked && priced.status === 'ok' && priced.value.balance < priced.value.cost.total) {
     allBlockers.push(
       `Your balance (${dashText(priced.value.balance)}) does not cover the estimated ${dashText(priced.value.cost.total)}.`,
     );
   }
+  const hideConfirm = !!ack && allBlockers.length > 0;
   const ready = priced.status === 'ok' && allBlockers.length === 0 && (!ack || acked) && !busy && !outcome;
 
   const confirm = async () => {
@@ -117,7 +140,7 @@ export function PaidWrite<T>({
       <dl className="kv-table">
         {summary.map(([k, v]) => (
           <div key={k}>
-            <dt className="mono-label">{k}</dt>
+            <dt>{k}</dt>
             <dd>{v}</dd>
           </div>
         ))}
@@ -125,34 +148,44 @@ export function PaidWrite<T>({
           <>
             {priced.value.cost.contestFund > 0n && (
               <div>
-                <dt className="mono-label">contest fund</dt>
-                <dd>{dashText(priced.value.cost.contestFund)} (pays the masternode votes; not refunded)</dd>
+                <dt>Contest fund</dt>
+                <dd>{dashText(priced.value.cost.contestFund)}: pays for the masternode vote, not refunded</dd>
               </div>
             )}
             <div>
-              <dt className="mono-label">fees (estimate)</dt>
+              <dt>Fees (estimate)</dt>
               <dd>{dashText(priced.value.cost.fees)}</dd>
             </div>
             <div>
-              <dt className="mono-label">total</dt>
+              <dt>Total</dt>
               <dd>
                 <strong>{dashText(priced.value.cost.total)}</strong>
               </dd>
             </div>
             <div>
-              <dt className="mono-label">your balance</dt>
+              <dt>Your balance</dt>
               <dd>{dashText(priced.value.balance)}</dd>
             </div>
           </>
         )}
       </dl>
-      {priced.status === 'loading' && <p className="mono-label">Reading the price and your balance…</p>}
+      {priced.status === 'loading' && (
+        <p className="meta" role="status">
+          Reading the price and your balance…
+        </p>
+      )}
       {priced.status === 'error' && (
-        <p className="mono-label error">
-          Could not read the price or your balance: {priced.message}.{' '}
+        <p className="meta error">
+          Could not read the price or your balance.{' '}
           <button className="link-button" onClick={priced.reload}>
-            Retry
+            Try again
           </button>
+        </p>
+      )}
+      {permanent && !outcome && (
+        <p className="fine-print permanence">
+          <strong>This is permanent.</strong> Once filed, this {permanent} cannot be edited or deleted, by you or anyone
+          else.
         </p>
       )}
       {children}
@@ -169,16 +202,20 @@ export function PaidWrite<T>({
             {b}
           </p>
         ))}
-      {ack && !outcome && (
+      {/* A hard confirmation shows nothing to tick or press while something blocks it. */}
+      {ack && !outcome && !hideConfirm && (
         <label className="ack">
           <input type="checkbox" checked={acked} onChange={(e) => setAcked(e.target.checked)} /> {ack}
         </label>
       )}
-      {!outcome && (
-        <button className="vote-button" disabled={!ready} onClick={() => void confirm()}>
-          {busy ? 'Signing and waiting for Platform…' : confirmLabel}
-        </button>
-      )}
+      <div className="paid-actions">
+        {!outcome && !hideConfirm && (
+          <button className="vote-button" disabled={!ready} onClick={() => void confirm()}>
+            {busy ? 'Signing and waiting for Platform…' : confirmLabel}
+          </button>
+        )}
+        {secondary}
+      </div>
       {error && <p className="page-note error">{error}</p>}
       {outcome && <OutcomeNote outcome={outcome} done={doneText} />}
     </section>
