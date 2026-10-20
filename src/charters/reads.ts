@@ -392,3 +392,52 @@ export async function fetchElectionStatus(
     failures,
   };
 }
+
+/**
+ * The proposal a leader stood on in a target's election, from their filed
+ * proposals: the latest one for that target filed before `decidedAtMs` (a
+ * decided contest no longer carries the application that named it).
+ * `candidates` counts the proposals that qualified: with more than one, the
+ * pick is a best guess and the page says so.
+ */
+export function pickLeaderProposal(
+  proposals: readonly CharterProposal[],
+  targetContractId: string,
+  decidedAtMs: number,
+): { proposal?: CharterProposal; candidates: number } {
+  const forTarget = proposals.filter(
+    (p) => p.targetContractId === targetContractId && p.createdAtMs !== undefined && p.createdAtMs <= decidedAtMs,
+  );
+  const proposal = forTarget.reduce<CharterProposal | undefined>(
+    (best, p) => (!best || (p.createdAtMs ?? 0) >= (best.createdAtMs ?? 0) ? p : best),
+    undefined,
+  );
+  return { proposal, candidates: forTarget.length };
+}
+
+/**
+ * A leader's proposal for one target (see `pickLeaderProposal`). Throws when
+ * the read fails or is capped (the right one could be past the cap).
+ */
+export async function fetchLeaderProposal(
+  sdk: EvoSDK,
+  leaderId: string,
+  targetContractId: string,
+  decidedAtMs: number,
+): Promise<{ proposal?: CharterProposal; candidates: number }> {
+  const { items, capped } = await collectDocs(
+    sdk,
+    (cursor) =>
+      sdk.documents.query({
+        dataContractId: CHARTERS_CONTRACT_ID,
+        documentTypeName: 'submittedCharter',
+        where: [['$ownerId', '==', leaderId]],
+        orderBy: [['$ownerId', 'asc']],
+        ...cursor,
+      }),
+    toProposal,
+    MAX_ITEMS,
+  );
+  if (capped) throw new Error(`more than ${MAX_ITEMS} proposals by this leader; the right one may be past the cap`);
+  return pickLeaderProposal(items, targetContractId, decidedAtMs);
+}
