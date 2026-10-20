@@ -50,6 +50,33 @@ describe('WalletSessions', () => {
     expect(await sessions.connectionId()).toBe(connectionId);
   });
 
+  it('says when the stored keys could not be deleted on sign-out', async () => {
+    const backend = memoryBackend();
+    const { sessions } = ring(backend);
+    await sessions.adopt(commentGrant(ALICE, DISCUSSION));
+    backend.deleteIf = async () => {
+      throw new Error('IndexedDB is unavailable');
+    };
+    expect(await sessions.logout(ALICE)).toBe(false);
+    // This tab is signed out all the same.
+    expect(sessions.current()).toBeNull();
+  });
+
+  it('tells a tab whose stored keys are gone that it was signed out elsewhere, not revoked', async () => {
+    const backend = memoryBackend();
+    const port = fakePort();
+    const tabA = new WalletSessions({ config, port, backend, timers: false });
+    const tabB = new WalletSessions({ config, port, backend, timers: false });
+    const session = await tabA.adopt(commentGrant(ALICE, DISCUSSION));
+    await tabB.restore();
+    expect(await tabA.logout(ALICE)).toBe(true);
+    const signedOut = vi.fn();
+    tabB.onSignedOut(signedOut);
+    await tabB.signOutRevoked(tabB.current(ALICE) ?? session, 'missing');
+    expect(signedOut).toHaveBeenCalledWith(ALICE, 'missing');
+    expect(tabB.current()).toBeNull();
+  });
+
   it('signs out when the wallet revoked the key, and says so', async () => {
     const { sessions, port } = ring();
     const grant = commentGrant(ALICE, DISCUSSION);
@@ -60,7 +87,7 @@ describe('WalletSessions', () => {
     port.keys = [{ ...port.keys[0], disabledAt: 1 }];
     await sessions.refresh();
     expect(sessions.current()).toBeNull();
-    expect(signedOut).toHaveBeenCalledWith(ALICE);
+    expect(signedOut).toHaveBeenCalledWith(ALICE, 'revoked');
     expect(await sessions.keyStore().load('testnet')).toBeNull();
   });
 

@@ -41,7 +41,8 @@ export function AboutPage() {
             <dd>
               For writing: commenting on a contest, and proposing, joining or applying for a moderation team. Each
               write is a small fee paid from your identity&apos;s balance (applying for a seat also takes a 0.5 DASH
-              contest fund). Use <strong>Sign in</strong> in the header.
+              contest fund). Use <strong>Sign in</strong> in the header: approve EvoVote in Dash Wallet, or paste a
+              private key.
             </dd>
           </div>
           <div>
@@ -53,8 +54,10 @@ export function AboutPage() {
           </div>
         </dl>
         <p>
-          Either key stays in this tab&apos;s memory: it is never saved or sent anywhere, and it is gone when you
-          close the tab. Everything is signed in your browser and sent straight to Platform. The voting key is{' '}
+          A pasted key, and a masternode voting key, stay in this tab&apos;s memory: never saved or sent anywhere,
+          and gone when you close the tab. Signing in with Dash Wallet adds a key that can only post comments; this
+          browser keeps it, encrypted, so you stay signed in until you sign out or the key expires or is revoked. Everything is signed in your
+          browser and sent straight to Platform. The voting key is{' '}
           <em>only</em> the one for the <code>votingAddress</code> shown by <code>protx info</code>; never paste a
           masternode&apos;s owner, operator or collateral key anywhere.
         </p>

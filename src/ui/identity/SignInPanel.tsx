@@ -1,5 +1,12 @@
 import { walletSessions } from '../../appconnect/runtime';
-import { dismissSignOutNotice, useSessionRestoring, useSignOutNotice } from '../../identity/session';
+import { useState } from 'react';
+import {
+  dismissSignOutNotice,
+  retryForgetWallet,
+  useSessionRestoring,
+  useSignOutNotice,
+  type SignOutNotice,
+} from '../../identity/session';
 import type { Network } from '../../sdk/network';
 import { KeySignIn } from './KeySignIn';
 import { returnAfterSignIn } from './returnTo';
@@ -8,14 +15,40 @@ import { WALLET_GRANT_TEXT, WalletSignIn } from './WalletSignIn';
 const WALLET_REQUIREMENT =
   'Needs a Dash Wallet build with App Connect: today that is the DashPay iOS test build. It covers comments; filing a moderation charter also needs a private key.';
 
-function SignOutNotice() {
+/** What the last sign-out should explain. Pure; exported for tests. */
+export function signOutNoticeText(notice: Exclude<SignOutNotice, null>): string {
+  switch (notice) {
+    case 'wallet-revoked':
+      return 'You are signed out: Dash Wallet removed the key it gave this browser.';
+    case 'wallet-signed-out-elsewhere':
+      return "You are signed out here because another EvoVote tab signed out or signed in as someone else (or this browser's saved sign-in was cleared).";
+    case 'wallet-forget-failed':
+      return "You are signed out, but this browser could not delete Dash Wallet's key from its storage, so reloading the page may sign you back in. Try again, or revoke the key in Dash Wallet to be sure.";
+    case 'wallet-signed-out':
+      return 'Signed out. The key Dash Wallet added stays on your identity until you revoke it in Dash Wallet; signing in again from this browser replaces it.';
+  }
+}
+
+function SignedOutNote() {
   const notice = useSignOutNotice();
+  const [retrying, setRetrying] = useState(false);
   if (!notice) return null;
+  const failed = notice === 'wallet-forget-failed';
   return (
-    <div className="page-note ok signin-notice" role="status">
-      {notice === 'wallet-revoked'
-        ? 'Dash Wallet revoked the key it gave this browser, so you are signed out here.'
-        : 'Signed out. The key Dash Wallet added stays on your identity until you revoke it in Dash Wallet; signing in again from this browser replaces it.'}{' '}
+    <div className={`page-note ${failed ? 'warn' : 'ok'} signin-notice`} role={failed ? 'alert' : 'status'}>
+      {signOutNoticeText(notice)}{' '}
+      {failed && (
+        <button
+          className="link-button"
+          disabled={retrying}
+          onClick={() => {
+            setRetrying(true);
+            void retryForgetWallet().finally(() => setRetrying(false));
+          }}
+        >
+          {retrying ? 'Trying again…' : 'Try again'}
+        </button>
+      )}{' '}
       <button className="link-button" onClick={dismissSignOutNotice}>
         Dismiss
       </button>
@@ -59,7 +92,7 @@ export function SignInPanel({ network, mode = 'embedded' }: { network: Network; 
 
   return (
     <div className="signin-options">
-      <SignOutNotice />
+      <SignedOutNote />
       {walletAvailable && (
         <section className="signin-card wallet-card" aria-labelledby="wallet-signin-title">
           <h2 id="wallet-signin-title">Sign in with Dash Wallet</h2>

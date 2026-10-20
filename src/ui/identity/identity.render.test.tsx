@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { SignInPrompt } from '../discussion/SignInPrompt';
-import { SignInPanel } from './SignInPanel';
+import { SignInPanel, signOutNoticeText } from './SignInPanel';
 import { SigningProblemNote } from './SigningProblemNote';
 
 vi.stubEnv('VITE_DISCUSSION_TESTNET_CONTRACT_ID', '2iaUXM8bZb6paYW1mRWCEUMe8EU1tp4Tbg456PXPN3qt');
@@ -28,6 +28,13 @@ describe('sign-in rendering', () => {
     expect(html).toContain('HIGH or CRITICAL authentication key');
     expect(html).toContain('Never your master key here.');
     expect(html).not.toContain('master key is never asked');
+  });
+
+  it('tells a sign-out in another tab apart from a revoke, and a failed key delete from a clean sign-out', () => {
+    expect(signOutNoticeText('wallet-signed-out-elsewhere')).toContain('another EvoVote tab');
+    expect(signOutNoticeText('wallet-signed-out-elsewhere')).not.toContain('removed');
+    expect(signOutNoticeText('wallet-revoked')).toContain('Dash Wallet removed the key');
+    expect(signOutNoticeText('wallet-forget-failed')).toContain('could not delete');
   });
 
   it('points a signed-out reader at sign-in from the discussion', () => {

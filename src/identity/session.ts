@@ -100,14 +100,21 @@ export class SigningUnavailableError extends Error {
 }
 
 export const SIGNED_OUT_MESSAGE = 'Sign in first.';
+export const SIGNED_OUT_ELSEWHERE_MESSAGE =
+  "You were signed out here: another EvoVote tab signed out or signed in as someone else, or this browser's saved sign-in was cleared. Sign in again.";
+export const RENEWED_ELSEWHERE_MESSAGE = 'Your Dash Wallet sign-in was renewed in another tab. Try again.';
 export const RENEW_MESSAGE =
   'Your Dash Wallet sign-in for EvoVote has expired or used up its allowance. Sign in with Dash Wallet again to renew it.';
 export const WALLET_CHARTERS_MESSAGE =
   "Dash Wallet can't sign moderation-charter documents yet. Add a HIGH authentication key for this step.";
 const WALLET_OTHER_MESSAGE = "Dash Wallet's key for EvoVote can't sign this. Add a HIGH authentication key for this step.";
 
-/** What sign-out leaves to say on `#/me`. */
-export type SignOutNotice = 'wallet-signed-out' | 'wallet-revoked' | null;
+/**
+ * What a sign-out leaves to say on `#/me`: signed out here, the wallet
+ * revoked the key, signed out in another tab (the stored keys were gone), or
+ * signed out but this browser could not delete the stored keys.
+ */
+export type SignOutNotice = 'wallet-signed-out' | 'wallet-revoked' | 'wallet-signed-out-elsewhere' | 'wallet-forget-failed' | null;
 
 type SignInResult =
   | { ok: true }
@@ -123,6 +130,8 @@ const heldKeys = new Map<string, string>();
 /** True while a stored wallet sign-in is being restored on page load. */
 let restoring = false;
 let signOutNotice: SignOutNotice = null;
+/** The wallet sign-in whose stored keys a sign-out could not delete, for "Try again". */
+let unforgotten: { network: Network; identityId: string } | null = null;
 const listeners = new Set<() => void>();
 
 /** Drop every private key this module holds (the wallet's ring is not here). */
@@ -154,6 +163,10 @@ export function useIdentitySession(): IdentitySession | null {
 /** True while a wallet sign-in from an earlier visit is being restored. */
 export function useSessionRestoring(): boolean {
   return useSyncExternalStore(subscribe, () => restoring, () => restoring);
+}
+
+export function getSignOutNotice(): SignOutNotice {
+  return signOutNotice;
 }
 
 /** What the last sign-out should explain (wallet keys stay on the identity). */
@@ -275,6 +288,8 @@ export async function signIn(network: Network, wif: string, chosenId?: string): 
     const ring = walletSessions(network);
     const stored = ring?.current();
     if (stored) await ring?.logout(stored.identityId);
+    // An earlier sign-out left wallet keys stored: delete them, or the next load restores that sign-in.
+    if (unforgotten?.network === network && ring && (await ring.logout(unforgotten.identityId))) unforgotten = null;
     dropHeldKeys(null);
     pastedWif = trimmed;
     publish({ network, identityId, ...loaded, names: await namesOf(handle, identityId), via: 'key', pastedKey: key });
@@ -337,9 +352,9 @@ const watchedRings = new WeakSet<WalletSessions>();
 function watchRing(ring: WalletSessions): void {
   if (watchedRings.has(ring)) return;
   watchedRings.add(ring);
-  ring.onSignedOut((identityId) => {
+  ring.onSignedOut((identityId, reason) => {
     if (session?.identityId !== identityId || session.via !== 'wallet') return;
-    dropHeldKeys('wallet-revoked');
+    dropHeldKeys(reason === 'missing' ? 'wallet-signed-out-elsewhere' : 'wallet-revoked');
     publish(null);
   });
   ring.subscribe(() => {
@@ -401,6 +416,8 @@ export async function signInWithWallet(network: Network, grant: AppConnectGrant)
     throw new Error('Wallet sign-in is not set up on this site.');
   }
   watchRing(ring);
+  // A new sign-in supersedes an earlier sign-out's failed delete ("Try again" must not sign it out).
+  unforgotten = null;
   const adopted = await ring.adopt(grant);
   // A failed read leaves the keys stored and active: `resumeWalletSession` (or a reload) finishes it.
   await publishWithRetries(network, ring, adopted.identityId);
@@ -458,7 +475,30 @@ export async function signOut(): Promise<void> {
   const current = session;
   dropHeldKeys(current?.via === 'wallet' ? 'wallet-signed-out' : null);
   publish(null);
-  if (current?.via === 'wallet') await walletSessions(current.network)?.logout(current.identityId);
+  if (current?.via === 'wallet') await forgetWallet({ network: current.network, identityId: current.identityId });
+}
+
+/** Delete a signed-out wallet sign-in's stored keys; on failure, say so (a reload could restore them). */
+async function forgetWallet(target: { network: Network; identityId: string }): Promise<void> {
+  const ring = walletSessions(target.network);
+  const forgotten = ring ? await ring.logout(target.identityId) : true;
+  unforgotten = forgotten ? null : target;
+  // A sign-in that finished meanwhile has its own (no) notice.
+  if (session) return;
+  signOutNotice = forgotten ? 'wallet-signed-out' : 'wallet-forget-failed';
+  notify();
+}
+
+/** "Try again" on a sign-out whose stored keys could not be deleted. */
+export async function retryForgetWallet(): Promise<void> {
+  const target = unforgotten;
+  if (!target) return;
+  // Signed in again since: that sign-in owns the stored ring now.
+  if (session || walletSessions(target.network)?.current(target.identityId)) {
+    unforgotten = null;
+    return;
+  }
+  await forgetWallet(target);
 }
 
 type Resolution =
@@ -578,8 +618,10 @@ export async function withDocumentSigner<T>(
       }
       const bytes = await wallet.ring.privateKey(wallet.active, wallet.key.keyRef);
       if (!bytes) {
-        await wallet.ring.signOutRevoked(wallet.active);
-        throw new SigningUnavailableError('signed-out', 'This browser no longer holds the wallet\'s key. Sign in again.');
+        await wallet.ring.signOutRevoked(wallet.active, 'missing');
+        // Another tab renewed this sign-in: the ring switched to the newer grant, so a retry signs.
+        if (wallet.ring.current(s.identityId)) throw new Error(RENEWED_ELSEWHERE_MESSAGE);
+        throw new SigningUnavailableError('signed-out', SIGNED_OUT_ELSEWHERE_MESSAGE);
       }
       try {
         privateKey = handle.mod.PrivateKey.fromBytes(bytes, s.network);

@@ -230,6 +230,40 @@ describe('withDocumentSigner with a wallet sign-in', () => {
     expect(ring.current()).toBeNull();
   });
 
+  it('says "signed out in another tab" when the stored keys are gone, not "revoked"', async () => {
+    await signInWithWalletKey();
+    // Another tab signed out: it deleted the stored ring this tab still holds.
+    await ring.keyStore().clear('testnet', { identityId: ALICE });
+    await expect(session.withDocumentSigner(handle, COMMENT, async () => 'never')).rejects.toMatchObject({
+      reason: 'signed-out',
+      message: session.SIGNED_OUT_ELSEWHERE_MESSAGE,
+    });
+    expect(session.getSignOutNotice()).toBe('wallet-signed-out-elsewhere');
+  });
+
+  it('does not hide a sign-out that could not delete the stored keys, and can try again', async () => {
+    await signInWithWalletKey();
+    const clear = ring.keyStore().clear.bind(ring.keyStore());
+    const spy = vi.spyOn(ring.keyStore(), 'clear').mockRejectedValueOnce(new Error('IndexedDB is unavailable'));
+    await session.signOut();
+    expect(session.getSignOutNotice()).toBe('wallet-forget-failed');
+    spy.mockImplementation(clear);
+    await session.retryForgetWallet();
+    expect(session.getSignOutNotice()).toBe('wallet-signed-out');
+    expect(await ring.keyStore().load('testnet')).toBeNull();
+  });
+
+  it('never lets "Try again" sign out a wallet sign-in made after the failed delete', async () => {
+    await signInWithWalletKey();
+    vi.spyOn(ring.keyStore(), 'clear').mockRejectedValueOnce(new Error('IndexedDB is unavailable'));
+    await session.signOut();
+    expect(session.getSignOutNotice()).toBe('wallet-forget-failed');
+    await signInWithWalletKey();
+    await session.retryForgetWallet();
+    expect(ring.current(ALICE)).not.toBeNull();
+    expect(await ring.keyStore().load('testnet')).not.toBeNull();
+  });
+
   it('marks the ring for renewal when Platform says the allowance is spent', async () => {
     await signInWithWalletKey();
     port.budgets = new Map([[7, 0n]]);

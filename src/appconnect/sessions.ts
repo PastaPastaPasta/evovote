@@ -36,6 +36,13 @@ import { clearSensitiveBytes } from './protocol/legacy';
  * except as bytes handed straight to the SDK signer.
  */
 
+/**
+ * Why a grant ended without a sign-out in this tab: the wallet revoked or
+ * replaced its key, or the stored keys were gone (a sign-out in another tab,
+ * or the site's storage cleared).
+ */
+export type SignedOutReason = 'revoked' | 'missing';
+
 export interface WalletStatus {
   /** The identity with a wallet key ring in this tab, or null. */
   identityId: string | null;
@@ -75,7 +82,7 @@ export class WalletSessions {
   /** Bumped by every sign-out; `signedOutAt` keeps each identity's latest, so an adoption can tell a sign-out overtook it. */
   private lifecycle = 0;
   private readonly signedOutAt = new Map<string, number>();
-  private signedOutListener: ((identityId: string) => void) | null = null;
+  private signedOutListener: ((identityId: string, reason: SignedOutReason) => void) | null = null;
   private readonly now: () => number;
 
   constructor(private readonly options: WalletSessionsOptions) {
@@ -130,8 +137,11 @@ export class WalletSessions {
     return this.active;
   }
 
-  /** Called when the wallet revoked this tab's grant and the ring was wiped (not on a sign-out). */
-  onSignedOut(listener: (identityId: string) => void): void {
+  /**
+   * Called when this tab's grant ended without a sign-out here, and the ring
+   * was wiped: the wallet revoked it, or its keys were gone from storage.
+   */
+  onSignedOut(listener: (identityId: string, reason: SignedOutReason) => void): void {
     this.signedOutListener = listener;
   }
 
@@ -213,19 +223,26 @@ export class WalletSessions {
     this.publish(null);
   }
 
-  private async clearStored(match: SessionMatch): Promise<void> {
+  /** False when the stored ring could not be deleted (it may still be there). */
+  private async clearStored(match: SessionMatch): Promise<boolean> {
     try {
       await this.keyStore().clear(this.config.network, match);
+      return true;
     } catch (error) {
       this.options.onWarning?.('Wallet sign-in: could not clear the key ring', error);
+      return false;
     }
   }
 
-  /** Sign-out: forgets this browser's ring for `identityId`, whichever tab stored it. The connection id stays. */
-  async logout(identityId: string): Promise<void> {
+  /**
+   * Sign-out: forgets this browser's ring for `identityId`, whichever tab
+   * stored it. The connection id stays. Resolves false when the stored keys
+   * could not be deleted: this tab is signed out, but a reload may restore them.
+   */
+  async logout(identityId: string): Promise<boolean> {
     this.signedOutAt.set(identityId, ++this.lifecycle);
     if (this.active?.identityId === identityId) this.deactivate();
-    await this.clearStored({ identityId });
+    return this.clearStored({ identityId });
   }
 
   /** Whether `identityId` was signed out after `lifecycle` read `since`. */
@@ -288,7 +305,7 @@ export class WalletSessions {
    * signed in again (which supersedes this grant): switch to that newer grant
    * if there is one; otherwise sign out, clearing this grant and nothing else.
    */
-  async signOutRevoked(session: AppConnectSession): Promise<void> {
+  async signOutRevoked(session: AppConnectSession, reason: SignedOutReason = 'revoked'): Promise<void> {
     if (!this.holds(session)) return;
     const startedAt = this.lifecycle;
     let stored: AppConnectSession | null = null;
@@ -304,7 +321,7 @@ export class WalletSessions {
     await this.discard(session);
     // A sign-out overtook the revoke: it already ended this session.
     if (this.signedOutSince(session.identityId, startedAt)) return;
-    this.signedOutListener?.(session.identityId);
+    this.signedOutListener?.(session.identityId, reason);
   }
 
   /**
