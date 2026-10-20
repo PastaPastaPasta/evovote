@@ -9,6 +9,11 @@ import {
   type BrowsedType,
   type ContractView,
 } from '../../discovery/contractBrowser';
+import { knownContractById } from '../../config/knownContracts';
+import { electedOf } from '../../charters/declaration';
+import { moderatedHref } from '../../charters/pollKey';
+import { fetchModeration } from '../../charters/reads';
+import { targetTitle } from '../../kinds/charter';
 import { kindFor } from '../../kinds/registry';
 import { phaseOf, type Phase } from '../../model/contest';
 import { displayIndexValue } from '../../model/indexValue';
@@ -20,8 +25,10 @@ import { KindTitle } from '../components/KindTitle';
 import { ReadIssues } from '../components/ReadIssues';
 import { countdown, plural, shortId } from '../format';
 import { useNow } from '../hooks';
+import { useTargetName } from '../charters/useTargetName';
 import { rememberContract } from '../recentContracts';
 import { pollHref } from '../router';
+import { useAsync } from '../useAsync';
 
 const PHASE_RANK: Record<Phase, number> = { open: 0, closing: 1, unknown: 2, decided: 3 };
 
@@ -138,6 +145,17 @@ function TypeSection({
   );
 }
 
+/** What on the contract goes to a masternode vote, in plain words. */
+export function contestText(types: number, contested: readonly string[], elected: boolean): string {
+  const elsewhere = `nothing${elected ? ' else' : ''} on this contract goes to a masternode vote.`;
+  if (types === 0) return `This contract has no documents, so ${elsewhere}`;
+  if (contested.length === 0) {
+    return `${types === 1 ? 'Its one document type has no values' : `None of its ${types} document types has values`} people can contest, so ${elsewhere}`;
+  }
+  const which = contested.length === types ? (types === 1 ? 'Its one document type has' : `All ${types} of its document types have`) : `${contested.length} of its ${types} document types ${contested.length === 1 ? 'has' : 'have'}`;
+  return `${which} values people can contest (${contested.join(', ')}): when two identities want the same value, masternodes vote on who gets it.`;
+}
+
 /** `#/c/<contractId>`: the contested indices of one contract and every value contested on them. */
 export function ContractPage({
   sdk,
@@ -178,22 +196,36 @@ export function ContractPage({
   }, [exists, network, contractId]);
 
   const sweeping = view.types.some((t) => t.sweeping);
+  const known = knownContractById(contractId);
   const capped = !sweeping && view.caps.some((c) => c.limit === limit);
+  // Re-renders once the owner's name is read (see targetName).
+  useTargetName(sdk, contractId);
+  // Best effort: a contract whose moderators are elected links to that election.
+  const moderation = useAsync(() => fetchModeration(sdk, contractId), [sdk, contractId]);
+  const elected = moderation.status === 'ok' && moderation.value !== undefined && !!electedOf(moderation.value);
+  const contested = [...new Set(view.types.map((t) => t.index.documentTypeName))];
 
   return (
     <div className="contest-page contract-page">
-      <a href="#/" className="back-link">
-        ← All contests
-      </a>
-      <h1 className="contest-title">
-        Contract <span className="mono" title={contractId}>{shortId(contractId, 6)}</span>{' '}
-        <CopyButton text={contractId} label="Copy contract id" />
-      </h1>
-      <p className="mono-label poll-meta">
-        {contractId} · {network}
-      </p>
+      <header className="page-header">
+        <a href="#/" className="back-link">
+          ← All contests
+        </a>
+        <h1 className="page-title">{targetTitle(contractId)}</h1>
+        <p className="page-byline">
+          <span>
+            Contract <span className="mono" title={contractId}>{shortId(contractId)}</span>{' '}
+            <CopyButton text={contractId} label="Copy contract id" />
+          </span>
+          {known?.note && <span>{known.note}</span>}
+        </p>
+      </header>
 
-      {view.load === 'loading' && <p className="page-note">Reading the contract from Platform…</p>}
+      {view.load === 'loading' && (
+        <p className="page-note" role="status">
+          Reading the contract from Platform…
+        </p>
+      )}
       {view.load === 'not-found' && (
         <p className="page-note error">No data contract with this id exists on {network}.</p>
       )}
@@ -206,13 +238,16 @@ export function ContractPage({
 
       {exists && (
         <>
+          {elected && (
+            <div className="callout contract-elected">
+              <p>Masternodes elect who moderates this contract: teams apply for the seat, and masternodes vote.</p>
+              <a className="vote-button ghost" href={moderatedHref(contractId)}>
+                See its moderator election
+              </a>
+            </div>
+          )}
           <p className="page-note">
-            {plural(view.documentTypes.length, 'document type')}
-            {view.types.length === 0
-              ? ', none with a contested index. Nothing on this contract goes to a masternode vote.'
-              : `, ${view.types.length} with a contested index (${view.types
-                  .map((t) => t.index.documentTypeName)
-                  .join(', ')}).`}
+            {contestText(view.documentTypes.length, contested, elected)}
           </p>
           <ReadIssues failures={view.failures} caps={view.caps} />
           {view.types.map((type) => (

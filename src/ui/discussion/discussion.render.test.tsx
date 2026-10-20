@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { deadlineText } from '../../model/text';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Comment } from '../../discussion/reads';
 import { base58Encode } from '../../model/bytes';
 import { text } from '../../model/indexValue';
 import type { SdkHandle } from '../../sdk/connection';
-import { CommentItem } from './CommentItem';
+import { CommentItem, type ContenderInfo } from './CommentItem';
 import { Discussion } from './Discussion';
+import { SignInPrompt } from './SignInPrompt';
 
 const id32 = (n: number) => base58Encode(new Uint8Array(32).fill(n));
 const AUTHOR = id32(7);
@@ -20,12 +22,35 @@ const comment = (over: Partial<Comment> = {}): Comment => ({
   ...over,
 });
 
-const render = (c: Comment, names = new Map<string, string>(), contenders: string[] = [], reply?: Comment) =>
+const NOW = 1_700_000_000_000 + 3 * 3_600_000;
+const info = (id: string, over: Partial<ContenderInfo> = {}): ContenderInfo => ({ id, color: '#008DE4', winner: false, ...over });
+
+const render = (
+  c: Comment,
+  names = new Map<string, string>(),
+  contenders: ContenderInfo[] = [],
+  opts: { reply?: Comment; orphan?: boolean } = {},
+) =>
   renderToStaticMarkup(
     <ol>
-      <CommentItem comment={c} names={names} contenderIds={new Set(contenders)} replyTarget={reply} />
+      <CommentItem
+        comment={c}
+        names={names}
+        contenders={new Map(contenders.map((x) => [x.id, x]))}
+        now={NOW}
+        replyTarget={opts.reply}
+        orphan={opts.orphan}
+      />
     </ol>,
   );
+
+describe('sign-in prompt', () => {
+  it('should offer one sign-in button linking to the identity page', () => {
+    const html = renderToStaticMarkup(<SignInPrompt />);
+    expect(html).toContain('Join the discussion');
+    expect(html).toContain('href="#/me"');
+  });
+});
 
 describe('comment rendering', () => {
   it('should escape a body that is HTML', () => {
@@ -53,30 +78,44 @@ describe('comment rendering', () => {
     expect(bare).toContain(`title="${AUTHOR}"`);
   });
 
-  it('should badge the author only when they are a contender of this contest', () => {
-    expect(render(comment(), new Map(), [AUTHOR])).toContain('contender');
-    expect(render(comment(), new Map(), [BACKED])).not.toContain('contender');
+  it('should badge a candidate author, and the winner only when they won', () => {
+    expect(render(comment(), new Map(), [info(AUTHOR)])).toContain('Candidate');
+    expect(render(comment(), new Map(), [info(AUTHOR)])).not.toContain('Winner');
+    expect(render(comment(), new Map(), [info(AUTHOR, { winner: true })])).toContain('Winner');
+    expect(render(comment(), new Map(), [info(BACKED)])).not.toContain('Candidate');
   });
 
-  it('should show who the comment supports', () => {
-    const html = render(comment({ supports: BACKED }), new Map([[BACKED, 'bob.dash']]), [BACKED]);
-    expect(html).toContain('supports');
+  it('should show whom the author backs, with the contender colour', () => {
+    const html = render(comment({ supports: BACKED }), new Map([[BACKED, 'bob.dash']]), [info(BACKED, { color: '#0FA88F' })]);
+    expect(html).toContain('backs');
     expect(html).toContain('bob.dash');
-    expect(render(comment())).not.toContain('supports');
+    expect(html).toContain('#0FA88F');
+    expect(render(comment())).not.toContain('backs');
   });
 
-  it('should not name a supported identity that is not a contender of this contest', () => {
-    const html = render(comment({ supports: BACKED }), new Map([[BACKED, 'bob.dash']]), [AUTHOR]);
-    expect(html).toContain('supports an identity that is not in this contest');
+  it('should not say a candidate backs themselves', () => {
+    expect(render(comment({ supports: AUTHOR }), new Map(), [info(AUTHOR)])).not.toContain('backs');
+  });
+
+  it('should not name a backed identity that is not a contender of this contest', () => {
+    const html = render(comment({ supports: BACKED }), new Map([[BACKED, 'bob.dash']]), [info(AUTHOR)]);
+    expect(html).toContain('backs someone who is not in this contest');
     expect(html).not.toContain('bob.dash');
   });
 
-  it('should show a reply as such, with the parent when it is on screen', () => {
+  it('should show a relative time with the full date in the tooltip', () => {
+    const html = render(comment());
+    expect(html).toContain('3 h ago');
+    // The site's deadline format, with the time zone.
+    expect(html).toContain(`title="${deadlineText(1_700_000_000_000, NOW)}"`);
+  });
+
+  it('should say whom a nested reply answers, and mark a reply whose parent is not loaded', () => {
     const parent = comment({ id: id32(2), ownerId: BACKED });
-    const html = render(comment({ replyTo: parent.id }), new Map([[BACKED, 'bob.dash']]), [], parent);
-    expect(html).toContain('In reply to');
+    const html = render(comment({ replyTo: parent.id }), new Map([[BACKED, 'bob.dash']]), [], { reply: parent });
+    expect(html).toContain('to <span');
     expect(html).toContain('bob.dash');
-    expect(render(comment({ replyTo: id32(2) }))).toContain('In reply to comment');
+    expect(render(comment({ replyTo: id32(2) }), new Map(), [], { orphan: true })).toContain('Reply to an earlier comment');
   });
 });
 
@@ -94,6 +133,7 @@ describe('Discussion without a contract', () => {
       />,
     );
     expect(html).toContain('Discussion is not activated on testnet.');
+    expect(html).toContain('Comments don&#x27;t count as votes.');
     expect(html).not.toContain('error');
   });
 });

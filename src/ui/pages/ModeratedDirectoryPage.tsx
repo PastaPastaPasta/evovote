@@ -1,57 +1,166 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { knownContractById } from '../../config/knownContracts';
-import { durationText, INTERIM_TEXT } from '../../charters/declaration';
+import { electedOf } from '../../charters/declaration';
 import {
   addContract,
   collectDirectoryIds,
-  fetchDirectoryEntry,
   mergeDirectory,
   removeContract,
   useAddedContracts,
-  type DirectoryEntryState,
   type DirectorySource,
 } from '../../charters/directory';
+import { PHASE_TEXT } from '../../charters/phase';
 import { moderatedHref } from '../../charters/pollKey';
+import { fetchElectionStatus, type ElectionStatus } from '../../charters/reads';
 import { forEachConcurrent } from '../../discovery/concurrency';
+import { resolveTargetName, targetTitle } from '../../kinds/charter';
+import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
+import { IdentityName } from '../components/IdentityName';
 import { ReadIssues } from '../components/ReadIssues';
-import { shortId } from '../format';
+import { TechnicalDetail } from '../components/TechnicalDetail';
+import { countdown, dateText, endDate, plural, shortId } from '../format';
+import { useNow } from '../hooks';
+import { contenderTeamName, OPEN_PHASES, phaseTone, winningScore } from '../charters/standing';
 import { useAsync } from '../useAsync';
 
-const SOURCE_TEXT: Record<DirectorySource, string> = {
-  known: 'listed',
-  contested: 'contested',
-  added: 'added by you',
-};
-
-function seatText({ team, failures }: DirectoryEntryState): string {
-  if (team) return 'team seated';
-  return failures.some((f) => f.source === 'the seated team') ? 'seat unknown' : 'seat open';
+interface Card {
+  status?: ElectionStatus;
+  error?: string;
 }
 
-function EntryStatus({ state }: { state: DirectoryEntryState | undefined }) {
-  if (!state) return <span className="mono-label">…</span>;
-  if (state.found === false) return <span className="mono-label error">no such contract on this network</span>;
-  if (!state.moderation) return <span className="mono-label error">could not be read</span>;
-  const d = state.moderation.declaration;
-  if (d.kind !== 'elected') return <span className="mono-label">not elected ({d.kind})</span>;
-  const e = d.elected;
+/** One card's election, and (for a contract the site has no name for) its owner's name. Never throws. */
+async function loadCard(sdk: EvoSDK, id: string): Promise<Card> {
+  let status: ElectionStatus;
+  try {
+    status = await fetchElectionStatus(sdk, id);
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+  // The name every page uses (see targetName), read before the card shows.
+  if (status.contractFound) await resolveTargetName(sdk, id);
+  return { status };
+}
+
+/** A card whose election could not be read (as opposed to one that is closed). */
+function unreadable(card: Card | undefined): boolean {
+  return !!card && (!card.status || card.status.timing.phase === 'unknown');
+}
+
+/** For a contract the site has no note for: "Moderates post, reply". */
+function moderatesText(card: Card | undefined): string | undefined {
+  const elected = card?.status?.moderation && electedOf(card.status.moderation);
+  const types = elected ? Object.keys(elected.moderatedDocumentTypes) : [];
+  return types.length > 0 ? `Moderates ${types.join(', ')}` : undefined;
+}
+
+/** One sentence: who holds the seat, or what is open and until when. */
+function CardStatus({ sdk, card, now }: { sdk: EvoSDK; card: Card | undefined; now: number }) {
+  if (!card) return <span className="bar-skeleton card-skeleton" aria-label="Loading" />;
+  if (card.error || !card.status) return <span className="meta error">Could not be read right now.</span>;
+  const s = card.status;
+  if (s.contractFound === false) return <span className="meta error">No such contract on this network.</span>;
+  const { phase, joinClosesAtMs, endsAtMs, opensAtMs } = s.timing;
+  if (s.team) {
+    const score = winningScore(s.contest?.tally.contenders ?? [], s.team.leaderId);
+    const decidedAt = s.contest?.winner?.decidedAtMs;
+    const team = contenderTeamName(s, s.team.leaderId);
+    return (
+      <span className="sep-list">
+        <span>
+          Seated{decidedAt && ` since ${dateText(decidedAt, { time: false })}`}:{' '}
+          {team ?? <IdentityName sdk={sdk} id={s.team.leaderId} />}
+        </span>{' '}
+        {score && <span>{score === 'unopposed' ? 'won unopposed' : `won ${score}`}</span>}
+      </span>
+    );
+  }
+  switch (phase) {
+    case 'join-window':
+      return <span>{joinClosesAtMs ? `Applications close in ${countdown(joinClosesAtMs, now).text}` : 'Applications open'}</span>;
+    case 'voting':
+      return <span>{endsAtMs ? `Voting ends in ${countdown(endsAtMs, now).text}` : 'Voting'}</span>;
+    case 'notice':
+      return (
+        <span>
+          {opensAtMs && Number.isFinite(opensAtMs) ? `Applications open ${endDate(opensAtMs)}` : 'Applications never open'}
+        </span>
+      );
+    case 'proposals':
+      return <span>{plural(s.proposals.length, 'proposal')} filed · nobody has applied yet</span>;
+    case 'no-election':
+      return <span>Open for proposals · no team has filed yet</span>;
+    case 'not-elected':
+      return <span className="meta">This contract does not hold moderator elections.</span>;
+    default:
+      return <span>{PHASE_TEXT[phase]}</span>;
+  }
+}
+
+function group(card: Card | undefined): 'loading' | 'open' | 'decided' | 'other' {
+  if (!card) return 'loading';
+  const phase = card.status?.timing.phase;
+  if (!phase) return 'other';
+  if (OPEN_PHASES.has(phase)) return 'open';
+  if (phase === 'seated' || phase === 'decided') return 'decided';
+  return 'other';
+}
+
+function ElectionCard({
+  sdk,
+  network,
+  id,
+  sources,
+  card,
+  now,
+}: {
+  sdk: EvoSDK;
+  network: Network;
+  id: string;
+  sources: DirectorySource[];
+  card: Card | undefined;
+  now: number;
+}) {
+  const known = knownContractById(id);
+  const phase = card?.status?.timing.phase;
+  const tone = phaseTone(phase);
   return (
-    <span className="mono-label">
-      {seatText(state)} · join {durationText(e.joinWindowSeconds)} · vote {durationText(e.voteWindowSeconds)} · {INTERIM_TEXT[e.interim.kind]}
-    </span>
+    <li className="election-card">
+      <a className="election-card-link" href={moderatedHref(id)}>
+        <span className="election-card-head">
+          <span className="election-card-title">{targetTitle(id)}</span>
+          {phase && <span className={`chip tone-${tone}`}>{PHASE_TEXT[phase]}</span>}
+        </span>
+        <span className="election-card-status">
+          <CardStatus sdk={sdk} card={card} now={now} />
+        </span>
+        <span className="meta">
+          {known?.note ? `${known.note} · ` : moderatesText(card) ? `${moderatesText(card)} · ` : ''}
+          <span className="mono" title={id}>
+            {shortId(id)}
+          </span>
+          {sources.includes('added') && ' · added by you'}
+        </span>
+      </a>
+      {sources.includes('added') && (
+        <button className="link-button election-card-remove" onClick={() => removeContract(network, id)} aria-label={`Remove ${targetTitle(id)} from your list`}>
+          Remove
+        </button>
+      )}
+    </li>
   );
 }
 
-/** `#/m`: every contract with a moderator election this site knows of. */
+/** `#/m`: every contract with a moderator election this site knows of, open ones first. */
 export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network: Network }) {
   const added = useAddedContracts(network);
   // The sweep does not depend on the user's list, so adding an id does not re-run it.
   const ids = useAsync(() => collectDirectoryIds(sdk, network), [sdk, network]);
-  const [states, setStates] = useState<Record<string, DirectoryEntryState>>({});
+  const [cards, setCards] = useState<Record<string, Card>>({});
   const [input, setInput] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
+  const now = useNow();
 
   const entries = useMemo(
     () => (ids.status === 'ok' ? mergeDirectory(ids.value.known, ids.value.contested, added) : []),
@@ -60,8 +169,8 @@ export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network:
   useEffect(() => {
     let cancelled = false;
     void forEachConcurrent(entries, 4, async ({ id }) => {
-      const state = await fetchDirectoryEntry(sdk, id);
-      if (!cancelled) setStates((prev) => ({ ...prev, [id]: state }));
+      const card = await loadCard(sdk, id);
+      if (!cancelled) setCards((prev) => ({ ...prev, [id]: card }));
     });
     return () => {
       cancelled = true;
@@ -76,61 +185,110 @@ export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network:
     if (!problem) setInput('');
   };
 
+  const byGroup = (g: ReturnType<typeof group>) => entries.filter((e) => group(cards[e.id]) === g);
+  const open = byGroup('open');
+  const decided = byGroup('decided');
+  const other = byGroup('other');
+  const loading = byGroup('loading');
+  const failed = other.filter((e) => unreadable(cards[e.id])).length;
+  const list = (items: typeof entries) => (
+    <ol className="election-cards">
+      {items.map(({ id, sources }) => (
+        <ElectionCard key={id} sdk={sdk} network={network} id={id} sources={sources} card={cards[id]} now={now} />
+      ))}
+    </ol>
+  );
+
   return (
-    <div className="contest-list">
-      <h1 className="section-title">Moderated contracts</h1>
-      <p className="fine-print">
-        Contracts that declare elected moderation let masternodes elect their moderation team. This list joins
-        the contracts EvoVote knows, every contract whose seat was ever contested on {network}, and the ones you
-        add.
-      </p>
-      {ids.status === 'loading' && <p className="page-note">Reading contested moderation seats…</p>}
-      {ids.status === 'error' && <p className="page-note error">Could not build the list: {ids.message}</p>}
-      {ids.status === 'ok' && <ReadIssues failures={ids.value.failures} caps={ids.value.caps} />}
-      {ids.status === 'ok' && entries.length === 0 && (
-        <p className="page-note">
-          {ids.value.failures.length > 0
-            ? 'None found, but some reads failed (see above).'
-            : `No contract has had a moderator election on ${network} yet, and none is listed. Add a contract id below.`}
+    <div className="directory-page">
+      <header className="page-header">
+        <h1 className="page-title">Moderator elections</h1>
+        <p className="page-lead">
+          Some Dash Platform apps let masternodes elect who moderates them. Teams publish a charter saying what they
+          would remove and why, then apply for the seat; masternodes vote, and the winner moderates the app.
+        </p>
+      </header>
+
+      {ids.status === 'loading' && (
+        <p className="page-note" role="status">
+          Finding moderator elections on {network}…
         </p>
       )}
-      <ol className="ledger">
-        {entries.map(({ id, sources }) => (
-          <li key={id}>
-            <div className="ledger-row directory-row">
-              <a className="ledger-name" href={moderatedHref(id)}>
-                {knownContractById(id)?.name ?? <span className="mono">{shortId(id, 8)}</span>}
-              </a>
-              <EntryStatus state={states[id]} />
-              <span className="mono-label">{sources.map((s) => SOURCE_TEXT[s]).join(' · ')}</span>
-              {sources.includes('added') && (
-                <button className="link-button" onClick={() => removeContract(network, id)} aria-label={`Remove ${id}`}>
-                  remove
-                </button>
-              )}
-            </div>
-          </li>
-        ))}
-      </ol>
-      <h2 className="section-title">Add a contract</h2>
-      <div className="key-field">
-        <input
-          className="mono"
-          placeholder="Contract id (base58)"
-          aria-label="Contract id"
-          value={input}
-          spellCheck={false}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && input.trim()) add();
-          }}
-        />
-        <button className="vote-button ghost" disabled={!input.trim()} onClick={add}>
-          Add
-        </button>
-      </div>
-      {addError && <p className="mono-label error">{addError}</p>}
-      <p className="fine-print">Added contracts are remembered in this browser only.</p>
+      {ids.status === 'error' && (
+        <div className="page-note error" role="alert">
+          <p>Could not build the list of elections.</p>
+          <TechnicalDetail>{ids.message}</TechnicalDetail>
+        </div>
+      )}
+      {ids.status === 'ok' && <ReadIssues failures={ids.value.failures} caps={ids.value.caps} />}
+
+      {ids.status === 'ok' && (
+        <>
+          <section className="hub-section">
+            <h2 className="section-title">Open now{loading.length === 0 ? ` · ${open.length}` : ''}</h2>
+            {open.length > 0 && list(open)}
+            {loading.length > 0 && (
+              <>
+                <p className="meta" role="status">
+                  Reading {plural(loading.length, 'election')}…
+                </p>
+                {list(loading)}
+              </>
+            )}
+            {open.length === 0 && loading.length === 0 && (
+              <div className="empty-state">
+                <p className="empty-state-title">
+                  {failed > 0 ? 'Could not check every election right now.' : `No election is open on ${network} right now.`}
+                </p>
+                <p>
+                  {failed > 0
+                    ? `${plural(failed, 'election')} could not be read (listed below), so one may be open. Reload the page to try again.`
+                    : decided.length > 0
+                    ? `Every seat below is filled, and on protocol 14 a filled seat is permanent. A new election starts when another contract declares elected moderation.`
+                    : 'An election starts when a contract declares elected moderation and a team proposes itself.'}
+                </p>
+              </div>
+            )}
+          </section>
+          {decided.length > 0 && (
+            <section className="hub-section">
+              <h2 className="section-title">Seats filled · {decided.length}</h2>
+              {list(decided)}
+            </section>
+          )}
+          {other.length > 0 && (
+            <section className="hub-section">
+              <h2 className="section-title">Other contracts · {other.length}</h2>
+              {list(other)}
+            </section>
+          )}
+        </>
+      )}
+
+      <details className="rules add-contract">
+        <summary>Track another contract</summary>
+        <p className="meta">
+          Paste the id of a contract that declares elected moderation to follow its election here. The list is kept in
+          this browser only.
+        </p>
+        <div className="key-field">
+          <input
+            className="mono"
+            placeholder="Contract id (base58)"
+            aria-label="Contract id"
+            value={input}
+            spellCheck={false}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && input.trim()) add();
+            }}
+          />
+          <button className="vote-button ghost" disabled={!input.trim()} onClick={add}>
+            Add
+          </button>
+        </div>
+        {addError && <p className="meta error">{addError}</p>}
+      </details>
     </div>
   );
 }

@@ -35,6 +35,13 @@ export function createPump<T>(
   };
 }
 
+/** `list` cut into runs of at most `size` items. */
+export function chunk<T>(list: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
 /** Run `fn` over `items` with bounded concurrency; resolves when all settle. */
 export async function forEachConcurrent<T>(
   items: readonly T[],
@@ -49,4 +56,51 @@ export async function forEachConcurrent<T>(
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, lane));
+}
+
+/**
+ * A work queue whose waiting list is replaced wholesale: `want(items)` says
+ * what is needed now, in priority order (rows on screen first), and anything
+ * no longer wanted simply never starts. Jobs in flight finish. Each key runs
+ * once per queue; `retry(key)` lets a failed one run again.
+ */
+export function createWantQueue<T>(
+  concurrency: number,
+  keyOf: (item: T) => string,
+  worker: (item: T) => Promise<void>,
+): { want(items: Iterable<T>): void; retry(key: string): void; cancel(): void } {
+  let waiting: T[] = [];
+  const started = new Set<string>();
+  let active = 0;
+  let cancelled = false;
+  const pump = () => {
+    while (!cancelled && active < concurrency && waiting.length > 0) {
+      const item = waiting.shift() as T;
+      const key = keyOf(item);
+      if (started.has(key)) continue;
+      started.add(key);
+      active++;
+      worker(item)
+        .catch(() => {
+          // Workers report their own failures; one must not stop the queue.
+        })
+        .finally(() => {
+          active--;
+          pump();
+        });
+    }
+  };
+  return {
+    want(items) {
+      waiting = [...items].filter((item) => !started.has(keyOf(item)));
+      pump();
+    },
+    retry(key) {
+      started.delete(key);
+    },
+    cancel() {
+      cancelled = true;
+      waiting = [];
+    },
+  };
 }

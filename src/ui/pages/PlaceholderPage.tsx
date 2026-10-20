@@ -4,10 +4,12 @@ import type { ReactNode } from 'react';
 export function PlaceholderPage({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="about-page placeholder">
-      <a href="#/" className="back-link">
-        ← All contests
-      </a>
-      <h1>{title}</h1>
+      <header className="page-header">
+        <a href="#/" className="back-link">
+          ← All contests
+        </a>
+        <h1 className="page-title">{title}</h1>
+      </header>
       {children}
     </div>
   );

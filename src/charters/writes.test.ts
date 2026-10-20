@@ -20,6 +20,7 @@ import {
   MODERATION_CONTEST_FUND,
   newCharterDocument,
   submittedCharterProperties,
+  refusalDetail,
 } from './writes';
 import { base58Encode } from '../model/bytes';
 import { dashText } from '../model/credits';
@@ -320,5 +321,11 @@ describe('document writes (mocked SDK)', () => {
     } finally {
       application.free();
     }
+  });
+});
+
+describe('refusalDetail', () => {
+  it('should keep the consensus code out of the blocker and in the technical detail', () => {
+    expect(refusalDetail(40112)).toBe('Platform would refuse this application with consensus error 40112.');
   });
 });

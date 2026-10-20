@@ -7,12 +7,11 @@ import {
 } from '../discovery/contracts';
 import { choicesForResolution, type Resolution } from '../model/contest';
 import { displayIndexValue } from '../model/indexValue';
+import { shortId } from '../model/text';
 import { documentRows } from './fields';
 import type { ContestKind } from './types';
 
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
-
-const shortId = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id);
 
 /**
  * What a resolution means for voters, in plain words. `undefined` (the

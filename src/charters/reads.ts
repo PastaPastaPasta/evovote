@@ -1,5 +1,6 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { getActivePolls } from '../discovery/activePolls';
+import { chunk } from '../discovery/concurrency';
 import { fetchContract } from '../discovery/contracts';
 import type { Failure } from '../discovery/types';
 import { fetchContest } from '../discovery/voteState';
@@ -12,6 +13,7 @@ import { isBoundKey, keyInfosOf } from '../identity/keys';
 import { parseContractModeration, type ContractModeration } from './declaration';
 import {
   CHARTERS_CONTRACT_ID,
+  toElectedCharter,
   toJoinRequestMeta,
   toProposal,
   toReason,
@@ -164,6 +166,64 @@ export async function fetchProposal(sdk: EvoSDK, submittedCharterId: string): Pr
   }
 }
 
+/** A decided moderator election: whose seat, who won it, and when. */
+export interface CharterWin {
+  targetContractId: string;
+  winnerId: string;
+  decidedAtMs: number;
+}
+
+/**
+ * The proposals some decided elections' winners won with, by target, as
+ * the contest page finds them: the seated charter's, while the seat is the
+ * winner's and its proposal is theirs, for the target, filed by the
+ * decision. A win with none of that is left out (pages then name the
+ * leader); never a guess from the leader's other proposals. Two reads per
+ * 100 targets: the seats, then their proposals. Throws when a read fails.
+ */
+export async function fetchWinnerProposals(
+  sdk: EvoSDK,
+  wins: readonly CharterWin[],
+): Promise<Map<string, CharterProposal>> {
+  const out = new Map<string, CharterProposal>();
+  for (const batch of chunk([...new Map(wins.map((w) => [w.targetContractId, w])).values()], PAGE_SIZE)) {
+    // Both indices are unique: a page holds every match.
+    const seats = mapDocs(
+      sdk,
+      await sdk.documents.query({
+        dataContractId: CHARTERS_CONTRACT_ID,
+        documentTypeName: 'electedCharter',
+        where: [['targetContractId', 'in', batch.map((w) => w.targetContractId)]],
+        orderBy: [['targetContractId', 'asc']],
+        limit: PAGE_SIZE,
+      }),
+      toElectedCharter,
+    );
+    const seated = batch.flatMap((w) => {
+      const seat = seats.find((s) => s.targetContractId === w.targetContractId);
+      return seat && seat.leaderId === w.winnerId ? [{ ...w, proposalId: seat.submittedCharterId }] : [];
+    });
+    if (seated.length === 0) continue;
+    const proposals = mapDocs(
+      sdk,
+      await sdk.documents.query({
+        dataContractId: CHARTERS_CONTRACT_ID,
+        documentTypeName: 'submittedCharter',
+        where: [['$id', 'in', [...new Set(seated.map((w) => w.proposalId))]]],
+        orderBy: [['$id', 'asc']],
+        limit: PAGE_SIZE,
+      }),
+      toProposal,
+    );
+    for (const w of seated) {
+      const p = proposals.find((x) => x.id === w.proposalId);
+      const ours = p?.leaderId === w.winnerId && p.targetContractId === w.targetContractId;
+      if (ours && (p.createdAtMs === undefined || p.createdAtMs <= w.decidedAtMs)) out.set(w.targetContractId, p);
+    }
+  }
+  return out;
+}
+
 /**
  * The reasons a proposal lists, in its order. A listed reason that does not
  * exist is returned in `missing`; a read failure throws.
@@ -230,6 +290,24 @@ export async function fetchProposalsByLeader(sdk: EvoSDK, leaderId: string): Pro
         ...cursor,
       }),
     toProposal,
+    MAX_ITEMS,
+  );
+  return items;
+}
+
+/** The join requests an identity has sent (metadata only), on the `byOwner` index. Throws when the read fails. */
+export async function fetchJoinRequestsByMember(sdk: EvoSDK, memberId: string): Promise<JoinRequestMeta[]> {
+  const { items } = await collectDocs(
+    sdk,
+    (cursor) =>
+      sdk.documents.query({
+        dataContractId: CHARTERS_CONTRACT_ID,
+        documentTypeName: 'joinRequest',
+        where: [['$ownerId', '==', memberId]],
+        orderBy: [['$ownerId', 'asc']],
+        ...cursor,
+      }),
+    toJoinRequestMeta,
     MAX_ITEMS,
   );
   return items;
@@ -391,4 +469,53 @@ export async function fetchElectionStatus(
     timing,
     failures,
   };
+}
+
+/**
+ * The proposal a leader stood on in a target's election, from their filed
+ * proposals: the latest one for that target filed before `decidedAtMs` (a
+ * decided contest no longer carries the application that named it).
+ * `candidates` counts the proposals that qualified: with more than one, the
+ * pick is a best guess and the page says so.
+ */
+export function pickLeaderProposal(
+  proposals: readonly CharterProposal[],
+  targetContractId: string,
+  decidedAtMs: number,
+): { proposal?: CharterProposal; candidates: number } {
+  const forTarget = proposals.filter(
+    (p) => p.targetContractId === targetContractId && p.createdAtMs !== undefined && p.createdAtMs <= decidedAtMs,
+  );
+  const proposal = forTarget.reduce<CharterProposal | undefined>(
+    (best, p) => (!best || (p.createdAtMs ?? 0) >= (best.createdAtMs ?? 0) ? p : best),
+    undefined,
+  );
+  return { proposal, candidates: forTarget.length };
+}
+
+/**
+ * A leader's proposal for one target (see `pickLeaderProposal`). Throws when
+ * the read fails or is capped (the right one could be past the cap).
+ */
+export async function fetchLeaderProposal(
+  sdk: EvoSDK,
+  leaderId: string,
+  targetContractId: string,
+  decidedAtMs: number,
+): Promise<{ proposal?: CharterProposal; candidates: number }> {
+  const { items, capped } = await collectDocs(
+    sdk,
+    (cursor) =>
+      sdk.documents.query({
+        dataContractId: CHARTERS_CONTRACT_ID,
+        documentTypeName: 'submittedCharter',
+        where: [['$ownerId', '==', leaderId]],
+        orderBy: [['$ownerId', 'asc']],
+        ...cursor,
+      }),
+    toProposal,
+    MAX_ITEMS,
+  );
+  if (capped) throw new Error(`more than ${MAX_ITEMS} proposals by this leader; the right one may be past the cap`);
+  return pickLeaderProposal(items, targetContractId, decidedAtMs);
 }

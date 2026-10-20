@@ -1,18 +1,230 @@
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { readBalance } from '../../charters/writes';
 import { estimateComment, commentLength, COMMENT_LIMIT, postComment, validateDraft, type CommentDraft } from '../../discussion/writes';
-import type { Comment } from '../../discussion/reads';
+import { COMMENT_TYPE, type Comment } from '../../discussion/reads';
+import { displayText } from '../../discussion/text';
 import type { Scope } from '../../discussion/scope';
 import type { WriteOutcome } from '../../identity/outcome';
-import { documentSigningProblem, useIdentitySession, withDocumentSigner } from '../../identity/session';
+import {
+  documentSigningProblem,
+  refreshIdentity,
+  SigningUnavailableError,
+  useIdentitySession,
+  walletAllowance,
+  withDocumentSigner,
+  type SigningProblem,
+} from '../../identity/session';
+import { dashText } from '../../model/credits';
 import type { PollKey } from '../../model/pollKey';
 import type { SdkHandle } from '../../sdk/connection';
-import { PaidWrite } from '../charters/PaidWrite';
-import { PersonName } from './CommentItem';
+import { errorMessage } from '../../sdk/errors';
+import { useAsync } from '../useAsync';
+import { shortId } from '../format';
+import { PersonName, type ContenderInfo } from './CommentItem';
+import { SigningProblemNote } from '../identity/SigningProblemNote';
+import { SignInPrompt } from './SignInPrompt';
+
+interface Frozen {
+  draft: CommentDraft;
+  backsLabel?: string;
+  backsColor?: string;
+}
 
 /**
- * The compose box. It needs the identity session (`#/me`); "Review" opens the
- * paid-write confirm step with the fee estimate and balance, and the comment
- * is only shown as posted once it has been read back from Platform.
+ * The review step: the comment as it will appear, what it costs against the
+ * balance, and that it is permanent. Nothing is signed until "Post comment".
+ */
+function ReviewCard({
+  handle,
+  contractId,
+  pollKey,
+  scope,
+  identityId,
+  authorName,
+  frozen,
+  replyToName,
+  onBack,
+  onDone,
+  onBusyChange,
+}: {
+  handle: SdkHandle;
+  contractId: string;
+  pollKey: PollKey;
+  scope: Scope;
+  identityId: string;
+  authorName?: string;
+  frozen: Frozen;
+  replyToName?: string;
+  onBack: () => void;
+  onDone: (outcome: WriteOutcome<Comment>) => void;
+  onBusyChange?: (busy: boolean) => void;
+}) {
+  const { draft } = frozen;
+  const titleId = useId();
+  const heading = useRef<HTMLHeadingElement>(null);
+  // The form was replaced: move focus to the card so keyboard users follow.
+  useEffect(() => heading.current?.focus(), []);
+  const priced = useAsync(
+    async () => {
+      const [cost, balance] = await Promise.all([
+        estimateComment(handle, contractId, scope, draft),
+        readBalance(handle.sdk, identityId),
+      ]);
+      return { cost, balance };
+    },
+    [handle, contractId, scope, identityId, draft],
+  );
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  // Why it could not be signed (expired wallet sign-in, missing key): said with the way forward, not as a failure.
+  const [problem, setProblem] = useState<SigningProblem | null>(null);
+  const session = useIdentitySession();
+  const allowance = walletAllowance(session, { contractId, documentType: COMMENT_TYPE });
+  const short = priced.status === 'ok' && priced.value.balance < priced.value.cost.total;
+  const overAllowance = priced.status === 'ok' && allowance !== undefined && allowance < priced.value.cost.total;
+
+  const post = async () => {
+    setBusy(true);
+    onBusyChange?.(true);
+    setFailure(null);
+    setProblem(null);
+    try {
+      const outcome = await withDocumentSigner(handle, { contractId, documentType: COMMENT_TYPE }, (signer) =>
+        postComment(handle, signer, contractId, pollKey, draft),
+      );
+      await refreshIdentity().catch(() => undefined);
+      onBusyChange?.(false);
+      onDone(outcome);
+    } catch (e) {
+      onBusyChange?.(false);
+      if (e instanceof SigningUnavailableError) setProblem({ reason: e.reason, message: e.message });
+      else setFailure(errorMessage(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="review-card" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} ref={heading} tabIndex={-1}>
+        Review your {draft.replyTo ? 'reply' : 'comment'}
+      </h3>
+      <div className="review-preview">
+        <div className="comment-head">
+          <PersonName id={identityId} name={authorName} />
+          {replyToName && <span className="comment-backs">replying to {replyToName}</span>}
+          {frozen.backsLabel && (
+            <span className="comment-backs">
+              <span className="dot" style={{ backgroundColor: frozen.backsColor }} aria-hidden="true" />
+              backs {frozen.backsLabel}
+            </span>
+          )}
+        </div>
+        <p className="comment-body">{displayText(draft.body)}</p>
+      </div>
+      <dl className="review-cost">
+        <div>
+          <dt>Cost</dt>
+          <dd>
+            {priced.status === 'ok'
+              ? `about ${dashText(priced.value.cost.total)}`
+              : priced.status === 'loading'
+                ? 'Estimating…'
+                : 'Could not estimate'}
+          </dd>
+        </div>
+        <div>
+          <dt>Your balance</dt>
+          <dd>{priced.status === 'ok' ? dashText(priced.value.balance) : priced.status === 'loading' ? 'Reading…' : '—'}</dd>
+        </div>
+      </dl>
+      {priced.status === 'error' && (
+        <p className="discussion-alert">
+          Could not read the price or your balance.{' '}
+          <button type="button" className="text-action" onClick={priced.reload}>
+            Try again
+          </button>
+        </p>
+      )}
+      {short && <p className="discussion-alert">Your balance does not cover this comment. Top up your identity first.</p>}
+      {!short && overAllowance && allowance !== undefined && (
+        <p className="discussion-alert">
+          Your Dash Wallet sign-in has {dashText(allowance)} of its allowance left, less than this comment costs.{' '}
+          <a href="#/me">Renew it on my identity page</a>
+        </p>
+      )}
+      {problem && <SigningProblemNote problem={problem} />}
+      <p className="review-permanence">
+        Comments are public and permanent: once posted, this cannot be edited or deleted.
+      </p>
+      {failure && (
+        <div className="discussion-alert">
+          <p>It was not posted: signing or sending failed.</p>
+          <details>
+            <summary>Technical detail</summary>
+            <p className="mono">{failure}</p>
+          </details>
+        </div>
+      )}
+      <div className="composer-actions">
+        <button type="button" className="vote-button ghost" disabled={busy} onClick={onBack}>
+          Back to editing
+        </button>
+        <button
+          type="button"
+          className="vote-button"
+          disabled={busy || priced.status !== 'ok' || short || overAllowance}
+          onClick={() => void post()}
+        >
+          {busy ? 'Posting…' : 'Post comment'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** What happened to a post, in plain words. A refused or unknown one keeps the draft. */
+function OutcomeNote({ outcome }: { outcome: WriteOutcome<Comment> }) {
+  if (outcome.status === 'confirmed') return <p className="discussion-ok">Posted. Your comment is on Platform.</p>;
+  if (outcome.status === 'pending') {
+    return (
+      <p className="discussion-ok">
+        Posted. It may take a minute to show up for everyone; do not post it again.
+      </p>
+    );
+  }
+  if (outcome.status === 'refused') {
+    return (
+      <div className="discussion-alert">
+        <p>Platform refused this comment: {outcome.error.message}</p>
+        {outcome.error.detail !== outcome.error.message && (
+          <details>
+            <summary>Technical detail</summary>
+            <p className="mono">{outcome.error.detail}</p>
+          </details>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="discussion-alert">
+      <p>
+        No answer from Platform, and the comment could not be found yet. It may still land: wait a minute and
+        reload before posting again, or you may pay twice.
+      </p>
+      {outcome.error && (
+        <details>
+          <summary>Technical detail</summary>
+          <p className="mono">{outcome.error.detail}</p>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The comment box: a new comment at the bottom of the discussion, or an
+ * inline reply under a comment. "Review" swaps the form for the review card;
+ * a comment is only shown as posted once it has been read back.
  */
 export function Composer({
   handle,
@@ -20,192 +232,160 @@ export function Composer({
   pollKey,
   scope,
   contenders,
+  decided,
   names,
-  replyingTo,
-  onCancelReply,
+  replyTo,
+  onCancel,
   onPosted,
+  onBusyChange,
 }: {
   handle: SdkHandle;
   contractId: string;
   pollKey: PollKey;
   scope: Scope;
-  contenders: readonly string[];
+  contenders: readonly ContenderInfo[];
+  /** Voting is over: no "who do you support". */
+  decided: boolean;
   names: ReadonlyMap<string, string>;
-  replyingTo?: Comment;
-  onCancelReply: () => void;
-  onPosted: () => void;
+  /** Set for an inline reply. */
+  replyTo?: Comment;
+  onCancel?: () => void;
+  onPosted: (comment?: Comment) => void;
+  /** A post is being signed and sent (an inline reply's parent waits). */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const session = useIdentitySession();
   const [body, setBody] = useState('');
   const [supports, setSupports] = useState('');
-  // What "Review and post" froze: the confirm step and the write use this, never
-  // the live fields, so a click elsewhere (another Reply) cannot change them.
-  const [review, setReview] = useState<{ draft: CommentDraft; supportsLabel?: string; replyLabel?: string; replyOwner?: string } | null>(null);
-  const reviewing = review !== null;
-  const [writing, setWriting] = useState(false);
+  // What "Review" froze: the review card and the write use this, never the
+  // live fields.
+  const [frozen, setFrozen] = useState<Frozen | null>(null);
   const [outcome, setOutcome] = useState<WriteOutcome<Comment> | null>(null);
-  // Reply clicked after a comment went through: open a fresh compose box for it.
-  // A draft in progress is left alone; it simply gains the new reply target.
-  // The box is not mounted when Reply's own focus call runs, so it focuses on mount.
-  const [replyTarget, setReplyTarget] = useState(replyingTo?.id);
-  const [focusBody, setFocusBody] = useState(false);
-  if (replyTarget !== replyingTo?.id) {
-    setReplyTarget(replyingTo?.id);
-    if (replyingTo && (outcome?.status === 'confirmed' || outcome?.status === 'pending')) {
-      setBody('');
-      setSupports('');
-      setReview(null);
-      setOutcome(null);
-      setFocusBody(true);
-    }
-  }
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const returning = useRef(false);
+  const reply = replyTo !== undefined;
+  const fieldId = reply ? `reply-body-${replyTo.id}` : 'comment-body';
 
-  if (!session) {
-    return (
-      <p className="page-note">
-        <a href="#/me">Sign in</a> with your identity to comment. You need a HIGH or CRITICAL authentication key.
-      </p>
-    );
-  }
-  const problem = documentSigningProblem(session, contractId);
-  if (problem) {
-    return (
-      <p className="page-note error">
-        {problem} <a href="#/me">Open my identity</a>
-      </p>
-    );
-  }
+  // Focus the box when a reply opens and when coming back from the review card.
+  useEffect(() => {
+    if (!frozen && (reply || returning.current)) textarea.current?.focus();
+    returning.current = false;
+  }, [reply, frozen]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+
+  if (!session) return <SignInPrompt compact={reply} />;
+  const problem = documentSigningProblem(session, { contractId, documentType: COMMENT_TYPE });
+  if (problem) return <SigningProblemNote problem={problem} />;
 
   const draft: CommentDraft = {
     body,
-    ...(replyingTo ? { replyTo: replyingTo.id } : {}),
-    ...(supports ? { supports } : {}),
+    ...(replyTo ? { replyTo: replyTo.id } : {}),
+    ...(supports && !decided ? { supports } : {}),
   };
   const length = commentLength(body);
   const problems = validateDraft(draft);
+  const backed = contenders.find((c) => c.id === draft.supports);
+  const label = (c: ContenderInfo) => c.name ?? shortId(c.id, 6);
+  const replyToName = replyTo ? (names.get(replyTo.ownerId) ?? shortId(replyTo.ownerId, 6)) : undefined;
 
-  const startReview = () =>
-    setReview({
-      draft,
-      supportsLabel: supports ? (names.get(supports) ?? supports) : undefined,
-      replyLabel: replyingTo ? (names.get(replyingTo.ownerId) ?? replyingTo.ownerId) : undefined,
-      replyOwner: replyingTo?.ownerId,
-    });
-
-  const reset = () => {
-    setBody('');
-    setSupports('');
-    setReview(null);
-    setOutcome(null);
-    onCancelReply();
+  const done = (result: WriteOutcome<Comment>) => {
+    setOutcome(result);
+    if (result.status === 'confirmed' || result.status === 'pending') {
+      setBody('');
+      setSupports('');
+      setFrozen(null);
+      onPosted(result.status === 'confirmed' ? result.value : undefined);
+    } else {
+      // Refused or unanswered: back to the form with the text kept.
+      returning.current = true;
+      setFrozen(null);
+    }
   };
 
-  const replyOwner = review ? review.replyOwner : replyingTo?.ownerId;
+  if (frozen) {
+    return (
+      <ReviewCard
+        handle={handle}
+        contractId={contractId}
+        pollKey={pollKey}
+        scope={scope}
+        identityId={session.identityId}
+        authorName={session.names[0]}
+        frozen={frozen}
+        replyToName={replyToName}
+        onBack={() => {
+          returning.current = true;
+          setFrozen(null);
+        }}
+        onDone={done}
+        onBusyChange={onBusyChange}
+      />
+    );
+  }
 
   return (
-    <div className="discussion-compose">
-      <p className="fine-print">
-        Signed in as <PersonName id={session.identityId} name={session.names[0]} />. Comments are public and
-        permanent: they cannot be edited or deleted. Plain text only. Official votes are cast with the ballot above.
-      </p>
-      {replyOwner && (
-        <p className="fine-print">
-          Replying to <PersonName id={replyOwner} name={names.get(replyOwner)} />{' '}
-          <button type="button" className="link-button" disabled={reviewing} onClick={onCancelReply}>
-            Cancel reply
-          </button>
-        </p>
+    <div className={reply ? 'composer reply' : 'composer'}>
+      {reply && <p className="composer-replying">Replying to {replyToName}</p>}
+      {!reply && (
+        <div className="composer-head">
+          <h3>Add a comment</h3>
+          <span>
+            as <PersonName id={session.identityId} name={session.names[0]} />
+          </span>
+        </div>
       )}
-      {!outcome && (
-        <>
-          <label className="field">
-            <span className="mono-label">Your comment</span>
-            <textarea
-              id="comment-body"
-              autoFocus={focusBody}
-              rows={4}
-              value={body}
-              disabled={reviewing}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="Add to the conversation…"
-            />
-          </label>
-          {contenders.length > 0 && (
-            <label className="field">
-              <span className="mono-label">Who do you support? (optional)</span>
-              <select value={supports} disabled={reviewing} onChange={(e) => setSupports(e.target.value)}>
-                <option value="">No one in particular</option>
-                {contenders.map((id) => (
-                  <option key={id} value={id}>
-                    {names.get(id) ?? id}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <div className="discussion-actions">
-            <span className={length > COMMENT_LIMIT ? 'fine-print error' : 'fine-print'}>
-              {length} / {COMMENT_LIMIT}
-            </span>
-            {!reviewing ? (
-              <button className="vote-button" disabled={problems.length > 0} onClick={startReview}>
-                Review and post
-              </button>
-            ) : (
-              <button className="link-button" disabled={writing} onClick={() => setReview(null)}>
-                Edit
-              </button>
-            )}
-          </div>
-        </>
+      {outcome && <OutcomeNote outcome={outcome} />}
+      <label className="discussion-sr-only" htmlFor={fieldId}>
+        {reply ? `Reply to ${replyToName}` : 'Your comment'}
+      </label>
+      <textarea
+        ref={textarea}
+        id={fieldId}
+        rows={reply ? 3 : 4}
+        value={body}
+        onChange={(e) => {
+          setBody(e.target.value);
+          if (outcome) setOutcome(null);
+        }}
+        placeholder={reply ? `Reply to ${replyToName}…` : 'Share your view on this contest…'}
+      />
+      {!decided && contenders.length > 0 && !reply && (
+        <label className="composer-supports">
+          <span>Who do you support? (optional)</span>
+          <select value={supports} onChange={(e) => setSupports(e.target.value)}>
+            <option value="">No one in particular</option>
+            {contenders.map((c) => (
+              <option key={c.id} value={c.id}>
+                {label(c)}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
-      {review && (
-        <PaidWrite<Comment>
-          handle={handle}
-          identityId={session.identityId}
-          title="Post this comment"
-          summary={[
-            ['comment', <span className="comment-body" key="b">{review.draft.body.trim()}</span>],
-            ...(review.supportsLabel ? ([['supports', review.supportsLabel]] as Array<[string, string]>) : []),
-            ...(review.replyLabel ? ([['reply to', review.replyLabel]] as Array<[string, string]>) : []),
-          ]}
-          estimate={() => estimateComment(handle, contractId, scope, review.draft)}
-          priceKey={`${review.draft.body.trim()}|${review.draft.supports ?? ''}|${review.draft.replyTo ?? ''}`}
-          confirmLabel="Post comment"
-          doneText="Your comment is on Platform."
-          run={async () => {
-            setWriting(true);
-            try {
-              return await withDocumentSigner(handle, contractId, (signer) =>
-                postComment(handle, signer, contractId, pollKey, review.draft),
-              );
-            } finally {
-              setWriting(false);
-            }
-          }}
-          onDone={(result) => {
-            setOutcome(result);
-            if (result.status === 'confirmed' || result.status === 'pending') onPosted();
-          }}
-        />
-      )}
-      {outcome &&
-        (outcome.status === 'confirmed' || outcome.status === 'pending' ? (
-          <button className="vote-button ghost" onClick={reset}>
-            Write another
+      <div className="composer-actions">
+        <span className={length > COMMENT_LIMIT ? 'composer-count over' : 'composer-count'}>
+          {length > COMMENT_LIMIT * 0.8 ? `${length} / ${COMMENT_LIMIT}` : ''}
+        </span>
+        {onCancel && (
+          <button type="button" className="vote-button ghost" onClick={onCancel}>
+            Cancel
           </button>
-        ) : (
-          // Refused or unanswered: keep the text so it can be fixed or retried.
-          <button
-            className="vote-button ghost"
-            onClick={() => {
-              setOutcome(null);
-              setReview(null);
-            }}
-          >
-            Back to editing
-          </button>
-        ))}
+        )}
+        <button
+          type="button"
+          className="vote-button"
+          disabled={problems.length > 0}
+          onClick={() =>
+            setFrozen({
+              draft,
+              backsLabel: backed ? label(backed) : undefined,
+              backsColor: backed?.color,
+            })
+          }
+        >
+          Review {reply ? 'reply' : 'comment'}
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Network } from '../../sdk/network';
 import {
   addMasternode,
@@ -9,6 +9,7 @@ import {
   useMasternodes,
 } from '../../voting/keyring';
 import { plural, shortId } from '../format';
+import { useDialogFocus } from '../useDialogFocus';
 
 function KeyField({ mnId }: { mnId: string }) {
   const [wif, setWif] = useState('');
@@ -90,13 +91,6 @@ export function KeyringPanel({ network }: { network: Network }) {
 
   return (
     <>
-      <p className="drawer-note">
-        ProTxHashes and labels are saved in this browser. Voting keys are held
-        <strong> in memory only</strong>: never stored or sent anywhere, and gone when you
-        close the tab. Each key is checked against the masternode's voter identity on
-        Platform before it is accepted. Signing happens locally.
-      </p>
-
       {masternodes.length === 0 ? (
         <p className="page-note">
           Add a masternode to vote. You need its ProTxHash and the private key for its
@@ -108,8 +102,8 @@ export function KeyringPanel({ network }: { network: Network }) {
             <li key={mn.id} className="mn-row">
               <div className="mn-row-head">
                 <span className="mn-pick-label">{mn.label}</span>
-                <span className="mono-label" title={mn.proTxHash}>
-                  {shortId(mn.proTxHash, 8)}
+                <span className="mono-label mono" title={mn.proTxHash}>
+                  {shortId(mn.proTxHash)}
                 </span>
                 <button className="link-button danger" onClick={() => removeMasternode(mn.id)}>
                   Remove
@@ -198,6 +192,13 @@ export function KeyringPanel({ network }: { network: Network }) {
         )}
       </details>
 
+      <p className="drawer-note">
+        ProTxHashes and labels are saved in this browser. Voting keys are held
+        <strong> in memory only</strong>: never stored or sent anywhere, and gone when you
+        close the tab. Each key is checked against the masternode's voter identity on
+        Platform before it is accepted. Signing happens locally.
+      </p>
+
       <p className="fine-print">
         The key must be the one for the masternode's registered <code>votingAddress</code>,
         not the owner, operator or collateral key. Verify with{' '}
@@ -209,27 +210,25 @@ export function KeyringPanel({ network }: { network: Network }) {
 
 /** The keyring as a slide-in drawer (header button, vote modal). */
 export function MnDrawer({ network, onClose }: { network: Network; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const drawerRef = useRef<HTMLElement>(null);
+  useDialogFocus(drawerRef, onClose);
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
       <aside
+        ref={drawerRef}
         className="drawer"
         role="dialog"
         aria-modal="true"
-        aria-label="My masternodes"
+        aria-label="Vote with a masternode"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="drawer-header">
-          <h2>My masternodes</h2>
-          <button className="link-button" onClick={onClose}>
-            Close
+          <h2>Vote with a masternode</h2>
+          <button className="icon-button drawer-close" onClick={onClose} aria-label="Close" data-autofocus>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
           </button>
         </header>
         <KeyringPanel network={network} />

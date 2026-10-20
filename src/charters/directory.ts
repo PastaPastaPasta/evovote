@@ -6,9 +6,7 @@ import { isBase58Identifier as isContractId } from '../model/bytes';
 import { errorMessage } from '../sdk/errors';
 import type { Network } from '../sdk/network';
 import { charterKind } from '../kinds/charter';
-import type { ContractModeration } from './declaration';
 import { charterTarget } from './pollKey';
-import { fetchModeration, fetchTeam, type TeamView } from './reads';
 
 /**
  * The moderated-contract directory (`#/m`): the union of
@@ -126,29 +124,4 @@ export async function collectDirectoryIds(sdk: EvoSDK, network: Network): Promis
     failures.push({ source: 'contested moderation seats', message: errorMessage(e) });
   }
   return { known: knownContracts(network).map((c) => c.id), contested, failures, caps };
-}
-
-export interface DirectoryEntryState {
-  /** False when the contract does not exist; undefined when its read failed. */
-  found?: boolean;
-  moderation?: ContractModeration;
-  team?: TeamView;
-  failures: Failure[];
-}
-
-/** One directory row's declaration and seat. Never throws. */
-export async function fetchDirectoryEntry(sdk: EvoSDK, contractId: string): Promise<DirectoryEntryState> {
-  const failures: Failure[] = [];
-  const [moderation, team] = await Promise.all([
-    fetchModeration(sdk, contractId).catch((e: unknown) => {
-      failures.push({ source: 'the contract', message: errorMessage(e) });
-      return 'failed' as const;
-    }),
-    fetchTeam(sdk, contractId).catch((e: unknown) => {
-      failures.push({ source: 'the seated team', message: errorMessage(e) });
-      return undefined;
-    }),
-  ]);
-  if (moderation === 'failed') return { failures, team };
-  return { found: moderation !== undefined, moderation, team, failures };
 }

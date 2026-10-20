@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import type { EvoSDK } from '@dashevo/evo-sdk';
+import { describe, expect, it, vi } from 'vitest';
 import { base58Encode } from '../model/bytes';
 import {
   DEFAULT_WINDOW_SECONDS,
@@ -7,11 +8,27 @@ import {
   electionOpensAtMs,
   parseContractModeration,
 } from './declaration';
-import { charterContenderFields, charterTitle, targetName } from '../kinds/charter';
+import {
+  charterApplicationView,
+  charterTitle,
+  resolveTargetName,
+  subscribeTargetNames,
+  targetName,
+  targetNamesVersion,
+} from '../kinds/charter';
 import { encodePollKey } from '../model/pollKey';
 import { mergeDirectory } from './directory';
-import { mergeReasons } from './reads';
-import { idFromValue, splitText, toElectedCharter, toJoinRequestMeta, toProposal, toReason } from './documents';
+import { fetchWinnerProposals, mergeReasons, pickLeaderProposal } from './reads';
+import {
+  CHARTERS_CONTRACT_ID,
+  idFromValue,
+  splitText,
+  toElectedCharter,
+  toJoinRequestMeta,
+  toProposal,
+  toReason,
+  type CharterProposal,
+} from './documents';
 import { canApply, electionTiming, joinClosesAt, LATE_APPLY_MARGIN_MS, type PhaseInput } from './phase';
 import { charterPollKey, charterTarget, proposalHref } from './pollKey';
 import {
@@ -257,13 +274,13 @@ describe('election phase', () => {
     expect(canApply({ phase: 'no-election' }, NOW)).toEqual({ ok: true });
     expect(canApply({ phase: 'join-window', joinClosesAtMs: NOW + LATE_APPLY_MARGIN_MS + 1 }, NOW)).toEqual({ ok: true });
     const late = canApply({ phase: 'join-window', joinClosesAtMs: NOW + 60_000 }, NOW);
-    expect(late.ok && late.warning).toMatch(/40111/);
+    expect(late.ok && late.warning).toMatch(/refuses/);
   });
 
   it('should refuse when an open contest\'s timing is unknown', () => {
     const t = electionTiming({ ...base, contest: { contenders: 1, hasWinner: false } }, NOW);
     expect(t.phase).toBe('voting');
-    expect(canApply(t, NOW)).toMatchObject({ ok: false, reason: expect.stringMatching(/unknown/) });
+    expect(canApply(t, NOW)).toMatchObject({ ok: false, reason: expect.stringMatching(/not known/) });
   });
 
   it('should time the contest from the first application when the end-date index lacks it', () => {
@@ -279,7 +296,7 @@ describe('election phase', () => {
 
   it('should warn right after the election opens (block time vs this clock)', () => {
     const check = canApply({ phase: 'no-election', opensAtMs: NOW - 60_000 }, NOW);
-    expect(check.ok && check.warning).toMatch(/40135/);
+    expect(check.ok && check.warning).toMatch(/block time/);
     expect(canApply({ phase: 'no-election', opensAtMs: NOW - LATE_APPLY_MARGIN_MS - 1 }, NOW)).toEqual({ ok: true });
   });
 });
@@ -299,7 +316,7 @@ describe('charter validation', () => {
   it('should require the reward split to sum to 100 in whole percents', () => {
     expect(validateRewardSplit({ leader: 40, equal: 30, actions: 30 })).toEqual([]);
     expect(validateRewardSplit({ leader: 100, equal: 0, actions: 0 })).toEqual([]);
-    expect(validateRewardSplit({ leader: 40, equal: 30, actions: 31 })[0]).toMatch(/101.*10422/);
+    expect(validateRewardSplit({ leader: 40, equal: 30, actions: 31 })[0]).toMatch(/add up to 101/);
     expect(validateRewardSplit({ leader: 40.5, equal: 29.5, actions: 30 })[0]).toMatch(/whole/);
     expect(validateRewardSplit({ leader: -10, equal: 60, actions: 50 })[0]).toMatch(/whole/);
     expect(validateRewardSplit({ leader: Number.NaN, equal: 50, actions: 50 })).toHaveLength(1);
@@ -324,13 +341,13 @@ describe('charter validation', () => {
     expect(validateMembers({ leaderId: LEADER, members: fifteen, joiners })).toEqual([]);
     expect(validateMembers({ leaderId: LEADER, members: [...joiners].slice(0, 16), joiners })[0]).toMatch(/15/);
     expect(validateMembers({ leaderId: LEADER, members: [LEADER], joiners: new Set([LEADER]) })[0]).toMatch(/leader/);
-    expect(validateMembers({ leaderId: LEADER, members: [MEMBER], joiners })[0]).toMatch(/40120/);
+    expect(validateMembers({ leaderId: LEADER, members: [MEMBER], joiners })[0]).toMatch(/not asked to join/);
     expect(validateMembers({ leaderId: LEADER, members: [id32(1), id32(1)], joiners })[0]).toMatch(/twice/);
     expect(validateMembers({ leaderId: LEADER, members: [], joiners })).toEqual([]);
   });
 
   it('should note where the equal share goes with no members', () => {
-    expect(splitNotes({ leader: 40, equal: 30, actions: 30 }, 0)[0]).toMatch(/30% equal share/);
+    expect(splitNotes({ leader: 40, equal: 30, actions: 30 }, 0)[0]).toMatch(/30% shared equally/);
     expect(splitNotes({ leader: 40, equal: 30, actions: 30 }, 2)).toEqual([]);
     expect(splitNotes({ leader: 100, equal: 0, actions: 0 }, 0)).toEqual([]);
     expect(splitNotes(undefined, 0)).toEqual([]);
@@ -370,12 +387,27 @@ describe('reasons just filed', () => {
 describe('charter kind', () => {
   it('should title a contest by its target, falling back to the short id', () => {
     const key = charterPollKey(TARGET);
-    expect(targetName(TARGET)).toBe(`${TARGET.slice(0, 6)}…${TARGET.slice(-6)}`);
+    expect(targetName(TARGET)).toBe(`contract ${TARGET.slice(0, 6)}…${TARGET.slice(-6)}`);
     expect(charterTitle({ key, keyString: encodePollKey(key) })).toBe(`Moderators of ${targetName(TARGET)}`);
   });
 
+  const proposal = (over: Partial<CharterProposal> = {}): CharterProposal => ({
+    id: id32(1),
+    leaderId: LEADER,
+    targetContractId: TARGET,
+    description: 'We keep threads on topic.',
+    reasonIds: [],
+    moderatorsShare: 60,
+    rewardSplit: { leader: 40, equal: 30, actions: 30 },
+    createdAtMs: 1_790_000_000_000,
+    ...over,
+  });
+
   it('should describe a contender from its application and proposal', () => {
-    const rows = charterContenderFields({
+    const view = charterApplicationView({
+      target: TARGET,
+      proposal: proposal(),
+      reasons: [{ code: 'OFF', label: 'Off-topic' }],
       application: {
         id: id32(4),
         leaderId: LEADER,
@@ -385,16 +417,173 @@ describe('charter kind', () => {
         createdAtMs: 1_790_000_000_000,
       },
       memberNames: ['alice'],
-      proposal: { description: 'd'.repeat(300), moderatorsShare: 60, rewardSplit: { leader: 40, equal: 30, actions: 30 } },
-      reasonCodes: [],
     });
-    const byKey = Object.fromEntries(rows);
-    expect(byKey.charter).toHaveLength(241);
-    expect(byKey["moderators' share"]).toBe('60% of the declared fee');
-    expect(byKey['reward split']).toBe('leader 40% · equal 30% · by actions 30%');
-    expect(byKey.reasons).toMatch(/none/);
-    expect(byKey.members).toBe('alice');
-    expect(byKey.applied).toBeTruthy();
-    expect(charterContenderFields({ memberNames: [] })).toEqual([]);
+    expect(view).toMatchObject({
+      description: 'We keep threads on topic.',
+      moderatorsShare: 60,
+      rewardSplit: { leader: 40, equal: 30, actions: 30 },
+      reasons: [{ code: 'OFF', label: 'Off-topic' }],
+      members: ['alice'],
+      appliedAtMs: 1_790_000_000_000,
+      href: proposalHref(TARGET, id32(1)),
+    });
+  });
+
+  it('should say a losing application keeps no member list', () => {
+    const view = charterApplicationView({ target: TARGET, proposal: proposal() });
+    expect(view.members).toBeUndefined();
+    expect(view.reasons).toBeUndefined();
+    expect(view.href).toBe(proposalHref(TARGET, id32(1)));
+  });
+
+  it("should pick the leader's latest proposal for the target, filed before the decision", () => {
+    const other = proposal({ id: id32(2), targetContractId: MEMBER, createdAtMs: 1_790_000_009_000 });
+    const early = proposal({ id: id32(3), createdAtMs: 1_790_000_001_000 });
+    const late = proposal({ id: id32(5), createdAtMs: 1_790_000_005_000 });
+    const after = proposal({ id: id32(6), createdAtMs: 1_790_000_020_000 });
+    const undated = proposal({ id: id32(7), createdAtMs: undefined });
+    const decided = 1_790_000_010_000;
+    expect(pickLeaderProposal([early, other, late, after, undated], TARGET, decided)).toEqual({ proposal: late, candidates: 2 });
+    expect(pickLeaderProposal([late], TARGET, decided)).toEqual({ proposal: late, candidates: 1 });
+    expect(pickLeaderProposal([other, after], TARGET, decided)).toEqual({ proposal: undefined, candidates: 0 });
+  });
+
+  describe("winners' proposals", () => {
+    const decided = 1_790_000_010_000;
+    const OTHER = id32(20);
+    const doc = (json: Record<string, unknown>) => ({ toJSON: () => json });
+    interface Seat {
+      target: string;
+      leaderId: string;
+      proposalId: string;
+    }
+    interface Filed {
+      id: string;
+      leaderId?: string;
+      target?: string;
+      at?: number;
+    }
+    /** A stub SDK answering the two batched reads from some seats and proposals, recording each query. */
+    const stub = (seats: Seat[], filed: Filed[]) => {
+      const queries: unknown[] = [];
+      const sdk = {
+        version: () => 1,
+        documents: {
+          query: async (q: { documentTypeName: string; where: [string, string, string[]][] }) => {
+            queries.push(q);
+            const wanted = q.where[0][2];
+            if (q.documentTypeName === 'electedCharter') {
+              const hits = seats.filter((s) => wanted.includes(s.target));
+              return new Map(
+                hits.map((s, i) => [
+                  id32(100 + i),
+                  doc({ $ownerId: s.leaderId, targetContractId: s.target, submittedCharterId: s.proposalId, members: [] }),
+                ]),
+              );
+            }
+            const hits = filed.filter((f) => wanted.includes(f.id));
+            return new Map(
+              hits.map((f) => [
+                f.id,
+                doc({
+                  $ownerId: f.leaderId ?? LEADER,
+                  targetContractId: f.target ?? TARGET,
+                  description: `Team ${f.id.slice(0, 3)}. Rules.`,
+                  $createdAt: f.at ?? 1_790_000_001_000,
+                }),
+              ]),
+            );
+          },
+        },
+      } as unknown as EvoSDK;
+      return { sdk, queries };
+    };
+    const win = (target = TARGET, winnerId = LEADER) => ({ targetContractId: target, winnerId, decidedAtMs: decided });
+
+    it('should read every seat, then every seated proposal, in two queries', async () => {
+      const { sdk, queries } = stub(
+        [
+          { target: TARGET, leaderId: LEADER, proposalId: id32(1) },
+          { target: OTHER, leaderId: MEMBER, proposalId: id32(2) },
+        ],
+        [{ id: id32(1) }, { id: id32(2), leaderId: MEMBER, target: OTHER }],
+      );
+      const won = await fetchWinnerProposals(sdk, [win(), win(OTHER, MEMBER)]);
+      expect(won.get(TARGET)?.id).toBe(id32(1));
+      expect(won.get(OTHER)?.id).toBe(id32(2));
+      expect(queries).toEqual([
+        {
+          dataContractId: CHARTERS_CONTRACT_ID,
+          documentTypeName: 'electedCharter',
+          where: [['targetContractId', 'in', [TARGET, OTHER]]],
+          orderBy: [['targetContractId', 'asc']],
+          limit: 100,
+        },
+        {
+          dataContractId: CHARTERS_CONTRACT_ID,
+          documentTypeName: 'submittedCharter',
+          where: [['$id', 'in', [id32(1), id32(2)]]],
+          orderBy: [['$id', 'asc']],
+          limit: 100,
+        },
+      ]);
+    });
+
+    it('should name no team when the seat is empty or another leader holds it, without reading proposals', async () => {
+      const { sdk, queries } = stub([{ target: OTHER, leaderId: LEADER, proposalId: id32(1) }], [{ id: id32(1) }]);
+      expect((await fetchWinnerProposals(sdk, [win(), win(OTHER, MEMBER)])).size).toBe(0);
+      expect(queries).toHaveLength(1);
+    });
+
+    it("should not name a proposal that is not the winner's, for this target, filed by the decision", async () => {
+      const proposalOf = async (filed: Omit<Filed, 'id'>) => {
+        const { sdk } = stub([{ target: TARGET, leaderId: LEADER, proposalId: id32(1) }], [{ id: id32(1), ...filed }]);
+        return (await fetchWinnerProposals(sdk, [win()])).get(TARGET);
+      };
+      expect(await proposalOf({ leaderId: MEMBER })).toBeUndefined();
+      expect(await proposalOf({ target: OTHER })).toBeUndefined();
+      expect(await proposalOf({ at: decided + 1 })).toBeUndefined();
+      expect(await proposalOf({ at: decided })).toBeDefined();
+      // The seated proposal no longer exists.
+      const { sdk } = stub([{ target: TARGET, leaderId: LEADER, proposalId: id32(1) }], []);
+      expect((await fetchWinnerProposals(sdk, [win()])).size).toBe(0);
+    });
+
+    it('should read nothing for no wins', async () => {
+      const { sdk, queries } = stub([], []);
+      expect((await fetchWinnerProposals(sdk, [])).size).toBe(0);
+      expect(queries).toHaveLength(0);
+    });
+  });
+
+  it("should name a contract by its owner once read, and tell subscribers", async () => {
+    const target = id32(42);
+    const owner = id32(43);
+    const sdk = {
+      version: () => 1,
+      contracts: { fetch: async () => ({ toJSON: () => ({ id: target, ownerId: owner }) }) },
+      dpns: { usernames: async () => ['alice.dash'] },
+    } as unknown as EvoSDK;
+    const listener = vi.fn();
+    const off = subscribeTargetNames(listener);
+    try {
+      const before = targetNamesVersion();
+      expect(targetName(target)).toBe(`contract ${target.slice(0, 6)}…${target.slice(-6)}`);
+      expect(await resolveTargetName(sdk, target)).toBe("alice.dash's contract");
+      const key = charterPollKey(target);
+      expect(charterTitle({ key, keyString: encodePollKey(key) })).toBe("Moderators of alice.dash's contract");
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(targetNamesVersion()).toBe(before + 1);
+      // Read once: asking again neither reads nor notifies.
+      await resolveTargetName(sdk, target);
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      off();
+    }
+  });
+
+  it('should say when a losing charter is the latest of several', () => {
+    expect(charterApplicationView({ target: TARGET, proposal: proposal(), candidates: 3 }).guessedFrom).toBe(3);
+    expect(charterApplicationView({ target: TARGET, proposal: proposal(), candidates: 1 }).guessedFrom).toBeUndefined();
   });
 });

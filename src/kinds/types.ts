@@ -19,6 +19,36 @@ export interface ContenderView {
   rows?: FieldRow[];
   /** A page with more about this contender (a charter's proposal page). */
   link?: { href: string; label: string };
+  /**
+   * A moderator-election contender's charter. `null` means it was looked up
+   * and none was found; undefined means not a charter contest (or not read).
+   */
+  charter?: CharterApplicationView | null;
+}
+
+/** The charter a moderator-election contender stands on, as the contest page shows it. */
+export interface CharterApplicationView {
+  description: string;
+  /** Percent of the declared moderators fee the team takes. */
+  moderatorsShare: number;
+  rewardSplit?: { leader: number; equal: number; actions: number };
+  /** "OFF Off-topic"; undefined when the reasons could not be read. */
+  reasons?: Array<{ code: string; label: string }>;
+  /** Reasons the charter lists that no longer exist. */
+  missingReasons: number;
+  /**
+   * Set when the application is gone (a losing one) and the leader filed
+   * several proposals for this contract before the decision: the latest is
+   * shown, and this is how many there were.
+   */
+  guessedFrom?: number;
+  /**
+   * The team besides the leader (names or short ids). Undefined when it is
+   * not kept: a losing application's member list is gone once decided.
+   */
+  members?: string[];
+  appliedAtMs?: number;
+  href: string;
 }
 
 /**

@@ -3,6 +3,9 @@ import { voteChoicesEqual, type VoteChoice, type VoteChoiceKind } from '../model
 /** Votes a masternode may cast on one poll, counting the first (40303 past it). */
 export const VOTES_PER_POLL = 5;
 
+/** How vote changes work, in the words every page uses (the vote dialog says the same). */
+export const VOTE_CHANGE_TEXT = `Each masternode can vote ${VOTES_PER_POLL} times on a contest while voting is open; only its latest vote counts.`;
+
 /** What the planner needs to know about a poll. */
 export interface PlanPoll {
   keyString: string;

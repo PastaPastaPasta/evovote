@@ -420,11 +420,18 @@ export interface ApplyPreflight {
   check: ApplyCheck;
   /** Problems that block the application (each would be refused, paid). */
   blockers: string[];
+  /** The refusal codes behind the blockers, for a "Technical detail" fold. */
+  technical: string[];
   warnings: string[];
   balance: bigint;
   cost: WriteCost;
   joinWindowSeconds?: number;
   voteWindowSeconds?: number;
+}
+
+/** "Platform would refuse it with code 40112." The code is for bug reports, never the main message. */
+export function refusalDetail(code: number): string {
+  return `Platform would refuse this application with consensus error ${code}.`;
 }
 
 /**
@@ -447,10 +454,15 @@ export async function preflightApply(
     readBalance(sdk, args.leaderId),
   ]);
   const blockers: string[] = [];
+  const technical: string[] = [];
   const warnings: string[] = [];
   const check = canApply(status.timing, now);
-  if (!check.ok) blockers.push(check.reason);
-  else if (check.warning) warnings.push(check.warning);
+  if (!check.ok) {
+    blockers.push(check.reason);
+    if (check.code !== undefined) technical.push(refusalDetail(check.code));
+  } else if (check.warning) {
+    warnings.push(check.warning);
+  }
   for (const f of status.failures) warnings.push(`Could not read ${f.source}: ${f.message}`);
 
   if (!proposal) blockers.push('The proposal could not be found.');
@@ -459,7 +471,8 @@ export async function preflightApply(
     if (proposal.targetContractId !== args.targetContractId) blockers.push('This proposal is for a different contract.');
   }
   if (status.contest?.tally.contenders.some((c) => c.identityId === args.leaderId)) {
-    blockers.push('You have already applied in this contest (an identity can apply once; 40112).');
+    blockers.push('You have already applied for this seat. Each identity can apply only once.');
+    technical.push(refusalDetail(40112));
   }
   blockers.push(
     ...validateMembers({
@@ -495,6 +508,7 @@ export async function preflightApply(
     status,
     check,
     blockers,
+    technical,
     warnings,
     balance,
     cost,

@@ -62,23 +62,24 @@ export interface DescribedError {
   detail: string;
 }
 
-function describe(e: unknown, what: string): DescribedError {
+/**
+ * Turn any SDK error from a vote into plain words plus the raw detail. The
+ * message follows "Not recorded:" or "Platform refused it:", so an unknown
+ * code reads as a clause.
+ */
+export function describeVoteError(e: unknown): DescribedError {
   const detail = errorMessage(e);
   const code = errorCode(e);
-  const known = code !== undefined ? REFUSALS[code] : undefined;
+  if (code === undefined) return { message: detail, detail };
+  const known = REFUSALS[code];
+  if (known) return { code, message: known, detail };
+  // An unknown code stays out of the message; the detail (shown folded) carries it.
   return {
     code,
-    message: known ?? (code !== undefined ? `Platform refused the ${what} (code ${code}).` : detail),
-    detail,
+    message: 'for a reason this site does not recognise (see the technical detail).',
+    detail: detail.includes(String(code)) ? detail : `${detail} (consensus error ${code})`,
   };
 }
 
-/** Turn any SDK error from a vote into plain words plus the raw detail. */
-export function describeVoteError(e: unknown): DescribedError {
-  return describe(e, 'vote');
-}
-
 /** The same, for a document or identity write. */
-export function describeWriteError(e: unknown): DescribedError {
-  return describe(e, 'write');
-}
+export const describeWriteError = describeVoteError;

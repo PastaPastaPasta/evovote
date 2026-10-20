@@ -1,3 +1,4 @@
+import { deadlineText, plural } from '../model/text';
 import { electedOf, electionOpensAtMs, type ContractModeration } from './declaration';
 
 /**
@@ -57,16 +58,16 @@ export interface ElectionTiming {
 }
 
 export const PHASE_TEXT: Record<ElectionPhase, string> = {
-  'not-elected': 'Not an elected contract',
-  notice: 'Election not open yet',
-  'no-election': 'No election yet',
-  proposals: 'Proposals filed',
+  'not-elected': 'No moderator election',
+  notice: 'Applications not open yet',
+  'no-election': 'Open for proposals',
+  proposals: 'Proposals filed, nobody has applied',
   'join-window': 'Applications open',
   voting: 'Voting',
-  closing: 'Voting closed, awaiting result',
+  closing: 'Voting closed, result pending',
   decided: 'Decided',
-  seated: 'Team seated',
-  unknown: 'Unknown',
+  seated: 'Seat filled',
+  unknown: 'Status unknown',
 };
 
 /**
@@ -148,14 +149,14 @@ export function canApply(timing: ElectionTiming, now = Date.now()): ApplyCheck {
         reason:
           timing.opensAtMs === Number.POSITIVE_INFINITY
             ? 'This contract declares an election delay but has no recorded creation time, so its election never opens.'
-            : `Applications open ${new Date(timing.opensAtMs ?? 0).toLocaleString()}; until then Platform refuses them.`,
+            : `Applications open ${deadlineText(timing.opensAtMs ?? 0)}; until then Platform refuses them.`,
       };
     case 'seated':
     case 'decided':
       return {
         ok: false,
         code: 40105,
-        reason: 'The seat is taken. On protocol 14 a seat is permanent, and another application is refused but still paid.',
+        reason: 'A team already holds this seat, permanently on protocol 14. Another application would be refused and still cost its fees.',
       };
     case 'unknown':
       return {
@@ -168,20 +169,20 @@ export function canApply(timing: ElectionTiming, now = Date.now()): ApplyCheck {
         return {
           ok: false,
           reason:
-            'A contest is open but its timing could not be read, so it is unknown whether the join window is still open. A late application is refused (40111) and still pays its fees. Reload and try again.',
+            'The vote is open, but its timing could not be read, so it is not known whether new teams can still apply. A late application is refused and still costs its fees. Reload and try again.',
         };
       }
       return {
         ok: false,
         code: 40111,
-        reason: 'The join window of the open contest has closed. A late application is refused but still pays its fees.',
+        reason: 'New teams can no longer apply: the join window has closed. A late application is refused and still costs its fees.',
       };
     case 'join-window': {
       const left = (timing.joinClosesAtMs ?? 0) - now;
       return left < LATE_APPLY_MARGIN_MS
         ? {
             ok: true,
-            warning: `The join window closes in under ${Math.max(1, Math.ceil(left / 60_000))} minute(s). If the block that includes your application comes after it, Platform refuses it (40111) and you still pay the fees.`,
+            warning: `The join window closes in under ${plural(Math.max(1, Math.ceil(left / 60_000)), 'minute')}. If your application lands in a block after that, Platform refuses it and the fees are still paid.`,
           }
         : { ok: true };
     }
@@ -191,7 +192,7 @@ export function canApply(timing: ElectionTiming, now = Date.now()): ApplyCheck {
         return {
           ok: true,
           warning:
-            'The election opened only minutes ago. Platform checks the opening against block time; if that is behind this computer\'s clock, the application is refused (40135) and still pays its fees.',
+            "The election opened only minutes ago. Platform checks the opening against block time; if that is behind this computer's clock, the application is refused and the fees are still paid.",
         };
       }
       return { ok: true };
