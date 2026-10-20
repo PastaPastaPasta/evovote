@@ -318,6 +318,9 @@ export function ContestPage({
   }
 
   const contest = loaded;
+  // The cards read more per contender: give them the state object, which does
+  // not change when the end time arrives, so those reads run once.
+  const described = state as Contest;
   const kind = kindFor(pollKey);
 
   if (isEmptyContest(contest)) {
@@ -388,14 +391,18 @@ export function ContestPage({
           <p className="contest-quiet">
             {ordered.length === 1
               ? 'Awarded without votes to the only applicant.'
-              : 'Awarded without votes: the earliest applicant wins.'}
+              : hasLock
+                ? 'Awarded without votes.'
+                : 'Awarded without votes: the earliest applicant wins.'}
           </p>
         )}
         {decided && winner && total > 0 && winner.votes === 0 && (
           <p className="contest-quiet">
             {ordered.length === 1
               ? 'No votes went to a contender, so the only applicant won.'
-              : 'No votes went to a contender, so the earliest applicant won.'}
+              : hasLock
+                ? 'No votes went to a contender; Platform still awarded it.'
+                : 'No votes went to a contender, so the earliest applicant won.'}
           </p>
         )}
         {total > 0 && <BallotBar state={tally} showLock={hasLock} />}
@@ -408,7 +415,7 @@ export function ContestPage({
                 key={c.identityId}
                 sdk={sdk}
                 kind={kind}
-                contest={contest}
+                contest={described}
                 contender={c}
                 rank={rank}
                 name={person.label}
@@ -457,8 +464,8 @@ export function ContestPage({
           <p className="contest-quiet">Who voted is not kept after a contest is decided; Platform keeps only the totals.</p>
         )}
         <p className="contest-footnote">
-          Each masternode can vote up to 5 times on a contest; its latest vote counts. A regular masternode's vote
-          has weight 1, an evonode's weight 4.
+          Each masternode can vote up to 5 times on a contest; its latest vote counts.
+          {total === 0 && " An evonode's vote has weight 4, a regular masternode's 1."}
           {!hasLock && ' This contest has no Lock: there is always a winner, and a tie goes to the earliest applicant.'}
         </p>
       </section>

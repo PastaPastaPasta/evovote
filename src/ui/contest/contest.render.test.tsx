@@ -58,6 +58,16 @@ describe('contender card', () => {
     expect(card(contest([a, b], A), a)).toContain('Winner');
   });
 
+  it('should call an equal loser tied, and say nothing of margins when nobody voted', () => {
+    const a = { identityId: A, votes: 5 };
+    const b = { identityId: B, votes: 5 };
+    expect(card(contest([a, b], A), b, { winnerVotes: 5 })).toContain('Tied 5–5');
+    const z = { identityId: B, votes: 0 };
+    const unvoted = card(contest([{ identityId: A, votes: 0 }, z], A), z, { winnerVotes: 0 });
+    expect(unvoted).not.toContain('Lost');
+    expect(unvoted).not.toContain('weight ·');
+  });
+
   it('should show one label per person: the name, else a short id', () => {
     const a = { identityId: A, votes: 1 };
     const named = card(contest([a]), a, { name: 'alice.dash' });

@@ -34,6 +34,14 @@ export interface CharterApplicationView {
   rewardSplit?: { leader: number; equal: number; actions: number };
   /** "OFF Off-topic"; undefined when the reasons could not be read. */
   reasons?: Array<{ code: string; label: string }>;
+  /** Reasons the charter lists that no longer exist. */
+  missingReasons: number;
+  /**
+   * Set when the application is gone (a losing one) and the leader filed
+   * several proposals for this contract before the decision: the latest is
+   * shown, and this is how many there were.
+   */
+  guessedFrom?: number;
   /**
    * The team besides the leader (names or short ids). Undefined when it is
    * not kept: a losing application's member list is gone once decided.

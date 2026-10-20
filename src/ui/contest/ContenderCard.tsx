@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { fetchVoters } from '../../discovery/voteState';
+import { displayText } from '../../discussion/text';
 import type { CharterApplicationView, ContenderView, ContestKind } from '../../kinds/types';
 import type { Contender, Contest } from '../../model/contest';
 import type { PollKey } from '../../model/pollKey';
@@ -82,8 +83,11 @@ function Voters({ sdk, pollKey, contender }: { sdk: EvoSDK; pollKey: PollKey; co
       </p>
       <ul>
         {voters.map((v) => (
-          <li key={v} className="mono" title={`ProTxHash ${v}`}>
-            {shortId(v, 10)}
+          <li key={v}>
+            <span className="mono" title={`ProTxHash ${v}`}>
+              {shortId(v, 10)}
+            </span>{' '}
+            <CopyButton text={v} label={`Copy ProTxHash ${v}`} />
           </li>
         ))}
       </ul>
@@ -92,7 +96,7 @@ function Voters({ sdk, pollKey, contender }: { sdk: EvoSDK; pollKey: PollKey; co
 }
 
 function CharterBlock({ charter, loser }: { charter: CharterApplicationView; loser: boolean }) {
-  const prose = excerpt(charter.description.trim());
+  const prose = excerpt(displayText(charter.description));
   const split = charter.rewardSplit;
   return (
     <div className="charter-block">
@@ -117,18 +121,29 @@ function CharterBlock({ charter, loser }: { charter: CharterApplicationView; los
           <li>
             <span>Reasons</span> could not be read
           </li>
-        ) : charter.reasons.length === 0 ? (
+        ) : charter.reasons.length === 0 && charter.missingReasons === 0 ? (
           <li>
             <span>Reasons</span> none
           </li>
         ) : (
-          charter.reasons.map((r) => (
-            <li key={r.code} title={r.label}>
+          charter.reasons.map((r, i) => (
+            <li key={i} title={r.label}>
               <span>{r.code}</span> {r.label}
             </li>
           ))
         )}
+        {charter.missingReasons > 0 && (
+          <li>
+            <span>Reasons</span> {charter.missingReasons} listed no longer exist
+          </li>
+        )}
       </ul>
+      {charter.guessedFrom !== undefined && (
+        <p className="contender-quiet">
+          The application is gone, so this is the latest of {charter.guessedFrom} proposals this applicant filed for
+          this contract before the decision.
+        </p>
+      )}
       {!loser && charter.members && (
         <p className="contender-quiet">
           Team: {charter.members.length > 0 ? charter.members.join(', ') : 'the leader alone'}
@@ -177,7 +192,8 @@ export function ContenderCard({
     let cancelled = false;
     kind.describeContender(sdk, contest, contender).then(
       (v) => !cancelled && setView(v),
-      () => !cancelled && setView('failed'),
+      // A failed re-read keeps what an earlier read showed.
+      () => !cancelled && setView((prev) => (prev !== 'failed' && (prev.charter !== undefined || prev.rows) ? prev : 'failed')),
     );
     return () => {
       cancelled = true;
@@ -190,7 +206,10 @@ export function ContenderCard({
   const total = contest.tally.total;
   const charter = described?.charter;
   const requested = kind.id === 'dpns' ? described?.title : undefined;
-  const lost = decided && !isWinner && winnerVotes !== undefined;
+  // A contest decided without votes says so once above the cards; "Lost 0–0"
+  // and a row of zeros would only repeat it.
+  const unvoted = decided && total === 0;
+  const lost = decided && !unvoted && !isWinner && winnerVotes !== undefined;
   const voters = !decided && contender.votes > 0;
 
   return (
@@ -215,14 +234,16 @@ export function ContenderCard({
             {otherNames.length > 0 && <span>also holds {otherNames.join(', ')}</span>}
             {lost && (
               <span>
-                Lost {contender.votes}–{winnerVotes}
+                {contender.votes === winnerVotes
+                  ? `Tied ${contender.votes}–${winnerVotes}${kind.id === 'charter' ? ' · the earliest applicant wins ties' : ''}`
+                  : `Lost ${contender.votes}–${winnerVotes}`}
                 {charter ? " · member list isn't kept for losing applications" : ''}
               </span>
             )}
           </p>
         ) : null}
         {kind.id === 'charter' && charter === null && (
-          <p className="contender-quiet">No charter found for this applicant.</p>
+          <p className="contender-quiet">{described?.subtitle ?? 'No charter found for this applicant.'}</p>
         )}
         {kind.id === 'charter' && view === 'failed' && (
           <p className="contender-quiet">This applicant's charter could not be read. Reload to try again.</p>
@@ -239,12 +260,12 @@ export function ContenderCard({
         )}
       </div>
       <div className="contender-side">
-        <div className="contender-tally">
-          <span className="tally-number">{contender.votes}</span>
-          <span className="tally-unit">
-            weight · {percent(contender.votes, total)}
-          </span>
-        </div>
+        {!unvoted && (
+          <div className="contender-tally">
+            <span className="tally-number">{contender.votes}</span>
+            <span className="tally-unit">weight · {percent(contender.votes, total)}</span>
+          </div>
+        )}
         {canVote && (
           <button type="button" className="vote-button" onClick={onVote}>
             Vote for this

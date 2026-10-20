@@ -205,6 +205,11 @@ function ThreadView({
   const [replyingTo, setReplyingTo] = useState<string>();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [linked] = useState(() => linkedCommentId(location.search));
+  // The comment just posted: its thread opens in full so it is seen.
+  const [justPosted, setJustPosted] = useState<string>();
+  // An inline reply is being signed and sent: Reply buttons wait, so the box
+  // (and the outcome it will show) is not swapped out mid-post.
+  const [replyBusy, setReplyBusy] = useState(false);
   const scrolledTo = useRef<string | undefined>(undefined);
   const { comments, loading, error, retrying, hasMore, hidden, fresh, loadMore, reload, addLocal } = useComments(
     handle.sdk,
@@ -257,9 +262,18 @@ function ThreadView({
   };
 
   const posted = (comment?: Comment) => {
-    setReplyingTo(undefined);
-    if (comment) addLocal(comment);
-    else reload();
+    // A pending post (accepted, not read back yet) keeps its box open with
+    // its "do not post again" note; a confirmed reply closes only its own box.
+    if (!comment) {
+      reload();
+      return;
+    }
+    setReplyingTo((current) => (current !== undefined && current === comment.replyTo ? undefined : current));
+    setJustPosted(comment.id);
+    // Oldest first with more pages: the new comment belongs after pages not
+    // loaded yet, so show the newest instead of inserting it out of order.
+    if (order === 'oldest' && hasMore) setOrder('newest');
+    else addLocal(comment);
   };
 
   const composerProps = { handle, contractId, pollKey, scope, contenders, decided: outcome !== undefined, names };
@@ -276,12 +290,18 @@ function ThreadView({
         replyTarget={parent}
         orphan={!isReply && thread.orphan}
         highlighted={comment.id === linked}
-        onReply={() => setReplyingTo((current) => (current === comment.id ? undefined : comment.id))}
+        onReply={replyBusy ? undefined : () => setReplyingTo((current) => (current === comment.id ? undefined : comment.id))}
         onCopyLink={copyLink(comment.id)}
       >
         {replyingTo === comment.id && (
           <div className="inline-reply">
-            <Composer {...composerProps} replyTo={comment} onCancel={() => setReplyingTo(undefined)} onPosted={posted} />
+            <Composer
+              {...composerProps}
+              replyTo={comment}
+              onCancel={() => setReplyingTo(undefined)}
+              onPosted={posted}
+              onBusyChange={setReplyBusy}
+            />
           </div>
         )}
         {children}
@@ -314,11 +334,25 @@ function ThreadView({
         </p>
       )}
       {fresh > 0 && (
-        <button type="button" className="fresh-pill" onClick={() => reload()}>
-          {fresh === 1 ? '1 new comment' : `${fresh} new comments`} · show
-        </button>
+        <div role="status">
+          <button
+            type="button"
+            className="fresh-pill"
+            // Oldest first with more pages: the new ones are at the far end.
+            onClick={() => (order === 'oldest' && hasMore ? setOrder('newest') : reload())}
+          >
+            {fresh === 1 ? '1 new comment' : `${fresh} new comments`} · show
+          </button>
+        </div>
       )}
       {error && <ReadError error={error} onRetry={reload} />}
+      {linked && settled && !byId.has(linked) && (
+        <p className="discussion-closed" role="status">
+          {hasMore
+            ? 'The linked comment is further down: load more comments to find it.'
+            : 'The linked comment is not in this discussion.'}
+        </p>
+      )}
       {retrying > 0 && (
         <p className="discussion-loading" role="status">
           Platform is busy; trying again ({retrying} of 3)…
@@ -338,7 +372,8 @@ function ThreadView({
         <ol className="thread-list">
           {threads.map((thread) => {
             // A thread holding the linked comment opens in full, so the link lands.
-            const open = expanded.has(thread.root.id) || (linked !== undefined && thread.replies.some((r) => r.id === linked));
+            const open =
+              expanded.has(thread.root.id) || thread.replies.some((r) => r.id === linked || r.id === justPosted);
             const shown = open ? thread.replies : thread.replies.slice(0, REPLIES_SHOWN);
             const more = thread.replies.length - shown.length;
             return renderComment(

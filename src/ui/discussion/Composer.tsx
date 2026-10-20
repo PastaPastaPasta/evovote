@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { readBalance } from '../../charters/writes';
 import { estimateComment, commentLength, COMMENT_LIMIT, postComment, validateDraft, type CommentDraft } from '../../discussion/writes';
 import type { Comment } from '../../discussion/reads';
+import { displayText } from '../../discussion/text';
 import type { Scope } from '../../discussion/scope';
 import type { WriteOutcome } from '../../identity/outcome';
 import { documentSigningProblem, refreshIdentity, useIdentitySession, withDocumentSigner } from '../../identity/session';
@@ -35,6 +36,7 @@ function ReviewCard({
   replyToName,
   onBack,
   onDone,
+  onBusyChange,
 }: {
   handle: SdkHandle;
   contractId: string;
@@ -46,8 +48,13 @@ function ReviewCard({
   replyToName?: string;
   onBack: () => void;
   onDone: (outcome: WriteOutcome<Comment>) => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const { draft } = frozen;
+  const titleId = useId();
+  const heading = useRef<HTMLHeadingElement>(null);
+  // The form was replaced: move focus to the card so keyboard users follow.
+  useEffect(() => heading.current?.focus(), []);
   const priced = useAsync(
     async () => {
       const [cost, balance] = await Promise.all([
@@ -64,23 +71,27 @@ function ReviewCard({
 
   const post = async () => {
     setBusy(true);
+    onBusyChange?.(true);
     setFailure(null);
     try {
       const outcome = await withDocumentSigner(handle, contractId, (signer) =>
         postComment(handle, signer, contractId, pollKey, draft),
       );
       await refreshIdentity().catch(() => undefined);
+      onBusyChange?.(false);
       onDone(outcome);
     } catch (e) {
+      onBusyChange?.(false);
       setFailure(errorMessage(e));
-    } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="review-card" role="group" aria-labelledby="review-title">
-      <h3 id="review-title">Review your {draft.replyTo ? 'reply' : 'comment'}</h3>
+    <div className="review-card" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} ref={heading} tabIndex={-1}>
+        Review your {draft.replyTo ? 'reply' : 'comment'}
+      </h3>
       <div className="review-preview">
         <div className="comment-head">
           <PersonName id={identityId} name={authorName} />
@@ -92,7 +103,7 @@ function ReviewCard({
             </span>
           )}
         </div>
-        <p className="comment-body">{draft.body.trim()}</p>
+        <p className="comment-body">{displayText(draft.body)}</p>
       </div>
       <dl className="review-cost">
         <div>
@@ -203,6 +214,7 @@ export function Composer({
   replyTo,
   onCancel,
   onPosted,
+  onBusyChange,
 }: {
   handle: SdkHandle;
   contractId: string;
@@ -216,6 +228,8 @@ export function Composer({
   replyTo?: Comment;
   onCancel?: () => void;
   onPosted: (comment?: Comment) => void;
+  /** A post is being signed and sent (an inline reply's parent waits). */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const session = useIdentitySession();
   const [body, setBody] = useState('');
@@ -225,12 +239,16 @@ export function Composer({
   const [frozen, setFrozen] = useState<Frozen | null>(null);
   const [outcome, setOutcome] = useState<WriteOutcome<Comment> | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const returning = useRef(false);
   const reply = replyTo !== undefined;
   const fieldId = reply ? `reply-body-${replyTo.id}` : 'comment-body';
 
+  // Focus the box when a reply opens and when coming back from the review card.
   useEffect(() => {
-    if (reply) textarea.current?.focus();
-  }, [reply]);
+    if (!frozen && (reply || returning.current)) textarea.current?.focus();
+    returning.current = false;
+  }, [reply, frozen]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   if (!session) return <SignInPrompt compact={reply} />;
   const problem = documentSigningProblem(session, contractId);
@@ -268,6 +286,7 @@ export function Composer({
       onPosted(result.status === 'confirmed' ? result.value : undefined);
     } else {
       // Refused or unanswered: back to the form with the text kept.
+      returning.current = true;
       setFrozen(null);
     }
   };
@@ -283,8 +302,12 @@ export function Composer({
         authorName={session.names[0]}
         frozen={frozen}
         replyToName={replyToName}
-        onBack={() => setFrozen(null)}
+        onBack={() => {
+          returning.current = true;
+          setFrozen(null);
+        }}
         onDone={done}
+        onBusyChange={onBusyChange}
       />
     );
   }
@@ -329,7 +352,7 @@ export function Composer({
         </label>
       )}
       <div className="composer-actions">
-        <span className={length > COMMENT_LIMIT ? 'composer-count over' : 'composer-count'} aria-live="polite">
+        <span className={length > COMMENT_LIMIT ? 'composer-count over' : 'composer-count'}>
           {length > COMMENT_LIMIT * 0.8 ? `${length} / ${COMMENT_LIMIT}` : ''}
         </span>
         {onCancel && (

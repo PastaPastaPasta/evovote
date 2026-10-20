@@ -50,7 +50,9 @@ async function applicationOf(
   const seated = await sdk.moderationCharters.seatedCharter(target);
   if (!seated) return undefined;
   try {
-    return toElectedCharter(seated.toJSON(sdk.version()) as Record<string, unknown>);
+    const charter = toElectedCharter(seated.toJSON(sdk.version()) as Record<string, unknown>);
+    // The seat may have changed hands since this contest: only the winner's own counts.
+    return charter.leaderId === contender.identityId ? charter : undefined;
   } finally {
     freeQuietly(seated);
   }
@@ -62,16 +64,22 @@ export function charterApplicationView(args: {
   proposal: CharterProposal;
   /** Undefined when the reasons could not be read. */
   reasons?: Array<{ code: string; label: string }>;
+  /** Listed reasons that no longer exist. */
+  missingReasons?: number;
   /** The electedCharter, when it is still there (open contests, the winner). */
   application?: ElectedCharter;
   memberNames?: string[];
+  /** Proposals the pick was made from (no application to name the one). */
+  candidates?: number;
 }): CharterApplicationView {
-  const { target, proposal, reasons, application, memberNames } = args;
+  const { target, proposal, reasons, missingReasons = 0, application, memberNames, candidates = 1 } = args;
   return {
     description: proposal.description,
     moderatorsShare: proposal.moderatorsShare,
     rewardSplit: proposal.rewardSplit,
     reasons,
+    missingReasons,
+    ...(!application && candidates > 1 ? { guessedFrom: candidates } : {}),
     members: application ? (memberNames ?? application.members.map(short)) : undefined,
     appliedAtMs: application?.createdAtMs,
     href: proposalHref(target, proposal.id),
@@ -99,21 +107,39 @@ export const charterKind: ContestKind = {
     const target = charterTarget(c.key);
     if (!target) return view;
     const application = await applicationOf(sdk, c, contender);
-    const proposal = application
-      ? await fetchProposal(sdk, application.submittedCharterId)
-      : await fetchLeaderProposal(sdk, contender.identityId, target, c.winner?.decidedAtMs);
-    if (!proposal) {
+    let proposal: CharterProposal | undefined;
+    let candidates = 1;
+    if (application) {
+      proposal = await fetchProposal(sdk, application.submittedCharterId);
+      if (!proposal) {
+        view.charter = null;
+        view.subtitle = 'Its proposal no longer exists.';
+        return view;
+      }
+    } else {
+      // Only a decided contest drops applications. An open one without its
+      // document could not be read; guessing from proposals would mislead.
+      const decidedAtMs = c.winner?.decidedAtMs;
+      if (decidedAtMs === undefined) throw new Error('the application could not be read');
+      ({ proposal, candidates } = await fetchLeaderProposal(sdk, contender.identityId, target, decidedAtMs));
+    }
+    if (!proposal || proposal.targetContractId !== target || proposal.leaderId !== contender.identityId) {
       view.charter = null;
       return view;
     }
     const [memberNames, reasons] = await Promise.all([
       application ? Promise.all(application.members.map((m) => displayName(sdk, m))) : undefined,
-      fetchReasons(sdk, proposal.reasonIds).then(
-        (r) => r.reasons.map(({ code, label }) => ({ code, label })),
-        () => undefined,
-      ),
+      fetchReasons(sdk, proposal.reasonIds).catch(() => undefined),
     ]);
-    view.charter = charterApplicationView({ target, proposal, reasons, application, memberNames });
+    view.charter = charterApplicationView({
+      target,
+      proposal,
+      reasons: reasons?.reasons.map(({ code, label }) => ({ code, label })),
+      missingReasons: reasons?.missing.length ?? 0,
+      application,
+      memberNames,
+      candidates,
+    });
     return view;
   },
   // Resolution 1: no Lock. There is always a winner; ties go to the earliest contender.

@@ -432,9 +432,15 @@ describe('charter kind', () => {
     const early = proposal({ id: id32(3), createdAtMs: 1_790_000_001_000 });
     const late = proposal({ id: id32(5), createdAtMs: 1_790_000_005_000 });
     const after = proposal({ id: id32(6), createdAtMs: 1_790_000_020_000 });
-    expect(pickLeaderProposal([early, other, late], TARGET)?.id).toBe(id32(5));
-    expect(pickLeaderProposal([early, late, after], TARGET, 1_790_000_010_000)?.id).toBe(id32(5));
-    expect(pickLeaderProposal([other], TARGET)).toBeUndefined();
-    expect(pickLeaderProposal([], TARGET)).toBeUndefined();
+    const undated = proposal({ id: id32(7), createdAtMs: undefined });
+    const decided = 1_790_000_010_000;
+    expect(pickLeaderProposal([early, other, late, after, undated], TARGET, decided)).toEqual({ proposal: late, candidates: 2 });
+    expect(pickLeaderProposal([late], TARGET, decided)).toEqual({ proposal: late, candidates: 1 });
+    expect(pickLeaderProposal([other, after], TARGET, decided)).toEqual({ proposal: undefined, candidates: 0 });
+  });
+
+  it('should say when a losing charter is the latest of several', () => {
+    expect(charterApplicationView({ target: TARGET, proposal: proposal(), candidates: 3 }).guessedFrom).toBe(3);
+    expect(charterApplicationView({ target: TARGET, proposal: proposal(), candidates: 1 }).guessedFrom).toBeUndefined();
   });
 });

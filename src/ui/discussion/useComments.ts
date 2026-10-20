@@ -86,25 +86,38 @@ export function useComments(sdk: EvoSDK, contractId: string, scope: Scope, order
   }, [sdk, contractId, scope, order, queryId]);
 
   const here = loaded?.queryId === queryId ? loaded : undefined;
+  // A reload (same scope and order, next round) keeps showing the last list
+  // until the new one arrives, so open reply boxes are not torn down.
+  const baseId = `${contractId}|${scope.scope}|${order}|`;
+  const previous = !here && loaded && !loaded.error && loaded.queryId.startsWith(baseId) ? loaded : undefined;
   const morePending = morePendingFor === queryId;
 
-  // Background check for comments posted since the list was read. Quiet: a
-  // failed check is simply tried again on the next tick.
+  // Background check for comments posted since the list was read. The first
+  // check only records what is newest now (in oldest-first order the newest
+  // may simply not be loaded yet); later ones count what is not in that set
+  // or in the list. Quiet: a failed check is tried again on the next tick.
   const knownIds = here && !here.error ? here.comments.map((c) => c.id).join(',') : undefined;
   useEffect(() => {
     if (knownIds === undefined) return;
     const known = new Set(knownIds ? knownIds.split(',') : []);
+    let baseline: Set<string> | undefined;
     let cancelled = false;
     const check = () => {
       if (document.visibilityState !== 'visible') return;
       fetchCommentsByScope(sdk, contractId, scope, { order: 'newest', pageSize: FRESH_PAGE })
         .then((page) => {
           if (cancelled) return;
-          const ids = page.comments.filter((c) => !known.has(c.id)).map((c) => c.id);
+          if (!baseline) {
+            baseline = new Set(page.comments.map((c) => c.id));
+            return;
+          }
+          const seen = baseline;
+          const ids = page.comments.filter((c) => !known.has(c.id) && !seen.has(c.id)).map((c) => c.id);
           setFresh({ queryId, ids });
         })
         .catch(() => undefined);
     };
+    check();
     const timer = setInterval(check, FRESH_CHECK_MS);
     return () => {
       cancelled = true;
@@ -156,7 +169,7 @@ export function useComments(sdk: EvoSDK, contractId: string, scope: Scope, order
   const freshHere = fresh?.queryId === queryId ? fresh.ids.filter((id) => !here?.comments.some((c) => c.id === id)) : [];
 
   return {
-    comments: here?.comments ?? [],
+    comments: here?.comments ?? previous?.comments ?? [],
     loading: !here || morePending,
     error: here?.error ?? null,
     retrying: retrying?.queryId === queryId ? retrying.attempt : 0,
