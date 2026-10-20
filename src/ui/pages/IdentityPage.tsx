@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
-import { CHARTERS_CONTRACT_ID } from '../../charters/documents';
+import { CHARTERS_CONTRACT_ID, type CharterProposal } from '../../charters/documents';
+import { forEachConcurrent } from '../../discovery/concurrency';
 import { proposalHref } from '../../charters/pollKey';
-import { fetchProposalsByLeader } from '../../charters/reads';
+import { fetchJoinRequestsByMember, fetchProposal, fetchProposalsByLeader } from '../../charters/reads';
 import { dashText } from '../../model/credits';
 import { keyRoleText, type KeyBounds } from '../../identity/keys';
 import {
@@ -65,7 +66,8 @@ function SignedInWith({ session }: { session: IdentitySession }) {
         <div>
           <dt>{session.via === 'wallet' ? 'Key for charter steps' : 'Signed in with'}</dt>
           <dd>
-            Key #{session.pastedKey.keyId} ({keyRoleText(session.pastedKey)}), in this tab only
+            The private key you pasted (key #{session.pastedKey.keyId}, {session.pastedKey.securityLevel.toLowerCase()}{' '}
+            security), held in this tab only
             {session.via === 'wallet' && (
               <>
                 {' '}
@@ -118,6 +120,68 @@ function MyProposals({ sdk, identityId }: { sdk: EvoSDK; identityId: string }) {
               </a>
             </li>
           ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** The teams this identity asked to join, each linked to its proposal. */
+function MyJoinRequests({ sdk, identityId }: { sdk: EvoSDK; identityId: string }) {
+  const asked = useAsync(async () => {
+    const requests = await fetchJoinRequestsByMember(sdk, identityId);
+    // Each proposal once, a few at a time. One that cannot be read is still listed, without its title.
+    const proposals = new Map<string, CharterProposal | 'gone' | 'failed'>();
+    await forEachConcurrent([...new Set(requests.map((r) => r.submittedCharterId))], 4, async (id) => {
+      proposals.set(id, await fetchProposal(sdk, id).then((p) => p ?? 'gone', () => 'failed' as const));
+    });
+    return requests.map((request) => ({ request, proposal: proposals.get(request.submittedCharterId) ?? 'failed' }));
+  }, [sdk, identityId]);
+  return (
+    <section className="hub-section">
+      <h2 className="section-title">Teams you asked to join</h2>
+      {asked.status === 'loading' && (
+        <p className="meta" role="status">
+          Reading your join requests…
+        </p>
+      )}
+      {asked.status === 'error' && (
+        <p className="meta error">
+          Could not read your join requests.{' '}
+          <button className="link-button" onClick={asked.reload}>
+            Try again
+          </button>
+        </p>
+      )}
+      {asked.status === 'ok' && asked.value.length === 0 && (
+        <p className="meta">You have not asked to join a team.</p>
+      )}
+      {asked.status === 'ok' && asked.value.length > 0 && (
+        <ul className="proposal-list">
+          {asked.value.map(({ request, proposal }) => {
+            const when = request.createdAtMs ? `asked ${dateText(request.createdAtMs, { time: false })}` : 'asked';
+            return (
+              <li key={request.id}>
+                {typeof proposal === 'object' ? (
+                  <a className="proposal-item" href={proposalHref(proposal.targetContractId, proposal.id)}>
+                    <span className="proposal-item-title">{firstSentence(proposal.description)}</span>
+                    <span className="proposal-item-by">
+                      For Moderators of {targetName(proposal.targetContractId)} · {when}
+                    </span>
+                  </a>
+                ) : (
+                  <div className="proposal-item">
+                    <span className="proposal-item-title">
+                      {proposal === 'gone' ? 'A proposal that no longer exists' : 'A proposal that could not be read right now'}
+                    </span>
+                    <span className="proposal-item-by">
+                      Proposal <span className="mono">{shortId(request.submittedCharterId)}</span> · {when}
+                    </span>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
@@ -199,6 +263,7 @@ export function IdentityPage({ sdk, network }: { sdk: EvoSDK; network: Network }
       {refreshError && <p className="meta error">Could not refresh: {refreshError}</p>}
 
       <MyProposals sdk={sdk} identityId={session.identityId} />
+      <MyJoinRequests sdk={sdk} identityId={session.identityId} />
 
       <details className="rules">
         <summary>Your identity&apos;s keys · {session.keys.length}</summary>

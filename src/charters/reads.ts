@@ -235,6 +235,24 @@ export async function fetchProposalsByLeader(sdk: EvoSDK, leaderId: string): Pro
   return items;
 }
 
+/** The join requests an identity has sent (metadata only), on the `byOwner` index. Throws when the read fails. */
+export async function fetchJoinRequestsByMember(sdk: EvoSDK, memberId: string): Promise<JoinRequestMeta[]> {
+  const { items } = await collectDocs(
+    sdk,
+    (cursor) =>
+      sdk.documents.query({
+        dataContractId: CHARTERS_CONTRACT_ID,
+        documentTypeName: 'joinRequest',
+        where: [['$ownerId', '==', memberId]],
+        orderBy: [['$ownerId', 'asc']],
+        ...cursor,
+      }),
+    toJoinRequestMeta,
+    MAX_ITEMS,
+  );
+  return items;
+}
+
 /**
  * Walk a proposal's join requests page by page, handing each wasm document
  * to `visit` (which must not keep it: it is freed after the call).
