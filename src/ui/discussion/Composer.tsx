@@ -5,7 +5,15 @@ import { COMMENT_TYPE, type Comment } from '../../discussion/reads';
 import { displayText } from '../../discussion/text';
 import type { Scope } from '../../discussion/scope';
 import type { WriteOutcome } from '../../identity/outcome';
-import { documentSigningProblem, refreshIdentity, useIdentitySession, withDocumentSigner } from '../../identity/session';
+import {
+  documentSigningProblem,
+  refreshIdentity,
+  SigningUnavailableError,
+  useIdentitySession,
+  walletAllowance,
+  withDocumentSigner,
+  type SigningProblem,
+} from '../../identity/session';
 import { dashText } from '../../model/credits';
 import type { PollKey } from '../../model/pollKey';
 import type { SdkHandle } from '../../sdk/connection';
@@ -68,12 +76,18 @@ function ReviewCard({
   );
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // Why it could not be signed (expired wallet sign-in, missing key): said with the way forward, not as a failure.
+  const [problem, setProblem] = useState<SigningProblem | null>(null);
+  const session = useIdentitySession();
+  const allowance = walletAllowance(session, { contractId, documentType: COMMENT_TYPE });
   const short = priced.status === 'ok' && priced.value.balance < priced.value.cost.total;
+  const overAllowance = priced.status === 'ok' && allowance !== undefined && allowance < priced.value.cost.total;
 
   const post = async () => {
     setBusy(true);
     onBusyChange?.(true);
     setFailure(null);
+    setProblem(null);
     try {
       const outcome = await withDocumentSigner(handle, { contractId, documentType: COMMENT_TYPE }, (signer) =>
         postComment(handle, signer, contractId, pollKey, draft),
@@ -83,7 +97,8 @@ function ReviewCard({
       onDone(outcome);
     } catch (e) {
       onBusyChange?.(false);
-      setFailure(errorMessage(e));
+      if (e instanceof SigningUnavailableError) setProblem({ reason: e.reason, message: e.message });
+      else setFailure(errorMessage(e));
       setBusy(false);
     }
   };
@@ -131,6 +146,13 @@ function ReviewCard({
         </p>
       )}
       {short && <p className="discussion-alert">Your balance does not cover this comment. Top up your identity first.</p>}
+      {!short && overAllowance && allowance !== undefined && (
+        <p className="discussion-alert">
+          Your Dash Wallet sign-in has {dashText(allowance)} of its allowance left, less than this comment costs.{' '}
+          <a href="#/me">Renew it on my identity page</a>
+        </p>
+      )}
+      {problem && <SigningProblemNote problem={problem} />}
       <p className="review-permanence">
         Comments are public and permanent: once posted, this cannot be edited or deleted.
       </p>
@@ -150,7 +172,7 @@ function ReviewCard({
         <button
           type="button"
           className="vote-button"
-          disabled={busy || priced.status !== 'ok' || short}
+          disabled={busy || priced.status !== 'ok' || short || overAllowance}
           onClick={() => void post()}
         >
           {busy ? 'Posting…' : 'Post comment'}

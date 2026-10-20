@@ -5,7 +5,7 @@ import { WalletSessions } from '../appconnect/sessions';
 import { commentGrant, fakePort, memoryBackend } from '../appconnect/testing';
 import { hash160 } from '../appconnect/protocol/legacy';
 import { CHARTERS_CONTRACT_ID } from '../charters/documents';
-import { bytesToHex } from '../model/bytes';
+import { base58Encode, bytesToHex } from '../model/bytes';
 import type { KeyInfo } from './keys';
 
 /**
@@ -78,6 +78,7 @@ const fakeHandle = {
         free: () => undefined,
       }),
       keysRemainingBudgets: async () => new Map(),
+      byPublicKeyHash: async () => ({ id: { toBase58: () => ALICE }, free: () => undefined }),
     },
     dpns: { usernames: async () => ['alice.dash'] },
   },
@@ -87,7 +88,11 @@ const fakeHandle = {
         const hash = bytesToHex(hash160(secp256k1.getPublicKey(bytes, true)));
         return { getPublicKeyHash: () => hash, free: () => undefined };
       },
-      fromWIF: () => ({ getPublicKeyHash: () => 'pasted', free: () => undefined }),
+      fromWIF: () => ({
+        getPublicKeyHash: () => 'pasted',
+        getPublicKey: () => ({ toBytes: () => new Uint8Array([2, 1]), free: () => undefined }),
+        free: () => undefined,
+      }),
     },
     IdentitySigner: class {
       addKey() {}
@@ -184,6 +189,14 @@ describe('resolveSigning', () => {
     expect(session.resolveSigning({ ...viaWallet, pastedKey: pastedKey() }, COMMENT, [spent], now)).toMatchObject({ kind: 'pasted' });
   });
 
+  it("gives the signing wallet key's allowance, and none when a pasted key signs", () => {
+    // Enough for the planner's estimate, so this key still signs; the review compares it with the real cost.
+    const low = { ...walletKey, remainingBudget: 300_000_000n };
+    expect(session.walletAllowance({ ...viaWallet, wallet: { keys: [low], health: 'ok', renewSoon: null } }, COMMENT, now)).toBe(300_000_000n);
+    const viaKey = { ...base, via: 'key' as const, pastedKey: pastedKey() };
+    expect(session.walletAllowance(viaKey, COMMENT, now)).toBeUndefined();
+  });
+
   it('routes a key sign-in by the key, and refuses one that cannot sign the type', () => {
     const viaKey = { ...base, via: 'key' as const, pastedKey: pastedKey() };
     expect(session.resolveSigning(viaKey, COMMENT, undefined, now)).toMatchObject({ kind: 'pasted' });
@@ -262,6 +275,30 @@ describe('withDocumentSigner with a wallet sign-in', () => {
     await session.retryForgetWallet();
     expect(ring.current(ALICE)).not.toBeNull();
     expect(await ring.keyStore().load('testnet')).not.toBeNull();
+  });
+
+  it('keeps a wallet sign-in whose keys a key sign-in could not delete, and deletes them on the next sign-in', async () => {
+    await signInWithWalletKey();
+    // A testnet WIF shape (version 0xef, compressed); the fake SDK never reads the key itself.
+    const wif = base58Encode(Uint8Array.from([0xef, ...new Array(32).fill(7), 1, 0, 0, 0, 0]));
+    const pastedChainKey = walletChainKey({
+      keyId: 1,
+      data: '0201',
+      totalBudget: undefined,
+      expiresAt: undefined,
+      contractBounds: undefined,
+      getPublicKeyHash: () => 'pasted',
+    });
+    const clear = ring.keyStore().clear.bind(ring.keyStore());
+    const spy = vi.spyOn(ring.keyStore(), 'clear').mockRejectedValueOnce(new Error('IndexedDB is unavailable'));
+    chainKeys = [pastedChainKey];
+    expect(await session.signIn('testnet', wif)).toEqual({ ok: true });
+    // Not deleted: a reload would restore the wallet sign-in, so the next sign-in tries again.
+    expect(await ring.keyStore().load('testnet')).not.toBeNull();
+    spy.mockImplementation(clear);
+    chainKeys = [pastedChainKey];
+    expect(await session.signIn('testnet', wif)).toEqual({ ok: true });
+    expect(await ring.keyStore().load('testnet')).toBeNull();
   });
 
   it('marks the ring for renewal when Platform says the allowance is spent', async () => {

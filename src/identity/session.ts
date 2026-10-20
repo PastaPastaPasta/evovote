@@ -13,6 +13,7 @@ import { documentSigningRequest, explainNoCoveringKey, rawSessionKey } from '../
 import { CHARTERS_CONTRACT_ID } from '../charters/documents';
 import { discussionContractId } from '../discussion/config';
 import { bytesToHex } from '../model/bytes';
+import { shortId } from '../model/text';
 import { loadSdk, type SdkHandle } from '../sdk/connection';
 import { errorCode, errorMessage } from '../sdk/errors';
 import { freeQuietly } from '../sdk/free';
@@ -191,7 +192,7 @@ function contractName(network: Network): (id: string) => string {
       ? 'the moderation charters contract'
       : id === discussionContractId(network)
         ? "EvoVote's discussion contract"
-        : `contract ${id.slice(0, 6)}…`;
+        : `contract ${shortId(id)}`;
 }
 
 async function namesOf(handle: SdkHandle, identityId: string): Promise<string[]> {
@@ -286,10 +287,11 @@ export async function signIn(network: Network, wif: string, chosenId?: string): 
     if (refusal) return { ok: false, error: refusal };
     // A wallet ring from an earlier visit is replaced by this sign-in.
     const ring = walletSessions(network);
-    const stored = ring?.current();
-    if (stored) await ring?.logout(stored.identityId);
     // An earlier sign-out left wallet keys stored: delete them, or the next load restores that sign-in.
     if (unforgotten?.network === network && ring && (await ring.logout(unforgotten.identityId))) unforgotten = null;
+    const stored = ring?.current();
+    // Kept for the next sign-in to retry, like a failed sign-out: a reload would restore it.
+    if (stored && ring && !(await ring.logout(stored.identityId))) unforgotten = { network, identityId: stored.identityId };
     dropHeldKeys(null);
     pastedWif = trimmed;
     publish({ network, identityId, ...loaded, names: await namesOf(handle, identityId), via: 'key', pastedKey: key });
@@ -548,6 +550,16 @@ export function resolveSigning(
         : 'Sign in with a HIGH or CRITICAL authentication key.',
     },
   };
+}
+
+/**
+ * The allowance (credits) left on the wallet key that would sign a write of
+ * `target`: undefined when a pasted key signs it, the key has no budget, or
+ * its remaining budget is not known.
+ */
+export function walletAllowance(s: IdentitySession | null, target: DocumentTarget, now = Date.now()): bigint | undefined {
+  const resolution = resolveSigning(s, target, s?.wallet?.keys, now);
+  return resolution.kind === 'wallet' ? resolution.key.remainingBudget : undefined;
 }
 
 /** Whether the session can sign a document write of `target`, and if not, why. */
