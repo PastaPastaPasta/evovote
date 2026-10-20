@@ -1,3 +1,4 @@
+import { VOTE_CHANGE_TEXT } from '../../voting/planner';
 import { ElectionSteps } from '../charters/ElectionSteps';
 
 export function AboutPage() {
@@ -23,8 +24,7 @@ export function AboutPage() {
         <p>
           Masternodes can vote for a contender or abstain. Where the app allows it they can also vote{' '}
           <strong>lock</strong>, which gives the value to nobody. A regular masternode&apos;s vote counts 1 and an
-          evonode&apos;s counts 4. Each masternode can change its vote up to four times; its latest vote is the one
-          that counts.
+          evonode&apos;s counts 4. {VOTE_CHANGE_TEXT}
         </p>
         <p>
           Everything you see is read live from Platform, with cryptographic proofs, straight from your browser.

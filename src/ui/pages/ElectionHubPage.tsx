@@ -6,19 +6,30 @@ import { PHASE_TEXT } from '../../charters/phase';
 import { charterPollKey, proposalHref } from '../../charters/pollKey';
 import { fetchElectionStatus, type ElectionStatus } from '../../charters/reads';
 import { useIdentitySession } from '../../identity/session';
-import { targetName } from '../../kinds/charter';
+import { orderContenders } from '../../model/contest';
 import { encodePollKey } from '../../model/pollKey';
 import type { SdkHandle } from '../../sdk/connection';
 import { CharterNotices } from '../charters/CharterNotices';
 import { CharterWizard } from '../charters/CharterWizard';
 import { DeclarationCard, moderatedTypesText } from '../charters/DeclarationCard';
 import { ElectionSteps } from '../charters/ElectionSteps';
-import { OPEN_PHASES, phaseTone, proposalStanding, standingChip, votesText, winningScore, type Standing } from '../charters/standing';
+import {
+  contenderTeamName,
+  OPEN_PHASES,
+  phaseTone,
+  proposalStanding,
+  standingChip,
+  votesText,
+  winningScore,
+  type Standing,
+} from '../charters/standing';
+import { useTargetName } from '../charters/useTargetName';
+import { contenderColor } from '../components/BallotBar';
 import { CopyButton } from '../components/CopyButton';
 import { IdentityName } from '../components/IdentityName';
 import { ReadIssues } from '../components/ReadIssues';
 import { TechnicalDetail } from '../components/TechnicalDetail';
-import { afterFirstSentence, countdown, dateText, excerpt, firstSentence, plural, shortId } from '../format';
+import { afterFirstSentence, countdown, dateText, endDate, excerpt, firstSentence, plural, shortId } from '../format';
 import { useNow } from '../hooks';
 import { SignInPanel } from '../identity/SignInPanel';
 import { pollHref } from '../router';
@@ -40,25 +51,39 @@ function Summary({ sdk, network, status, now }: { sdk: EvoSDK; network: string; 
   let detail: ReactNode = null;
   if (team) {
     const score = winningScore(contenders, team.leaderId);
-    headline = (
+    const name = contenderTeamName(status, team.leaderId);
+    const decidedAtMs = contest?.winner?.decidedAtMs;
+    headline = name ? (
+      `${name} holds this seat permanently.`
+    ) : (
       <>
         <IdentityName sdk={sdk} id={team.leaderId} />
         &apos;s team holds this seat permanently.
       </>
     );
     detail = (
-      <>
-        {score && `Won ${score}`}
-        {contest?.winner?.decidedAtMs && ` on ${dateText(contest.winner.decidedAtMs, { time: false })}`}
-        {score && ' · '}
-        {team.members.length === 0 ? 'No members besides the leader' : `${plural(team.members.length, 'member')} besides the leader`}
-      </>
+      <span className="sep-list">
+        {name && (
+          <span>
+            Led by <IdentityName sdk={sdk} id={team.leaderId} />
+          </span>
+        )}{' '}
+        {score && (
+          <span>
+            Won {score}
+            {decidedAtMs && ` on ${dateText(decidedAtMs, { time: false })}`}
+          </span>
+        )}{' '}
+        <span>
+          {team.members.length === 0 ? 'No members besides the leader' : `${plural(team.members.length, 'member')} besides the leader`}
+        </span>
+      </span>
     );
   } else if (phase === 'decided') {
     headline = 'The vote is decided; the seated team could not be read yet.';
   } else if (phase === 'join-window' && timing.joinClosesAtMs) {
     headline = `Applications are open: ${plural(contenders.length, 'team')} applied so far.`;
-    detail = `New teams can apply for ${countdown(timing.joinClosesAtMs, now).text} more (until ${dateText(timing.joinClosesAtMs)}).${
+    detail = `New teams can apply for ${countdown(timing.joinClosesAtMs, now).text} more (until ${endDate(timing.joinClosesAtMs)}).${
       contenders.length === 1 ? ' If nobody else applies, this team wins when the window closes.' : ''
     }`;
   } else if (phase === 'voting' || phase === 'closing') {
@@ -67,13 +92,13 @@ function Summary({ sdk, network, status, now }: { sdk: EvoSDK; network: string; 
         ? `Masternodes are voting between ${plural(contenders.length, 'team')}.`
         : 'Voting has closed; Platform is recording the result.';
     if (timing.endsAtMs && timing.endsAtMs > now) {
-      detail = `Voting ends in ${countdown(timing.endsAtMs, now).text} (${dateText(timing.endsAtMs)}). New teams can no longer apply.`;
+      detail = `Voting ends in ${countdown(timing.endsAtMs, now).text} (${endDate(timing.endsAtMs)}). New teams can no longer apply.`;
     }
   } else if (phase === 'notice') {
     headline =
       timing.opensAtMs === Number.POSITIVE_INFINITY
         ? 'This election never opens: the contract has no recorded creation time.'
-        : `Applications open ${dateText(timing.opensAtMs ?? 0)}.`;
+        : `Applications open ${endDate(timing.opensAtMs ?? 0)}.`;
     detail = 'Teams can already file their proposals.';
   } else if (phase === 'proposals') {
     headline = `No team has applied yet. ${plural(status.proposals.length, 'proposal')} filed.`;
@@ -124,27 +149,50 @@ function Summary({ sdk, network, status, now }: { sdk: EvoSDK; network: string; 
   );
 }
 
-/** The vote for the seat: each team's weighted votes and share. */
+/**
+ * The vote for the seat: each team's weighted votes and share, in the
+ * contest page's order and colours.
+ */
 function Contest({ sdk, status }: { sdk: EvoSDK; status: ElectionStatus }) {
   const contest = status.contest;
   if (!contest) return null;
   const total = contest.tally.total;
   const decided = !!contest.winner || !!status.team;
+  const ordered = orderContenders(contest.tally.contenders, contest.winner?.identityId);
+  if (decided && ordered.length === 1 && contest.unreadableContenders === 0 && total === 0) {
+    return (
+      <section className="hub-section">
+        <h2 className="section-title">How masternodes voted</h2>
+        <p className="callout">Won unopposed: no other team applied, so no vote was needed.</p>
+      </section>
+    );
+  }
   return (
     <section className="hub-section">
       <h2 className="section-title">{decided ? 'How masternodes voted' : 'The vote so far'}</h2>
       <ol className="hub-tally">
-        {contest.tally.contenders.map((c) => {
+        {ordered.map((c, rank) => {
           const share = total > 0 ? Math.round((c.votes / total) * 100) : 0;
           const won = contest.winner?.identityId === c.identityId;
+          const team = contenderTeamName(status, c.identityId);
           return (
-            <li key={c.identityId} className={won ? 'won' : ''}>
+            <li key={c.identityId}>
               <span className="hub-tally-name">
-                <IdentityName sdk={sdk} id={c.identityId} />
-                {won && <span className="badge winner">Winner</span>}
+                <span className="swatch" style={{ backgroundColor: contenderColor(rank) }} aria-hidden="true" />
+                <span className="hub-tally-who">
+                  <span className="hub-tally-team">
+                    {team ?? <IdentityName sdk={sdk} id={c.identityId} />}
+                    {won && <span className="badge winner">Winner</span>}
+                  </span>
+                  {team && (
+                    <span className="hub-tally-leader">
+                      led by <IdentityName sdk={sdk} id={c.identityId} />
+                    </span>
+                  )}
+                </span>
               </span>
               <span className="hub-tally-bar" aria-hidden="true">
-                <span style={{ width: `${share}%` }} />
+                <span style={{ width: `${share}%`, backgroundColor: contenderColor(rank) }} />
               </span>
               <span className="hub-tally-votes">{votesText(c.votes, total > 0 ? share : undefined)}</span>
             </li>
@@ -176,14 +224,20 @@ function ProposalList({ sdk, status }: { sdk: EvoSDK; status: ElectionStatus }) 
                 <span className="proposal-item-title">{firstSentence(p.description)}</span>
                 <span className={`chip tone-${chip.tone}`}>{chip.text}</span>
               </span>
-              <span className="proposal-item-by">
-                by <IdentityName sdk={sdk} id={p.leaderId} />
-                {p.createdAtMs ? ` · filed ${dateText(p.createdAtMs, { time: false })}` : ''}
+              <span className="proposal-item-by sep-list">
+                <span>
+                  by <IdentityName sdk={sdk} id={p.leaderId} />
+                </span>{' '}
+                {p.createdAtMs ? <span>filed {dateText(p.createdAtMs, { time: false })}</span> : null}
               </span>
               {afterFirstSentence(p.description) && (
                 <span className="proposal-excerpt">{excerpt(afterFirstSentence(p.description), 180)}</span>
               )}
-              <span className="meta">{proposalTerms(p)}</span>
+              <span className="meta sep-list">
+                {proposalTerms(p).map((term, i) => (
+                  <span key={i}>{term}</span>
+                ))}
+              </span>
             </a>
           </li>
         );
@@ -202,19 +256,21 @@ function rank(s: Standing): number {
       return 2 - s.votes / 1e6;
     case 'not-applied':
       return 3;
-    case 'closed':
+    case 'other-proposal':
       return 4;
-    case 'unknown':
+    case 'closed':
       return 5;
+    case 'unknown':
+      return 6;
   }
 }
 
-/** "1 reason · team keeps 100% of fees · leader 40%, equal 30%, by actions 30%". */
-export function proposalTerms(p: CharterProposal): string {
+/** ["1 reason", "takes 100% of fees", "leader 40%, shared 30%, by actions 30%"], shown "·"-separated. */
+export function proposalTerms(p: CharterProposal): string[] {
   const split = p.rewardSplit
     ? `leader ${p.rewardSplit.leader}%, shared ${p.rewardSplit.equal}%, by actions ${p.rewardSplit.actions}%`
     : 'payout split not readable';
-  return `${plural(p.reasonIds.length, 'reason')} · takes ${p.moderatorsShare}% of fees · ${split}`;
+  return [plural(p.reasonIds.length, 'reason'), `takes ${p.moderatorsShare}% of fees`, split];
 }
 
 /** `#/m/<target>`: one contract's moderator election. */
@@ -227,12 +283,13 @@ export function ElectionHubPage({ handle, target }: { handle: SdkHandle; target:
 
   const s = status.status === 'ok' ? status.value : undefined;
   const elected = s?.moderation ? electedOf(s.moderation) : undefined;
+  const name = useTargetName(sdk, target);
   const header = (
     <header className="page-header">
       <a href="#/m" className="back-link">
         ← Moderator elections
       </a>
-      <h1 className="page-title">Moderators of {targetName(target)}</h1>
+      <h1 className="page-title">Moderators of {name}</h1>
       <p className="page-byline">
         <span>
           Contract <span className="mono" title={target}>{shortId(target)}</span>{' '}
@@ -307,7 +364,7 @@ export function ElectionHubPage({ handle, target }: { handle: SdkHandle; target:
         <section className="hub-section propose" id="propose">
           <h2 className="section-title">Propose a team</h2>
           <p>
-            Lead a moderation team for {targetName(target)}: write down what you would moderate and why, gather
+            Lead a moderation team for {name}: write down what you would moderate and why, gather
             members, and apply for the seat. Here is the whole path and what it costs:
           </p>
           <ElectionSteps />

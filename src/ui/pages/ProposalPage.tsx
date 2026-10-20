@@ -10,13 +10,13 @@ import {
 } from '../../charters/reads';
 import type { Cap, Failure } from '../../discovery/types';
 import { useIdentitySession } from '../../identity/session';
-import { targetName } from '../../kinds/charter';
 import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
 import { CharterNotices } from '../charters/CharterNotices';
 import { JoinPanel } from '../charters/JoinPanel';
 import { LeaderDashboard } from '../charters/LeaderDashboard';
 import { OPEN_PHASES, proposalStanding, splitSentence, viewerNote } from '../charters/standing';
+import { useTargetName } from '../charters/useTargetName';
 import { CopyButton } from '../components/CopyButton';
 import { IdentityName } from '../components/IdentityName';
 import { ReadIssues } from '../components/ReadIssues';
@@ -72,10 +72,11 @@ export function ProposalPage({ handle, target, charterId }: { handle: SdkHandle;
   const { sdk, network } = handle;
   const view = useAsync(() => loadProposal(sdk, target, charterId), [sdk, target, charterId]);
   const session = useIdentitySession();
+  const name = useTargetName(sdk, target);
 
   const back = (
     <a href={moderatedHref(target)} className="back-link">
-      ← Moderators of {targetName(target)}
+      ← Moderators of {name}
     </a>
   );
   if (view.status !== 'ok') {
@@ -152,7 +153,7 @@ export function ProposalPage({ handle, target, charterId }: { handle: SdkHandle;
           <span>
             Proposal by <IdentityName sdk={sdk} id={p.leaderId} />
           </span>
-          {p.createdAtMs && <span>Filed {dateText(p.createdAtMs)}</span>}
+          {p.createdAtMs && <span>Filed {dateText(p.createdAtMs, { time: false })}</span>}
         </p>
       </header>
       <ReadIssues failures={v.failures} caps={v.caps} />

@@ -378,7 +378,7 @@ describe('reasons just filed', () => {
 describe('charter kind', () => {
   it('should title a contest by its target, falling back to the short id', () => {
     const key = charterPollKey(TARGET);
-    expect(targetName(TARGET)).toBe(`${TARGET.slice(0, 6)}…${TARGET.slice(-6)}`);
+    expect(targetName(TARGET)).toBe(`contract ${TARGET.slice(0, 6)}…${TARGET.slice(-6)}`);
     expect(charterTitle({ key, keyString: encodePollKey(key) })).toBe(`Moderators of ${targetName(TARGET)}`);
   });
 

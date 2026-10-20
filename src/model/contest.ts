@@ -107,3 +107,11 @@ export function isVotable(c: { endsAtMs?: number; winner?: Winner }, now = Date.
 export function isEmptyContest(c: Contest): boolean {
   return c.tally.contenders.length === 0 && c.tally.total === 0 && !c.winner;
 }
+
+/** Highest weight first; on a tie the winner leads, then the original (earliest) order. */
+export function orderContenders(contenders: readonly Contender[], winnerId?: string): Contender[] {
+  return contenders
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => b.c.votes - a.c.votes || Number(b.c.identityId === winnerId) - Number(a.c.identityId === winnerId) || a.i - b.i)
+    .map(({ c }) => c);
+}

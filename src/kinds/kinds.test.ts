@@ -104,7 +104,7 @@ describe('charter and generic stubs', () => {
   it('should withhold Lock for charters (resolution 1)', () => {
     const c = toContest(summary(charterPollKey(DPNS_CONTRACT_ID)), { contenders: [] }, { resolution: 1 });
     expect(charterKind.choices(c)).toEqual(['identity', 'abstain']);
-    expect(charterKind.title(c)).toMatch(/^Moderators of GWRSAV…/);
+    expect(charterKind.title(c)).toMatch(/^Moderators of contract GWRSAV…/);
   });
 
   it('should take the generic resolution from the contract, withholding Lock when unknown', () => {

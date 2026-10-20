@@ -14,26 +14,23 @@ import { PHASE_TEXT } from '../../charters/phase';
 import { moderatedHref } from '../../charters/pollKey';
 import { fetchElectionStatus, type ElectionStatus } from '../../charters/reads';
 import { forEachConcurrent } from '../../discovery/concurrency';
-import { contractJson, fetchContract } from '../../discovery/contracts';
-import { fetchUsernames } from '../../kinds/dpns';
+import { resolveTargetName, targetTitle } from '../../kinds/charter';
 import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
 import { IdentityName } from '../components/IdentityName';
 import { ReadIssues } from '../components/ReadIssues';
 import { TechnicalDetail } from '../components/TechnicalDetail';
-import { countdown, dateText, plural, shortId } from '../format';
+import { countdown, dateText, endDate, plural, shortId } from '../format';
 import { useNow } from '../hooks';
-import { OPEN_PHASES, phaseTone, winningScore } from '../charters/standing';
+import { contenderTeamName, OPEN_PHASES, phaseTone, winningScore } from '../charters/standing';
 import { useAsync } from '../useAsync';
 
 interface Card {
   status?: ElectionStatus;
-  /** The owner's first DPNS name, for a contract the site has no name for. */
-  ownerName?: string;
   error?: string;
 }
 
-/** One card's election and, for an unnamed contract, its owner's name. Never throws. */
+/** One card's election, and (for a contract the site has no name for) its owner's name. Never throws. */
 async function loadCard(sdk: EvoSDK, id: string): Promise<Card> {
   let status: ElectionStatus;
   try {
@@ -41,15 +38,9 @@ async function loadCard(sdk: EvoSDK, id: string): Promise<Card> {
   } catch (e) {
     return { error: errorMessage(e) };
   }
-  if (knownContractById(id) || !status.contractFound) return { status };
-  // Best effort: the card falls back to what the contract moderates.
-  try {
-    const contract = await fetchContract(sdk, id);
-    const owner = contract && (contractJson(sdk, contract) as { ownerId?: unknown }).ownerId;
-    return { status, ownerName: typeof owner === 'string' ? (await fetchUsernames(sdk, owner))[0] : undefined };
-  } catch {
-    return { status };
-  }
+  // The name every page uses (see targetName), read before the card shows.
+  if (status.contractFound) await resolveTargetName(sdk, id);
+  return { status };
 }
 
 /** A card whose election could not be read (as opposed to one that is closed). */
@@ -57,17 +48,11 @@ function unreadable(card: Card | undefined): boolean {
   return !!card && (!card.status || card.status.timing.phase === 'unknown');
 }
 
-/** "Yappr Social", else what the contract moderates and who owns it, else its short id. */
-function cardTitle(id: string, card: Card | undefined): string {
-  const known = knownContractById(id)?.name;
-  if (known) return known;
+/** For a contract the site has no note for: "Moderates post, reply". */
+function moderatesText(card: Card | undefined): string | undefined {
   const elected = card?.status?.moderation && electedOf(card.status.moderation);
   const types = elected ? Object.keys(elected.moderatedDocumentTypes) : [];
-  if (types.length > 0) {
-    const what = `${types.join(', ')} moderation`;
-    return `${what.charAt(0).toUpperCase()}${what.slice(1)}${card?.ownerName ? ` · ${card.ownerName}` : ''}`;
-  }
-  return card?.ownerName ? `${card.ownerName}'s contract` : `Contract ${shortId(id)}`;
+  return types.length > 0 ? `Moderates ${types.join(', ')}` : undefined;
 }
 
 /** One sentence: who holds the seat, or what is open and until when. */
@@ -80,11 +65,14 @@ function CardStatus({ sdk, card, now }: { sdk: EvoSDK; card: Card | undefined; n
   if (s.team) {
     const score = winningScore(s.contest?.tally.contenders ?? [], s.team.leaderId);
     const decidedAt = s.contest?.winner?.decidedAtMs;
+    const team = contenderTeamName(s, s.team.leaderId);
     return (
-      <span>
-        Seated: <IdentityName sdk={sdk} id={s.team.leaderId} />
-        {decidedAt && ` since ${dateText(decidedAt, { time: false })}`}
-        {score && (score === 'unopposed' ? ' · unopposed' : ` · won ${score}`)}
+      <span className="sep-list">
+        <span>
+          Seated{decidedAt && ` since ${dateText(decidedAt, { time: false })}`}:{' '}
+          {team ?? <IdentityName sdk={sdk} id={s.team.leaderId} />}
+        </span>{' '}
+        {score && <span>{score === 'unopposed' ? 'won unopposed' : `won ${score}`}</span>}
       </span>
     );
   }
@@ -96,7 +84,7 @@ function CardStatus({ sdk, card, now }: { sdk: EvoSDK; card: Card | undefined; n
     case 'notice':
       return (
         <span>
-          {opensAtMs && Number.isFinite(opensAtMs) ? `Applications open ${dateText(opensAtMs)}` : 'Applications never open'}
+          {opensAtMs && Number.isFinite(opensAtMs) ? `Applications open ${endDate(opensAtMs)}` : 'Applications never open'}
         </span>
       );
     case 'proposals':
@@ -141,14 +129,14 @@ function ElectionCard({
     <li className="election-card">
       <a className="election-card-link" href={moderatedHref(id)}>
         <span className="election-card-head">
-          <span className="election-card-title">{cardTitle(id, card)}</span>
+          <span className="election-card-title">{targetTitle(id)}</span>
           {phase && <span className={`chip tone-${tone}`}>{PHASE_TEXT[phase]}</span>}
         </span>
         <span className="election-card-status">
           <CardStatus sdk={sdk} card={card} now={now} />
         </span>
         <span className="meta">
-          {known?.note ? `${known.note} · ` : ''}
+          {known?.note ? `${known.note} · ` : moderatesText(card) ? `${moderatesText(card)} · ` : ''}
           <span className="mono" title={id}>
             {shortId(id)}
           </span>
@@ -156,7 +144,7 @@ function ElectionCard({
         </span>
       </a>
       {sources.includes('added') && (
-        <button className="link-button election-card-remove" onClick={() => removeContract(network, id)} aria-label={`Remove ${cardTitle(id, card)} from your list`}>
+        <button className="link-button election-card-remove" onClick={() => removeContract(network, id)} aria-label={`Remove ${targetTitle(id)} from your list`}>
           Remove
         </button>
       )}

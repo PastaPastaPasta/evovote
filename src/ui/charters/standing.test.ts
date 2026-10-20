@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ElectionStatus } from '../../charters/reads';
 import { base58Encode } from '../../model/bytes';
 import type { Contest } from '../../model/contest';
-import { phaseTone, proposalStanding, standingChip, viewerNote, winningScore } from './standing';
+import { contenderTeamName, phaseTone, proposalStanding, standingChip, teamName, viewerNote, winningScore } from './standing';
 
 const contest = (contenders: Array<[string, number]>, winner?: string): Contest =>
   ({
@@ -26,7 +26,7 @@ describe('proposalStanding', () => {
   });
 
   it('should not call the seated leader\'s other proposals lost, nor non-applicants applied', () => {
-    expect(proposalStanding(decided, { id: 'P-bob-2', leaderId: 'bob' })).toEqual({ kind: 'closed' });
+    expect(proposalStanding(decided, { id: 'P-bob-2', leaderId: 'bob' })).toEqual({ kind: 'other-proposal' });
     expect(proposalStanding(decided, { id: 'P-carol', leaderId: 'carol' })).toEqual({ kind: 'closed' });
   });
 
@@ -47,7 +47,11 @@ describe('proposalStanding', () => {
     running.tally.contenders[0].document = { $ownerId: id(1), submittedCharterId: id(2) };
     const status = { contest: running, timing: { phase: 'join-window' as const } };
     expect(proposalStanding(status, { id: id(2), leaderId: id(1) })).toMatchObject({ kind: 'applied' });
-    expect(proposalStanding(status, { id: id(3), leaderId: id(1) })).toEqual({ kind: 'closed' });
+    // Still in the join window: not "applications are now closed", but "applied with another".
+    expect(proposalStanding(status, { id: id(3), leaderId: id(1) })).toEqual({ kind: 'other-proposal' });
+    expect(viewerNote({ standing: { kind: 'other-proposal' }, role: 'leader' }).text).toMatch(/another of your proposals/);
+    expect(viewerNote({ standing: { kind: 'other-proposal' }, role: 'other' }).text).not.toMatch(/closed/);
+    expect(standingChip({ kind: 'other-proposal' }).text).toBe('leader applied with another');
   });
 
   it('should show running and not-yet-applied proposals while open', () => {
@@ -80,5 +84,46 @@ describe('winningScore', () => {
     expect(winningScore(c, 'bob')).toBe('12–4');
     expect(winningScore([{ identityId: 'bob', votes: 0 }], 'bob')).toBe('unopposed');
     expect(winningScore(c, 'carol')).toBeUndefined();
+  });
+});
+
+describe('contenderTeamName', () => {
+  const proposal = (id: string, leaderId: string, description: string, createdAtMs = 1) => ({
+    id,
+    leaderId,
+    targetContractId: 'T',
+    description,
+    reasonIds: [],
+    moderatorsShare: 100,
+    createdAtMs,
+  });
+  const decidedContest = { ...contest([['bob', 12], ['alice', 4]], 'bob') };
+  decidedContest.winner = { kind: 'identity', identityId: 'bob', rawKind: 'WonByIdentity', decidedAtMs: 100 };
+  const status = {
+    targetContractId: 'T',
+    team,
+    contest: decidedContest,
+    proposals: [
+      proposal('P-bob', 'bob', 'Team B. We keep threads on topic.'),
+      proposal('P-alice-old', 'alice', 'Old team A.', 10),
+      proposal('P-alice', 'alice', 'Team A. We remove spam.', 50),
+      proposal('P-alice-late', 'alice', 'Too late.', 200),
+    ],
+  };
+
+  it("should name the seated team by its charter's title, and a loser by its latest proposal before the decision", () => {
+    expect(contenderTeamName(status, 'bob')).toBe('Team B');
+    expect(contenderTeamName(status, 'alice')).toBe('Team A');
+  });
+
+  it('should give nothing for someone with no proposal read, or an empty charter', () => {
+    expect(contenderTeamName(status, 'carol')).toBeUndefined();
+    expect(teamName('  ')).toBeUndefined();
+    expect(teamName('Clean feeds! We remove spam.')).toBe('Clean feeds');
+  });
+
+  it("should not guess the seated team's name when its proposal is past a capped list", () => {
+    const capped = { ...status, proposals: status.proposals.filter((p) => p.id !== 'P-bob').concat(proposal('P-bob-2', 'bob', 'Other.', 50)) };
+    expect(contenderTeamName(capped, 'bob')).toBeUndefined();
   });
 });

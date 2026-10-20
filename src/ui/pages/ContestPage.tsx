@@ -4,24 +4,26 @@ import { getActivePolls } from '../../discovery/activePolls';
 import type { Failure } from '../../discovery/types';
 import { fetchContest } from '../../discovery/voteState';
 import { charterTarget, moderatedHref } from '../../charters/pollKey';
-import { targetName } from '../../kinds/charter';
 import { dpnsDisplayLabel, dpnsLabel, fetchUsernames, normalizeDpnsLabel } from '../../kinds/dpns';
 import { kindFor } from '../../kinds/registry';
 import {
   isEmptyContest,
   isVotable,
+  orderContenders,
   phaseOf,
-  type Contender,
   type Contest,
   type VoteChoice,
 } from '../../model/contest';
 import { displayIndexValue } from '../../model/indexValue';
 import { decodePollKey, type PollKey } from '../../model/pollKey';
 import { canVoteOnPoll } from '../../voting/cast';
+import { VOTE_CHANGE_TEXT } from '../../voting/planner';
 import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
 import { CharterNotices } from '../charters/CharterNotices';
+import { winningScore } from '../charters/standing';
+import { useTargetName } from '../charters/useTargetName';
 import { ABSTAIN_COLOR, BallotBar, contenderColor, LOCK_COLOR } from '../components/BallotBar';
 import { KindTitle } from '../components/KindTitle';
 import { PollIndexInfo } from '../components/PollIndexInfo';
@@ -33,6 +35,7 @@ import { countdown, endDate, plural, shortId } from '../format';
 import { useNow } from '../hooks';
 
 const EMPTY: ReadonlyMap<string, string[]> = new Map();
+const EMPTY_TEAMS: ReadonlyMap<string, string> = new Map();
 
 /** Every DPNS name of each identity (best effort), as they load. */
 function useIdentityNames(sdk: EvoSDK, ids: readonly string[]): ReadonlyMap<string, string[]> {
@@ -69,25 +72,20 @@ function personLabels(
   };
 }
 
-/** Highest weight first; on a tie the winner leads, then the original (earliest) order. */
-export function orderContenders(contenders: readonly Contender[], winnerId?: string): Contender[] {
-  return contenders
-    .map((c, i) => ({ c, i }))
-    .sort((a, b) => b.c.votes - a.c.votes || Number(b.c.identityId === winnerId) - Number(a.c.identityId === winnerId) || a.i - b.i)
-    .map(({ c }) => c);
-}
-
 /** Where the contest stands, as the hub says it: a tone badge and one plain sentence. */
 export function contestStatus(
   contest: Pick<Contest, 'winner' | 'endsAtMs'>,
   now: number,
   winnerLabel?: string,
+  /** The winner's tally against the rest, "12–4" or "unopposed" (see winningScore). */
+  score?: string,
 ): { badge: string; tone: 'won' | 'live' | 'urgent' | 'muted'; text: string } {
   const { winner, endsAtMs } = contest;
   if (winner) {
     const when = winner.decidedAtMs ? ` on ${endDate(winner.decidedAtMs)}` : '';
     if (winner.kind === 'identity' && winner.identityId) {
-      return { badge: 'Decided', tone: 'won', text: `${winnerLabel ?? shortId(winner.identityId)} won${when}.` };
+      const by = score ? ` ${score}` : '';
+      return { badge: 'Decided', tone: 'won', text: `${winnerLabel ?? shortId(winner.identityId)} won${by}${when}.` };
     }
     if (winner.kind === 'locked') return { badge: 'Locked', tone: 'muted', text: `Masternodes voted to award it to no one${when}.` };
     return { badge: 'Decided', tone: 'muted', text: `Platform recorded a result this site cannot read${when}.` };
@@ -105,14 +103,15 @@ export function contestStatus(
 }
 
 /** The contest's state, in the hub's status panel: badge, one sentence, the counts, the way to the discussion. */
-function StatusPanel({ contest, now, winnerLabel, details, discussion }: {
+function StatusPanel({ contest, now, winnerLabel, score, details, discussion }: {
   contest: Contest;
   now: number;
   winnerLabel?: string;
+  score?: string;
   details: string[];
   discussion: ReactNode;
 }) {
-  const status = contestStatus(contest, now, winnerLabel);
+  const status = contestStatus(contest, now, winnerLabel, score);
   // The panel's edge takes the hub's tones; "urgent" is amber on the badge only.
   const edge = status.tone === 'urgent' ? 'live' : status.tone;
   return (
@@ -122,7 +121,13 @@ function StatusPanel({ contest, now, winnerLabel, details, discussion }: {
         {discussion}
       </div>
       <p className="status-headline">{status.text}</p>
-      {details.length > 0 && <p className="status-detail">{details.join(' · ')}</p>}
+      {details.length > 0 && (
+        <p className="status-detail sep-list">
+          {details.map((d) => (
+            <span key={d}>{d}</span>
+          ))}
+        </p>
+      )}
     </section>
   );
 }
@@ -153,9 +158,19 @@ function TechnicalDetails({ pollKey }: { pollKey: PollKey }) {
   );
 }
 
-function ContestHeader({ sdk, pollKey, contest }: { sdk: EvoSDK; pollKey: PollKey; contest?: Contest }) {
+/**
+ * A moderator election's title: a question while it is open, a plain name
+ * once decided (or while the contest is still being read).
+ */
+export function electionTitle(name: string, open: boolean): string {
+  return open ? `Who should moderate ${name}?` : `Moderator election: ${name}`;
+}
+
+function ContestHeader({ sdk, pollKey, contest, now }: { sdk: EvoSDK; pollKey: PollKey; contest?: Contest; now: number }) {
   const label = dpnsLabel(pollKey);
   const target = charterTarget(pollKey);
+  const name = useTargetName(target !== undefined ? sdk : undefined, target ?? '');
+  const open = contest !== undefined && phaseOf(contest, now) !== 'decided';
   const summary = contest ?? { key: pollKey, keyString: '' };
   const kind = kindFor(pollKey);
   const shown = label !== undefined ? dpnsDisplayLabel(summary) : undefined;
@@ -163,7 +178,7 @@ function ContestHeader({ sdk, pollKey, contest }: { sdk: EvoSDK; pollKey: PollKe
     <header className="contest-header">
       {target !== undefined ? (
         <a href={moderatedHref(target)} className="back-link">
-          ← Moderators of {targetName(target)}
+          ← Moderators of {name}
         </a>
       ) : (
         <a href="#/" className="back-link">
@@ -172,8 +187,8 @@ function ContestHeader({ sdk, pollKey, contest }: { sdk: EvoSDK; pollKey: PollKe
       )}
       {target !== undefined ? (
         <>
-          <p className="contest-eyebrow">Moderator election</p>
-          <h1 className="contest-title">Who moderates {targetName(target)}</h1>
+          {open && <p className="contest-eyebrow">Moderator election</p>}
+          <h1 className="contest-title">{electionTitle(name, open)}</h1>
           <p className="contest-lede">
             Masternodes vote for the team that moderates contract{' '}
             <span className="mono" title={target}>
@@ -250,6 +265,12 @@ export function ContestPage({
   const contested = pollKey ? dpnsLabel(pollKey) : undefined;
   const labels = useMemo(() => personLabels(names, contested), [names, contested]);
   const winnerId = loaded?.winner?.identityId;
+  // A moderator election's contenders go by their team's name once their card has read the charter.
+  const [teams, setTeams] = useState<ReadonlyMap<string, string>>(EMPTY_TEAMS);
+  const onTeamName = useCallback(
+    (id: string, team: string) => setTeams((prev) => (prev.get(id) === team ? prev : new Map(prev).set(id, team))),
+    [],
+  );
 
   // The contest's contenders as the discussion shows them: same label, same colour.
   const contenderInfo = useMemo<ContenderInfo[]>(
@@ -269,10 +290,10 @@ export function ContestPage({
       decidedAtMs: winner.decidedAtMs,
       winnerName:
         winner.kind === 'identity' && winner.identityId
-          ? (labels(winner.identityId).label ?? shortId(winner.identityId, 6))
+          ? (teams.get(winner.identityId) ?? labels(winner.identityId).label ?? shortId(winner.identityId))
           : undefined,
     };
-  }, [loaded, labels]);
+  }, [loaded, labels, teams]);
   const onCount = useCallback((n: number, more: boolean) => setCommentCount(`${n}${more ? '+' : ''}`), [setCommentCount]);
 
   useEffect(() => {
@@ -326,7 +347,7 @@ export function ContestPage({
   if (!loaded) {
     return (
       <div className="contest-page">
-        <ContestHeader sdk={sdk} pollKey={pollKey} />
+        <ContestHeader sdk={sdk} pollKey={pollKey} now={now} />
         {typeof state === 'object' && 'error' in state ? (
           <div className="page-note error">
             <p>Could not load this contest on {network}. Reload to try again.</p>
@@ -353,7 +374,7 @@ export function ContestPage({
   if (isEmptyContest(contest)) {
     return (
       <div className="contest-page">
-        <ContestHeader sdk={sdk} pollKey={pollKey} />
+        <ContestHeader sdk={sdk} pollKey={pollKey} now={now} />
         <ReadIssues failures={failures} caps={[]} />
         <p className="page-note">Nobody contests this on {network}.</p>
         {discussion}
@@ -381,22 +402,25 @@ export function ContestPage({
   const winner = ordered.find((c) => c.identityId === winnerId);
   const hasLock = choices.includes('lock');
   const tally = { ...contest.tally, contenders: ordered };
-  const winnerLabel = winnerId ? labels(winnerId).label : undefined;
+  const winnerLabel = winnerId ? (teams.get(winnerId) ?? labels(winnerId).label) : undefined;
+  // Abstain and lock count in `total`; a score of contender votes only means something when some went to them.
+  const score = winnerId && ordered.some((c) => c.votes > 0) ? winningScore(ordered, winnerId) : undefined;
   // The vote dialog names contenders as this page does.
   const voteNames = new Map<string, string>();
   for (const c of ordered) {
-    const { label } = labels(c.identityId);
+    const label = teams.get(c.identityId) ?? labels(c.identityId).label;
     if (label) voteNames.set(c.identityId, label);
   }
 
   return (
     <div className="contest-page">
-      <ContestHeader sdk={sdk} pollKey={pollKey} contest={contest} />
+      <ContestHeader sdk={sdk} pollKey={pollKey} contest={contest} now={now} />
 
       <StatusPanel
         contest={contest}
         now={now}
         winnerLabel={winnerLabel}
+        score={score}
         details={[
           ...(ordered.length >= 2 ? [`${ordered.length} contenders`] : []),
           total === 0 ? (decided ? 'No votes were cast' : 'No votes yet') : `${plural(total, 'vote')} cast (weighted)`,
@@ -457,6 +481,7 @@ export function ContestPage({
                 winnerVotes={winner && winner.identityId !== c.identityId ? winner.votes : undefined}
                 canVote={votable && choices.includes('identity')}
                 onVote={() => onVote(contest, { type: 'identity', identityId: c.identityId }, voteNames)}
+                onTeamName={kind.id === 'charter' ? onTeamName : undefined}
               />
             );
           })}
@@ -497,7 +522,7 @@ export function ContestPage({
           <p className="contest-quiet">Who voted is not kept after a contest is decided; Platform keeps only the totals.</p>
         )}
         <p className="contest-footnote">
-          A masternode can vote up to 5 times on a contest, so it can change its mind; only its latest vote counts.
+          {VOTE_CHANGE_TEXT}
           {!hasLock && ' This contest has no Lock: there is always a winner, and a tie goes to the earliest applicant.'}
         </p>
       </section>

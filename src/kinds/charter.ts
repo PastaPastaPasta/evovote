@@ -1,5 +1,6 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { sweepContestedResources } from '../discovery/archive';
+import { contractJson, fetchContract } from '../discovery/contracts';
 import { knownContractById } from '../config/knownContracts';
 import {
   CHARTERS_CONTRACT_ID,
@@ -11,17 +12,48 @@ import { CHARTER_INDEX, charterPollKey, charterTarget, proposalHref } from '../c
 import { fetchLeaderProposal, fetchProposal, fetchReasons } from '../charters/reads';
 import { choicesForResolution, type Contender, type Contest, type ContestSummary } from '../model/contest';
 import { indexValueFromJs } from '../model/indexValue';
+import { shortId } from '../model/text';
 import { freeQuietly } from '../sdk/free';
 import { fetchUsernames } from './dpns';
 import type { CharterApplicationView, ContenderView, ContestKind } from './types';
 
 export { CHARTERS_CONTRACT_ID, charterPollKey };
 
-const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id);
+/** The owner's first DPNS name of each contract the site has no name for, once read ('' when they have none). */
+const ownerNames = new Map<string, string>();
 
-/** "Yappr Social" for a known contract, else its short id. */
+/**
+ * A contract's name, the same on every page: the site's name for a known
+ * contract ("Yappr Social"), else its owner's ("alice.dash's contract") once
+ * `resolveTargetName` has read it, else "contract EFyPZP…CW8zAt".
+ */
 export function targetName(targetContractId: string): string {
-  return knownContractById(targetContractId)?.name ?? short(targetContractId);
+  const known = knownContractById(targetContractId)?.name;
+  if (known) return known;
+  const owner = ownerNames.get(targetContractId);
+  return owner ? `${owner}'s contract` : `contract ${shortId(targetContractId)}`;
+}
+
+/** `targetName` heading a page or card: "Contract EFyPZP…CW8zAt" (a DPNS name keeps its own case). */
+export function targetTitle(targetContractId: string): string {
+  const name = targetName(targetContractId);
+  return name.startsWith('contract ') ? `C${name.slice(1)}` : name;
+}
+
+/** `targetName` after reading (once) the owner of a contract the site has no name for. Never throws. */
+export async function resolveTargetName(sdk: EvoSDK, targetContractId: string): Promise<string> {
+  if (knownContractById(targetContractId) || ownerNames.has(targetContractId)) return targetName(targetContractId);
+  try {
+    const contract = await fetchContract(sdk, targetContractId);
+    const owner = contract && (contractJson(sdk, contract) as { ownerId?: unknown }).ownerId;
+    if (contract) {
+      const name = typeof owner === 'string' ? (await fetchUsernames(sdk, owner))[0] : undefined;
+      ownerNames.set(targetContractId, name ?? '');
+    }
+  } catch {
+    // Best effort: the short id names it.
+  }
+  return targetName(targetContractId);
 }
 
 export function charterTitle(c: ContestSummary | Contest): string {
@@ -31,7 +63,7 @@ export function charterTitle(c: ContestSummary | Contest): string {
 
 async function displayName(sdk: EvoSDK, identityId: string): Promise<string> {
   const names = await fetchUsernames(sdk, identityId);
-  return names[0] ?? short(identityId);
+  return names[0] ?? shortId(identityId);
 }
 
 /**
@@ -80,7 +112,7 @@ export function charterApplicationView(args: {
     reasons,
     missingReasons,
     ...(!application && candidates > 1 ? { guessedFrom: candidates } : {}),
-    members: application ? (memberNames ?? application.members.map(short)) : undefined,
+    members: application ? (memberNames ?? application.members.map((m) => shortId(m))) : undefined,
     appliedAtMs: application?.createdAtMs,
     href: proposalHref(target, proposal.id),
   };

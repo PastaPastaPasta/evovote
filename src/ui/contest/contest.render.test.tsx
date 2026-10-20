@@ -4,10 +4,10 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import { dpnsKind, dpnsPollKey } from '../../kinds/dpns';
 import { base58Encode } from '../../model/bytes';
 import { encodePollKey } from '../../model/pollKey';
-import type { Contender, Contest } from '../../model/contest';
-import { orderContenders } from '../pages/ContestPage';
-import { ContenderCard, percent, votersText } from './ContenderCard';
-import { contestStatus } from '../pages/ContestPage';
+import { orderContenders, type Contender, type Contest } from '../../model/contest';
+import { CharterBlock, ContenderCard, percent, votersText } from './ContenderCard';
+import { contestStatus, electionTitle } from '../pages/ContestPage';
+import { contestText } from '../pages/ContractPage';
 
 const id32 = (n: number) => base58Encode(new Uint8Array(32).fill(n));
 const A = id32(1);
@@ -101,6 +101,47 @@ describe('contender card', () => {
   });
 });
 
+describe('charter block', () => {
+  const charter = {
+    description: 'Team B. We keep threads on topic.',
+    moderatorsShare: 100,
+    reasons: [],
+    missingReasons: 0,
+    href: '#/m/x/charter/y',
+  };
+  const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+
+  it('should say a losing team is not kept even when nobody voted, and list a kept one', () => {
+    expect(text(renderToStaticMarkup(<CharterBlock charter={charter} titled={false} decidedLoser />))).toContain('Team: not shown');
+    const kept = renderToStaticMarkup(<CharterBlock charter={{ ...charter, members: ['bob.dash'] }} titled={false} decidedLoser={false} />);
+    expect(text(kept)).toContain('Team: bob.dash');
+    expect(text(renderToStaticMarkup(<CharterBlock charter={charter} titled={false} decidedLoser={false} />))).not.toContain('Team:');
+  });
+
+  it('should not repeat the title sentence under a card headed by it', () => {
+    const titled = text(renderToStaticMarkup(<CharterBlock charter={charter} titled decidedLoser={false} />));
+    expect(titled).toContain('We keep threads on topic.');
+    expect(titled).not.toContain('Team B.');
+  });
+});
+
+describe('contestText', () => {
+  it('should say plainly what goes to a vote, for any number of document types', () => {
+    expect(contestText(0, [], false)).toBe('This contract has no documents, so nothing on this contract goes to a masternode vote.');
+    expect(contestText(1, [], true)).toMatch(/^Its one document type has no values people can contest, so nothing else/);
+    expect(contestText(3, [], false)).toMatch(/^None of its 3 document types has values/);
+    expect(contestText(2, ['domain', 'preorder'], false)).toMatch(/^All 2 of its document types have values/);
+    expect(contestText(3, ['domain'], false)).toMatch(/^1 of its 3 document types has values people can contest \(domain\)/);
+  });
+});
+
+describe('electionTitle', () => {
+  it('should ask while open and name it once decided', () => {
+    expect(electionTitle('EvoVote QA election', true)).toBe('Who should moderate EvoVote QA election?');
+    expect(electionTitle('EvoVote QA election', false)).toBe('Moderator election: EvoVote QA election');
+  });
+});
+
 describe('orderContenders', () => {
   it('should put the winner first on a tie, else keep weight order', () => {
     const a = { identityId: A, votes: 0 };
@@ -120,6 +161,12 @@ describe('contestStatus', () => {
     expect(contestStatus({ winner: { kind: 'identity', identityId: A, rawKind: 'WonByIdentity' } }, now).text).toBe(
       `${A.slice(0, 6)}…${A.slice(-6)} won.`,
     );
+  });
+
+  it('should give the winning score when there is one', () => {
+    const winner = { kind: 'identity' as const, identityId: A, rawKind: 'WonByIdentity' };
+    expect(contestStatus({ winner }, now, 'Team B', '12–4').text).toBe('Team B won 12–4.');
+    expect(contestStatus({ winner }, now, 'Team B', 'unopposed').text).toBe('Team B won unopposed.');
   });
 
   it('should say how long voting stays open, and warn in its last day', () => {

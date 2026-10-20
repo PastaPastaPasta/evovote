@@ -1,7 +1,43 @@
 import { toElectedCharter, type CharterProposal } from '../../charters/documents';
 import type { ElectionPhase } from '../../charters/phase';
-import type { ElectionStatus } from '../../charters/reads';
-import { plural } from '../format';
+import { pickLeaderProposal, type ElectionStatus } from '../../charters/reads';
+import { firstSentence, plural } from '../format';
+
+/**
+ * A team's name: its charter's title (the first sentence), as the proposal
+ * list shows it. Undefined for a charter with no text.
+ */
+export function teamName(description: string): string | undefined {
+  return firstSentence(description).replace(/[!?]+$/, '') || undefined;
+}
+
+/**
+ * The name of the team a contender (or the seated leader) stands for: the
+ * seated proposal, else the one the application names, else (decided) the
+ * leader's latest proposal before the decision. Undefined when none of the
+ * read proposals is it; pages then name the leader.
+ */
+export function contenderTeamName(
+  status: Pick<ElectionStatus, 'targetContractId' | 'team' | 'contest' | 'proposals'>,
+  leaderId: string,
+): string | undefined {
+  const { team, contest, proposals } = status;
+  const byId = (id: string | undefined) => (id ? proposals.find((p) => p.id === id) : undefined);
+  // The seated team is named by its own proposal only: past a capped list, another title would be a guess.
+  if (team?.leaderId === leaderId) {
+    const seated = byId(team.submittedCharterId);
+    return seated ? teamName(seated.description) : undefined;
+  }
+  let proposal: CharterProposal | undefined;
+  const contender = contest?.tally.contenders.find((c) => c.identityId === leaderId);
+  proposal ??= byId(appliedWith(contender?.document));
+  const decidedAtMs = contest?.winner?.decidedAtMs;
+  if (!proposal && contender && decidedAtMs !== undefined) {
+    const own = proposals.filter((p) => p.leaderId === leaderId);
+    proposal = pickLeaderProposal(own, status.targetContractId, decidedAtMs).proposal;
+  }
+  return proposal && proposal.leaderId === leaderId ? teamName(proposal.description) : undefined;
+}
 
 /** Phases in which teams can still propose, apply or be voted on. */
 export const OPEN_PHASES: ReadonlySet<ElectionPhase> = new Set<ElectionPhase>([
@@ -26,6 +62,7 @@ export function phaseTone(phase: ElectionPhase | undefined): 'won' | 'live' | 'm
  * - lost: its leader applied and the seat went to another team
  * - applied: its leader is a contender in the running vote
  * - not-applied: nobody has applied with it yet, and teams still can
+ * - other-proposal: its leader applied with another of their proposals (an identity applies once)
  * - closed: it never applied, and applications are closed (or the seat taken)
  * - unknown: a read it depends on failed, so none of the above can be said
  *
@@ -38,6 +75,7 @@ export type Standing =
   | { kind: 'lost'; votes: number; share?: number }
   | { kind: 'applied'; votes: number; share?: number }
   | { kind: 'not-applied' }
+  | { kind: 'other-proposal' }
   | { kind: 'closed' }
   | { kind: 'unknown' };
 
@@ -72,13 +110,14 @@ export function proposalStanding(
   const other = appliedWith(contender?.document);
   if (contender && (other === undefined || other === proposal.id)) {
     // The seated leader's other proposals: the seat was won with another one.
-    if (team?.leaderId === proposal.leaderId) return { kind: 'closed' };
+    if (team?.leaderId === proposal.leaderId) return { kind: 'other-proposal' };
     const won = contest?.winner?.identityId === proposal.leaderId && !team;
     if (won) return { kind: 'seated', votes: contender.votes, share };
     return decided ? { kind: 'lost', votes: contender.votes, share } : { kind: 'applied', votes: contender.votes, share };
   }
-  // Not applied, or the leader applied with another of their proposals (an identity applies once).
-  return applicationsClosed || contender ? { kind: 'closed' } : { kind: 'not-applied' };
+  // The leader applied with another of their proposals (an identity applies once).
+  if (contender) return { kind: 'other-proposal' };
+  return applicationsClosed ? { kind: 'closed' } : { kind: 'not-applied' };
 }
 
 /** The chip a proposal row shows: "won · seated", "lost · 4 votes", "applied · 12 votes", "not applied". */
@@ -92,6 +131,8 @@ export function standingChip(s: Standing): { text: string; tone: 'won' | 'lost' 
       return { text: `applied · ${plural(s.votes, 'vote')}`, tone: 'live' };
     case 'not-applied':
       return { text: 'not applied', tone: 'muted' };
+    case 'other-proposal':
+      return { text: 'leader applied with another', tone: 'muted' };
     case 'closed':
       return { text: 'did not apply', tone: 'muted' };
     case 'unknown':
@@ -171,6 +212,16 @@ export function viewerNote(args: {
             : role === 'joiner'
               ? 'You asked to join this team. Its leader chooses the members when applying for the seat.'
               : 'This team has not applied for the seat yet.',
+      };
+    case 'other-proposal':
+      return {
+        tone: 'muted',
+        text:
+          role === 'leader'
+            ? 'You applied for the seat with another of your proposals. An identity applies only once, so this one cannot apply.'
+            : role === 'joiner'
+              ? 'You asked to join this team, but its leader applied for the seat with another of their proposals.'
+              : "This team's leader applied for the seat with another of their proposals, so this one cannot apply.",
       };
     case 'closed':
       return {

@@ -9,7 +9,8 @@ import { contenderColor } from '../components/BallotBar';
 import { ContestedName } from '../components/ContestedName';
 import { CopyButton } from '../components/CopyButton';
 import { FieldTable } from '../components/FieldTable';
-import { endDate, shortId } from '../format';
+import { afterFirstSentence, dateText, shortId } from '../format';
+import { teamName } from '../charters/standing';
 
 /** Percent of all weight cast, as the page shows it everywhere. */
 export const percent = (part: number, total: number): string =>
@@ -104,8 +105,14 @@ function Voters({ sdk, pollKey, contender }: { sdk: EvoSDK; pollKey: PollKey; co
   );
 }
 
-function CharterBlock({ charter, loser }: { charter: CharterApplicationView; loser: boolean }) {
-  const prose = excerpt(displayText(charter.description));
+/**
+ * A contender's charter: its prose (after the title sentence, when the card
+ * is headed by it), terms and team. `decidedLoser`: the contest went to
+ * someone else, so the application and its member list are gone.
+ */
+export function CharterBlock({ charter, titled, decidedLoser }: { charter: CharterApplicationView; titled: boolean; decidedLoser: boolean }) {
+  const body = titled ? afterFirstSentence(charter.description) : charter.description;
+  const prose = excerpt(displayText(body));
   const split = charter.rewardSplit;
   return (
     <div className="charter-block">
@@ -114,7 +121,7 @@ function CharterBlock({ charter, loser }: { charter: CharterApplicationView; los
           <p>{prose.text}</p>
           {prose.cut && <a href={charter.href}>Read full charter →</a>}
         </blockquote>
-      ) : (
+      ) : titled ? null : (
         <p className="contender-quiet">The charter has no description.</p>
       )}
       <ul className="charter-chips" aria-label="Charter terms">
@@ -153,11 +160,13 @@ function CharterBlock({ charter, loser }: { charter: CharterApplicationView; los
           this contract before the decision.
         </p>
       )}
-      {!loser && charter.members && (
+      {charter.members ? (
         <p className="contender-quiet">
           Team: {charter.members.length > 0 ? charter.members.join(', ') : 'the leader alone'}
-          {charter.appliedAtMs ? ` · applied ${endDate(charter.appliedAtMs)}` : ''}
+          {charter.appliedAtMs ? ` · applied ${dateText(charter.appliedAtMs, { time: false })}` : ''}
         </p>
+      ) : (
+        decidedLoser && <p className="contender-quiet">Team: not shown. Platform drops a losing application&apos;s member list once the vote is decided.</p>
       )}
     </div>
   );
@@ -167,6 +176,9 @@ function CharterBlock({ charter, loser }: { charter: CharterApplicationView; los
  * One contender: who, the weight behind them, and (for a moderator
  * election) the charter they stand on. `name` is the page's single label
  * for this identity; the full id is in the tooltip and behind the copy icon.
+ * A moderator-election card is headed by its team's name (the charter's
+ * title), with the leader under it; `onTeamName` passes that name up so the
+ * rest of the page uses it too.
  */
 export function ContenderCard({
   sdk,
@@ -180,6 +192,7 @@ export function ContenderCard({
   winnerVotes,
   canVote,
   onVote,
+  onTeamName,
 }: {
   sdk: EvoSDK;
   kind: ContestKind;
@@ -195,6 +208,7 @@ export function ContenderCard({
   winnerVotes?: number;
   canVote: boolean;
   onVote: () => void;
+  onTeamName?: (identityId: string, team: string) => void;
 }) {
   const [view, setView] = useState<ContenderView | 'failed'>({ identityId: contender.identityId });
   useEffect(() => {
@@ -222,20 +236,34 @@ export function ContenderCard({
   const unvoted = decided && total === 0;
   const lost = decided && !unvoted && !isWinner && winnerVotes !== undefined;
   const voters = !decided && contender.votes > 0;
+  const team = kind.id === 'charter' && charter ? teamName(charter.description) : undefined;
+  useEffect(() => {
+    if (team) onTeamName?.(contender.identityId, team);
+  }, [team, contender.identityId, onTeamName]);
+  const person = name ?? <span className="mono">{shortId(contender.identityId)}</span>;
 
   return (
     <li className={isWinner ? 'contender-card winner' : 'contender-card'}>
       <span className="swatch" style={{ backgroundColor: contenderColor(rank) }} aria-hidden="true" />
       <div className="contender-body">
         <div className="contender-head">
-          <span className="contender-name" title={contender.identityId}>
-            {name ?? <span className="mono">{shortId(contender.identityId, 6)}</span>}
-          </span>
-          <CopyButton text={contender.identityId} label={`Copy identity id of ${name ?? shortId(contender.identityId)}`} />
+          {team ? (
+            <span className="contender-name">{team}</span>
+          ) : (
+            <span className="contender-name" title={contender.identityId}>
+              {person}
+            </span>
+          )}
+          {!team && <CopyButton text={contender.identityId} label={`Copy identity id of ${name ?? shortId(contender.identityId)}`} />}
           {isWinner && <span className="badge winner">Winner</span>}
         </div>
-        {askedFor || otherNames.length > 0 || lost ? (
+        {askedFor || otherNames.length > 0 || lost || team ? (
           <p className="contender-sub">
+            {team && (
+              <span title={contender.identityId}>
+                led by {person} <CopyButton text={contender.identityId} label={`Copy identity id of ${name ?? shortId(contender.identityId)}`} />
+              </span>
+            )}
             {askedFor && (
               <span>
                 asked for <ContestedName label={askedFor} />
@@ -247,7 +275,6 @@ export function ContenderCard({
                 {contender.votes === winnerVotes
                   ? `Tied ${contender.votes}–${winnerVotes}${kind.id === 'charter' ? ' · the earliest applicant wins ties' : ''}`
                   : `Lost ${contender.votes}–${winnerVotes}`}
-                {charter ? " · member list isn't kept for losing applications" : ''}
               </span>
             )}
           </p>
@@ -258,7 +285,7 @@ export function ContenderCard({
         {kind.id === 'charter' && view === 'failed' && (
           <p className="contender-quiet">This applicant's charter could not be read. Reload to try again.</p>
         )}
-        {charter && <CharterBlock charter={charter} loser={lost} />}
+        {charter && <CharterBlock charter={charter} titled={!!team} decidedLoser={decided && !isWinner} />}
         {described?.subtitle && kind.id === 'generic' && <p className="contender-sub">{described.subtitle}</p>}
         {described?.rows && described.rows.length > 0 && <FieldTable rows={described.rows} />}
         {(charter || described?.link || voters) && (
