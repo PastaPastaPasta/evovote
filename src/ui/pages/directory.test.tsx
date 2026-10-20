@@ -32,7 +32,10 @@ import {
   orderEnded,
   outcomeOf,
   rowLabel,
+  showDecided,
+  shownEnded,
   statusSentence,
+  tallyWants,
   toNeedle,
   type DirectoryFacts,
 } from './directoryModel';
@@ -121,6 +124,55 @@ describe('directory order', () => {
     const order = orderEnded([unknown, old, locked, fresh, awaiting], f, 'recent', title, now);
     expect(order).toEqual([awaiting, fresh, locked, old, unknown]);
     expect(orderEnded([fresh, old], f, 'name', title, now)).toEqual([old, fresh]);
+  });
+});
+
+describe('first paint', () => {
+  const named = summary(dpnsPollKey('a11ce'));
+  const undated = summary(dpnsPollKey('10cked'));
+  const failed = summary(dpnsPollKey('fa11ed'));
+  const f = facts({
+    names: { a11ce: { label: 'Alice', createdAtMs: 5 } },
+    states: { [failed.keyString]: 'error' },
+  });
+
+  it('should show only placed rows until the order is final, then every row', () => {
+    // The undated row would sort last by name, then jump once its tally lands.
+    expect(shownEnded([undated, named, failed], f, false)).toEqual([named, failed]);
+    expect(shownEnded([undated, named, failed], f, true)).toEqual([undated, named, failed]);
+  });
+
+  it('should show the decided list once names are in and the placed rows fill the first page', () => {
+    const s = { orderFinal: false, openRead: true, namesKnown: true, placed: 25, total: 1000, page: 25 };
+    expect(showDecided(s)).toBe(true);
+    // Open contests unknown, or names still coming: the order is not worth showing.
+    expect(showDecided({ ...s, openRead: false })).toBe(false);
+    expect(showDecided({ ...s, namesKnown: false })).toBe(false);
+    // A short list (five moderator elections) comes in whole, not row by row.
+    expect(showDecided({ ...s, placed: 3, total: 5 })).toBe(false);
+    expect(showDecided({ ...s, placed: 3, total: 5, orderFinal: true })).toBe(true);
+    // A complete cache shows before Platform has said anything.
+    expect(showDecided({ ...s, openRead: false, namesKnown: false, placed: 0, orderFinal: true })).toBe(true);
+  });
+
+  it('should read open rows, then unread expired, on-screen and undated rows, and nothing else', () => {
+    const open = summary(dpnsPollKey('0pen'), 9_999);
+    const expired = summary(dpnsPollKey('exp1red'), 1);
+    const offScreen = summary(dpnsPollKey('0ff'));
+    const read = summary(dpnsPollKey('read'));
+    const g = facts({ ...f, states: { ...f.states, [read.keyString]: contest(read.key, [1], { at: 3 }) } });
+    const wants = tallyWants({
+      open: [open],
+      expired: [expired],
+      visible: [named, read, expired],
+      unplaced: [undated, named],
+      facts: g,
+    });
+    expect(wants).toEqual([open, expired, named, undated]);
+    expect(wants).not.toContain(offScreen);
+    // An open row is asked for even with a state: its full read runs once.
+    const openRead = facts({ states: { [open.keyString]: contest(open.key, [1]) } });
+    expect(tallyWants({ open: [open], expired: [], visible: [], unplaced: [], facts: openRead })).toEqual([open]);
   });
 });
 
@@ -369,6 +421,11 @@ describe('directory list state', () => {
     expect(statusSentence({ ...base, connected: false, ready: false, openRead: false, endedCount: 0 }).rest).toBe(
       'Connecting to Dash Platform…',
     );
+    // The app's own words for what it is doing while the SDK loads.
+    expect(
+      statusSentence({ ...base, connected: false, ready: false, openRead: false, endedCount: 0, connecting: 'Loading the Platform SDK…' })
+        .rest,
+    ).toBe('Loading the Platform SDK…');
     expect(statusSentence({ ...base, ready: false, openRead: false, endedCount: 0 }).rest).toBe(
       'Reading contests from Platform…',
     );
@@ -403,6 +460,38 @@ describe('directory list state', () => {
     expect(html).toContain('1 username contest decided so far. Connecting to Dash Platform…');
     expect(html).not.toMatch(/Nothing is (open|contested)/);
     expect(html).not.toContain('Open for voting');
+  });
+
+  it('should keep the cached directory on screen when Platform cannot be reached', async () => {
+    vi.resetModules();
+    const cache = await import('../../discovery/resultCache');
+    const { OverviewPage } = await import('./OverviewPage');
+    const dpns = await import('../../kinds/dpns');
+    await cache.loadCachedDirectory('testnet');
+    const c = contest(dpns.dpnsPollKey('a11ce'), [2, 1], { at: Date.UTC(2026, 9, 1) });
+    if (!cache.isStorable(c)) throw new Error('unreachable');
+    cache.saveCachedResult('testnet', c.keyString, { result: cache.resultOf(c), name: { label: 'Alice', createdAtMs: 1 } });
+    // Not marked complete: offline, whatever is cached shows anyway.
+    const html = renderToStaticMarkup(<OverviewPage network="testnet" sdkError="connect failed: no nodes" />);
+    expect(html).toContain('Could not connect to Dash Platform.');
+    expect(html).toContain('Showing the results saved on this device.');
+    expect(html).toContain('connect failed: no nodes');
+    expect(html).toContain('a11ce.dash — decided');
+    expect(html).toContain('data-loading="false"');
+    expect(html).not.toContain('skeleton');
+    expect(html).not.toMatch(/Nothing is (open|contested)|Connecting to Dash Platform/);
+  });
+
+  it('should say only that Platform is out of reach when nothing is cached', async () => {
+    vi.resetModules();
+    const cache = await import('../../discovery/resultCache');
+    const { OverviewPage } = await import('./OverviewPage');
+    await cache.loadCachedDirectory('testnet');
+    const html = renderToStaticMarkup(<OverviewPage network="testnet" sdkError="boom" />);
+    expect(html).toContain('Could not connect to Dash Platform.');
+    expect(html).toContain('Check your connection and try again.');
+    expect(html).not.toContain('skeleton');
+    expect(html).not.toMatch(/Nothing is (open|contested)|No contests/);
   });
 
   it('should only call a tab empty once Platform has been read in full', () => {

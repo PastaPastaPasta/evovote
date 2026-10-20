@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { forEachConcurrent } from '../../discovery/concurrency';
 import { invalidateContest } from '../../discovery/voteState';
 import { kindFor } from '../../kinds/registry';
@@ -13,6 +13,7 @@ import { getLoadedKey, useMasternodes } from '../../voting/keyring';
 import { planVotes, SKIP_TEXT, VOTES_PER_POLL, type PlanItem } from '../../voting/planner';
 import { receiptsFor, recordReceipt } from '../../voting/receipts';
 import { shortId, plural } from '../format';
+import { useDialogFocus } from '../useDialogFocus';
 import { KindTitle } from './KindTitle';
 import { TechnicalDetail } from './TechnicalDetail';
 
@@ -64,7 +65,8 @@ export function VoteModal({
   choice: VoteChoice;
   /** The contenders' names (as the page shows them), by identity id. */
   names?: ReadonlyMap<string, string>;
-  onClose: () => void;
+  /** `sent`: votes were broadcast, so the contest's state should be read again. */
+  onClose: (sent: boolean) => void;
   onOpenMasternodes: () => void;
 }) {
   const masternodes = useMasternodes();
@@ -97,13 +99,15 @@ export function VoteModal({
     };
   }, [network, ready]);
 
+  const close = () => onClose(phase !== 'pick');
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // While votes are being sent the dialog stays open.
+  useDialogFocus(dialogRef, phase === 'run' ? undefined : close);
+  // "Sign and send" is gone once sending starts: land on Done when it ends.
+  const doneRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && phase !== 'run') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, phase]);
+    if (phase === 'done') doneRef.current?.focus();
+  }, [phase]);
 
   const plan: PlanItem[] = useMemo(() => {
     if (current === 'loading') return [];
@@ -128,7 +132,7 @@ export function VoteModal({
   const planFor = (mnId: string) => plan.find((item) => item.mnId === mnId);
 
   const openMasternodes = () => {
-    onClose();
+    close();
     onOpenMasternodes();
   };
 
@@ -194,8 +198,9 @@ export function VoteModal({
   });
 
   return (
-    <div className="modal-backdrop" onClick={phase === 'run' ? undefined : onClose}>
+    <div className="modal-backdrop" onClick={phase === 'run' ? undefined : close}>
       <div
+        ref={dialogRef}
         className="modal"
         role="dialog"
         aria-modal="true"
@@ -218,7 +223,7 @@ export function VoteModal({
               The key stays in this tab and is forgotten when you close it. It can only vote; it cannot move funds.
             </p>
             <div className="modal-actions">
-              <button className="vote-button ghost" onClick={onClose}>
+              <button className="vote-button ghost" onClick={close}>
                 Cancel
               </button>
               <button className="vote-button" onClick={openMasternodes}>
@@ -295,7 +300,7 @@ export function VoteModal({
               </p>
             )}
             <div className="modal-actions">
-              <button className="vote-button ghost" onClick={onClose}>
+              <button className="vote-button ghost" onClick={close}>
                 Cancel
               </button>
               <button
@@ -345,7 +350,7 @@ export function VoteModal({
                     Retry {plural(failed.length, 'failed vote')}
                   </button>
                 )}
-                <button className="vote-button" onClick={onClose}>
+                <button ref={doneRef} className="vote-button" onClick={close}>
                   Done
                 </button>
               </div>

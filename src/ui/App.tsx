@@ -59,23 +59,40 @@ type SdkState =
   | { status: 'ready'; handle: SdkHandle }
   | { status: 'error'; message: string };
 
+/** How long the SDK download runs before the page says why it takes a while. */
+const SLOW_DOWNLOAD_MS = 2_500;
+
+/**
+ * What the page says while Platform connects: first the SDK download (a
+ * large chunk, cached by the browser after the first visit), then the
+ * connection itself.
+ */
+function connectingText(phase: 'download' | 'connect', slow: boolean, network: Network): string {
+  if (phase === 'connect') return `Connecting to Dash Platform (${network})…`;
+  return slow
+    ? 'Downloading the Platform SDK… A first visit takes a moment; later visits load it from your browser’s cache.'
+    : 'Loading the Platform SDK…';
+}
+
+type DirectoryRoute = Extract<Route, { page: 'home' | 'kind' }>;
+
+/** The contest directory: its own element whatever the SDK's state, so connecting never remounts it. */
+function isDirectory(route: Route): route is DirectoryRoute {
+  return route.page === 'home' || route.page === 'kind';
+}
+
 function Page({
   route,
   handle,
   network,
   onVote,
 }: {
-  route: Route;
+  route: Exclude<Route, DirectoryRoute>;
   handle: SdkHandle;
   network: Network;
   onVote: (contest: Contest, choice: VoteChoice, names?: ReadonlyMap<string, string>) => void;
 }) {
   switch (route.page) {
-    case 'home':
-      return <OverviewPage sdk={handle.sdk} network={network} />;
-    case 'kind':
-      // Same element as 'home': switching tabs keeps the streamed list.
-      return <OverviewPage sdk={handle.sdk} network={network} kindFilter={route.kind} />;
     case 'poll':
       return (
         <ContestPage
@@ -168,6 +185,8 @@ export function App() {
   // Constant for the page's lifetime: switchNetwork() persists and reloads.
   const [network] = useState<Network>(currentNetwork);
   const [sdkState, setSdkState] = useState<SdkState>({ status: 'loading' });
+  const [sdkPhase, setSdkPhase] = useState<'download' | 'connect'>('download');
+  const [slowDownload, setSlowDownload] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pendingVote, setPendingVote] = useState<{ contest: Contest; choice: VoteChoice; names?: ReadonlyMap<string, string> } | null>(
     null,
@@ -184,6 +203,16 @@ export function App() {
   useEffect(() => {
     initKeyring(network);
     let cancelled = false;
+    const slowTimer = setTimeout(() => setSlowDownload(true), SLOW_DOWNLOAD_MS);
+    // The same module loadSdk imports: once it is here, only the connection is left.
+    void import('@dashevo/evo-sdk')
+      .then(() => {
+        if (!cancelled) setSdkPhase('connect');
+      })
+      .catch(() => {
+        // loadSdk reports the failure.
+      })
+      .finally(() => clearTimeout(slowTimer));
     loadSdk(network)
       .then((handle) => {
         if (!cancelled) setSdkState({ status: 'ready', handle });
@@ -193,8 +222,12 @@ export function App() {
       });
     return () => {
       cancelled = true;
+      clearTimeout(slowTimer);
     };
   }, [network]);
+  const connecting = connectingText(sdkPhase, slowDownload, network);
+  const onVote = (contest: Contest, choice: VoteChoice, names?: ReadonlyMap<string, string>) =>
+    setPendingVote({ contest, choice, names });
 
   const themeLabel = `Theme: ${themePref === 'system' ? 'match system' : themePref}. Change theme`;
   return (
@@ -267,18 +300,27 @@ export function App() {
       )}
 
       <main className="content" id="main" tabIndex={-1}>
-        {sdkState.status === 'loading' && (route.page === 'home' || route.page === 'kind') && (
-          // The directory lays itself out (and shows cached results) while Platform connects.
-          <OverviewPage network={network} kindFilter={route.page === 'kind' ? route.kind : undefined} />
+        {isDirectory(route) && (
+          // One element from first paint on: it lays itself out (and shows
+          // cached results) while Platform connects, and keeps its search,
+          // sort and page when the SDK arrives or tabs change. If Platform
+          // cannot be reached, the cache stays on screen with the error.
+          <OverviewPage
+            key={voteRound}
+            sdk={sdkState.status === 'ready' ? sdkState.handle.sdk : undefined}
+            network={network}
+            kindFilter={route.page === 'kind' ? route.kind : undefined}
+            connecting={connecting}
+            sdkError={sdkState.status === 'error' ? sdkState.message : undefined}
+          />
         )}
-        {sdkState.status === 'loading' && route.page !== 'home' && route.page !== 'kind' && (
+        {sdkState.status === 'loading' && !isDirectory(route) && (
           <div className="sdk-loading" role="status">
             <div className="spinner" aria-hidden="true" />
-            <p>Connecting to Dash Platform ({network})…</p>
-            <p className="mono-label">The first visit downloads the Platform SDK; later visits use the cached copy.</p>
+            <p>{connecting}</p>
           </div>
         )}
-        {sdkState.status === 'error' && (
+        {sdkState.status === 'error' && !isDirectory(route) && (
           <div className="sdk-loading" role="alert">
             <p className="error">Could not connect to Dash Platform.</p>
             <TechnicalDetail>{sdkState.message}</TechnicalDetail>
@@ -287,14 +329,8 @@ export function App() {
             </button>
           </div>
         )}
-        {sdkState.status === 'ready' && (
-          <Page
-            key={voteRound}
-            route={route}
-            handle={sdkState.handle}
-            network={network}
-            onVote={(contest, choice, names) => setPendingVote({ contest, choice, names })}
-          />
+        {sdkState.status === 'ready' && !isDirectory(route) && (
+          <Page key={voteRound} route={route} handle={sdkState.handle} network={network} onVote={onVote} />
         )}
       </main>
 
@@ -319,10 +355,12 @@ export function App() {
           contest={pendingVote.contest}
           choice={pendingVote.choice}
           names={pendingVote.names}
-          onClose={() => {
+          onClose={(sent) => {
             setPendingVote(null);
-            // Remount the page so it re-reads the (invalidated) vote state.
-            setVoteRound((n) => n + 1);
+            // After a broadcast, remount the page so it re-reads the
+            // (invalidated) vote state. A cancelled vote keeps the page, and
+            // the button that opened the dialog gets its focus back.
+            if (sent) setVoteRound((n) => n + 1);
           }}
           onOpenMasternodes={() => setDrawerOpen(true)}
         />

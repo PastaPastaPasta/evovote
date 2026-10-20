@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { chunk, createPump, createWantQueue } from '../../discovery/concurrency';
+import { fetchContract } from '../../discovery/contracts';
 import {
   cachedContest,
   isStorable,
@@ -15,6 +16,7 @@ import { subscribeContests, type StreamReport } from '../../discovery/stream';
 import type { Cap, Failure } from '../../discovery/types';
 import { fetchContest, fetchContestTally } from '../../discovery/voteState';
 import {
+  DPNS_CONTRACT_ID,
   DPNS_VOTE_PERIOD_MS,
   dpnsKeyString,
   dpnsLabel,
@@ -33,6 +35,7 @@ import { switchNetwork, type Network } from '../../sdk/network';
 import { ABSTAIN_COLOR, BallotBar, contenderColor, LOCK_COLOR } from '../components/BallotBar';
 import { ContestedName } from '../components/ContestedName';
 import { OpenContractForm } from '../components/OpenContractForm';
+import { TechnicalDetail } from '../components/TechnicalDetail';
 import { countdown, fmt, plural, shortId } from '../format';
 import { useNow } from '../hooks';
 import { kindHref, pollHref } from '../router';
@@ -52,8 +55,11 @@ import {
   outcomeOf,
   rowLabel,
   shortDate,
+  showDecided,
+  shownEnded,
   statesOf,
   statusSentence,
+  tallyWants,
   titleOf,
   toNeedle,
   winnerNameOf,
@@ -62,10 +68,18 @@ import {
   type RowState,
 } from './directoryModel';
 
-/** Vote-state reads in flight at once. */
-const TALLY_CONCURRENCY = 8;
-/** Username-document batches in flight at once (100 names each). */
-const NAME_CONCURRENCY = 3;
+/**
+ * Vote-state reads in flight at once. Each is small (a tally, ~100–250 ms),
+ * and a cold tab places a few dozen undated rows by them while it reads the
+ * rows on screen, so the queue is wide.
+ */
+const TALLY_CONCURRENCY = 12;
+/**
+ * Username-document batches in flight at once (100 names each). The first
+ * rows show once every name of the archive is known, and the archive's
+ * pages land nearly together, so their batches go out together too.
+ */
+const NAME_CONCURRENCY = 8;
 /** Decided contests shown at first, and added per "Show more". */
 const FIRST_PAGE = 25;
 const MORE = 50;
@@ -352,16 +366,22 @@ function LedgerRow({
  * contests come first, soonest-closing; then decided ones, newest first.
  *
  * `sdk` may be absent while Platform connects: the layout (and anything
- * cached) shows straight away.
+ * cached) shows straight away, with `connecting` as the status. If the
+ * connection failed (`sdkError`), whatever is cached stays on screen under
+ * the error.
  */
 export function OverviewPage({
   sdk,
   network,
   kindFilter,
+  connecting,
+  sdkError,
 }: {
   sdk?: EvoSDK;
   network: Network;
   kindFilter?: KindId;
+  connecting?: string;
+  sdkError?: string;
 }) {
   const now = useNow();
   const available = kindFilter === undefined || kindAvailable(kindFilter, network);
@@ -403,10 +423,14 @@ export function OverviewPage({
     setFilter('');
     setSlow(false);
   }
+  // "A while" counts from the connection: a slow SDK download is not the
+  // list being slow.
+  const connected = sdk !== undefined;
   useEffect(() => {
+    if (!connected) return;
     const timer = setTimeout(() => setSlow(true), SHOW_ANYWAY_MS);
     return () => clearTimeout(timer);
-  }, [kindFilter]);
+  }, [kindFilter, connected]);
 
   useEffect(() => {
     let off = false;
@@ -456,6 +480,16 @@ export function OverviewPage({
   // the registered spelling and, for the whole archive at once, the order.
   const requestedLabels = useRef(new Set<string>());
   const namePump = useRef<ReturnType<typeof createPump<string[]>> | undefined>(undefined);
+  // A name query first fetches the DPNS contract, which would cost a cold
+  // list's first rows a round trip after the archive lands: fetch it while
+  // the archive is read (the SDK keeps it for every later query).
+  const readsNames = tabKinds.includes('dpns') && !cache?.complete.has('dpns');
+  useEffect(() => {
+    if (!sdk || !readsNames) return;
+    void fetchContract(sdk, DPNS_CONTRACT_ID).catch(() => {
+      // The first name query fetches it again.
+    });
+  }, [sdk, readsNames]);
   useEffect(() => {
     if (!sdk) return;
     let cancelled = false;
@@ -595,12 +629,29 @@ export function OverviewPage({
   const kindReady = (kind: KindId) =>
     !!cache?.complete.has(kind) ||
     (settled(kind) && !unplaced.some((c) => kindIdOf(c) === kind));
-  const ready = available && (slow || tabKinds.every(kindReady));
+  // Without Platform there is nothing more to wait for: the cache is all there is.
+  const offline = sdkError !== undefined;
+  // The newest-first order is final (or shown anyway after a while).
+  const ready = available && (slow || offline || tabKinds.every(kindReady));
+  // Every name of the tab's archives is known, so its named rows are in
+  // order; undated rows (no name document) are still being placed by their
+  // tallies, and join the list as they are.
+  const orderKnown = tabKinds.every((k) => settled(k) || !!cache?.complete.has(k));
+  // The decided rows that can show now (A–Z needs no dates), and whether the list shows yet.
+  const decidedRows = shownEnded(endedRows, facts, ready || sort === 'name');
+  const showEnded = showDecided({
+    orderFinal: ready,
+    openRead: activeRead,
+    namesKnown: orderKnown,
+    placed: decidedRows.length,
+    total: endedRows.length,
+    page: FIRST_PAGE,
+  });
   // Nothing is said about open contests until the active polls are read,
   // however much the cache already shows; "nothing is open" never after a
   // failed read.
   const openFailed = report.failures.some((f) => f.source === 'active' || f.source === 'active polls');
-  const listComplete = ready && report.status !== 'streaming';
+  const listComplete = offline || (ready && report.status !== 'streaming');
 
   // A kind whose archive was read in full, named and ordered, and whose rows
   // all come back from the cache, is cached as complete: the next visit
@@ -624,25 +675,21 @@ export function OverviewPage({
   const titleFor = (c: ContestSummary) => titleOf(c, facts);
 
   const visibleOpen = openRows.filter(matches);
-  const orderedEnded = orderEnded(endedRows.filter(matches), facts, sort, titleFor, now);
+  const orderedEnded = orderEnded(decidedRows.filter(matches), facts, sort, titleFor, now);
   const visibleEnded = orderedEnded.slice(0, shown);
   const remaining = orderedEnded.length - visibleEnded.length;
 
-  // The queue: every open row of the tab, then the shown page of decided
-  // rows once their order is settled (or shown anyway), then rows waiting to
-  // be placed once the open ones are known (an open contest read too early
-  // would miss its documents). Open rows always read in full: one whose
-  // state came from a tally-only read is read again, and the queue runs
-  // each full read once.
-  const orderKnown = tabKinds.every((k) => settled(k) || !!cache?.complete.has(k));
-  const wanted = [
-    ...openRows,
-    ...[
-      ...expiredRows,
-      ...(orderKnown || ready ? visibleEnded : []),
-      ...(activeRead ? unplaced : []),
-    ].filter((c) => facts.states[c.keyString] === undefined),
-  ];
+  // The queue: the tab's open rows, then the shown page of decided rows
+  // once the named ones are in order, then rows waiting to be placed once
+  // the open ones are known (an open contest read too early would miss its
+  // documents).
+  const wanted = tallyWants({
+    open: openRows,
+    expired: expiredRows,
+    visible: orderKnown || ready ? visibleEnded : [],
+    unplaced: activeRead ? unplaced : [],
+    facts,
+  });
   // Cheap (a filter over at most a few pages of rows), so it runs every render.
   useEffect(() => {
     queue.current?.want(wanted);
@@ -650,7 +697,7 @@ export function OverviewPage({
 
   // Winners' usernames for the rows shown ("won by alice"). Usernames are
   // their own winners' names, so only contested ones (2+ contenders) ask.
-  const shownRows = [...(activeRead ? visibleOpen : []), ...(ready ? visibleEnded : [])];
+  const shownRows = [...(activeRead ? visibleOpen : []), ...(showEnded ? visibleEnded : [])];
   const askIds = new Set<string>();
   for (const c of shownRows) {
     const state = loaded(facts, c.keyString);
@@ -676,13 +723,14 @@ export function OverviewPage({
   // ---- Rendering ----
 
   // A tab's count shows once its list is complete: "…" while this page
-  // reads it, the cached count if another tab's list is not being read.
+  // reads it, the cached count if a tab's list is not being read (another
+  // tab's, or any while Platform is out of reach).
   const counts: Partial<Record<KindId, string>> = {};
   for (const k of kindsFor(network)) {
     const n =
       active.filter((c) => kindIdOf(c) === k.id).length +
       archiveAll.filter((c) => !activeKeys.has(c.keyString) && kindIdOf(c) === k.id).length;
-    const read = sources.length > 0 && (!k.archive || sources.some((s) => s.kindId === k.id));
+    const read = !offline && sources.length > 0 && (!k.archive || sources.some((s) => s.kindId === k.id));
     if (read) counts[k.id] = kindReady(k.id) && sourcesFinished(k.id) ? fmt(n) : '…';
     else if (cache?.complete.has(k.id)) counts[k.id] = fmt(n);
   }
@@ -714,7 +762,7 @@ export function OverviewPage({
 
   const soonest = openRows[0];
   const sentence = statusSentence({
-    connected: !!sdk,
+    connected,
     ready,
     openRead: activeRead,
     openFailed,
@@ -722,10 +770,11 @@ export function OverviewPage({
     endedCount: endedRows.length,
     decided: decidedWords(endedRows, tabKinds),
     nextCloses: soonest?.endsAtMs ? countdown(soonest.endsAtMs, now).text : undefined,
+    connecting,
   });
   const empty = emptyMessage({
     filter,
-    connected: !!sdk,
+    connected,
     openRead: activeRead,
     status: report.status,
     failures: report.failures.length,
@@ -735,8 +784,9 @@ export function OverviewPage({
   });
 
   const nothingShown = visibleOpen.length === 0 && orderedEnded.length === 0;
-  // Skeleton rows show while the list is not ready, or while an empty tab cannot be called empty yet.
-  const loadingRows = !ready || (nothingShown && !empty);
+  // Skeleton rows show while the list is not ready, or while an empty tab
+  // cannot be called empty yet; never once Platform is out of reach.
+  const loadingRows = !offline && (!ready || (nothingShown && !empty));
   const tabRowCount = openRows.length + endedRows.length;
   const row = (c: ContestSummary, isOpen: boolean) => (
     <LedgerRow key={c.keyString} contest={c} isOpen={isOpen} facts={facts} now={now} showChip={!kindFilter} />
@@ -754,18 +804,33 @@ export function OverviewPage({
         </details>
       )}
 
-      <p className="dir-status" role="status" aria-live="polite">
-        {sentence.lead && <strong>{sentence.lead}</strong>}
-        {sentence.lead && sentence.rest && ' '}
-        {sentence.rest}
-        {activeRead && ready && report.status === 'streaming' && (
-          <span className="mono-label"> Checking for new contests…</span>
-        )}
-      </p>
+      {offline ? (
+        <div className="dir-offline" role="alert">
+          <p>
+            <strong>Could not connect to Dash Platform.</strong>{' '}
+            {endedRows.length > 0
+              ? 'Showing the results saved on this device. Open contests and newer results need a connection.'
+              : 'Check your connection and try again.'}
+          </p>
+          <TechnicalDetail>{sdkError}</TechnicalDetail>
+          <button type="button" className="vote-button" onClick={() => location.reload()}>
+            Retry
+          </button>
+        </div>
+      ) : (
+        <p className="dir-status" role="status" aria-live="polite">
+          {sentence.lead && <strong>{sentence.lead}</strong>}
+          {sentence.lead && sentence.rest && ' '}
+          {sentence.rest}
+          {activeRead && ready && report.status === 'streaming' && (
+            <span className="mono-label"> Checking for new contests…</span>
+          )}
+        </p>
+      )}
       <DirectoryIssues failures={report.failures} caps={report.caps} />
 
       <div ref={listRef} tabIndex={-1} className="dir-list" aria-busy={loadingRows}>
-        {ready && tabRowCount > SEARCH_MIN && (
+        {showEnded && tabRowCount > SEARCH_MIN && (
           <input
             className="search"
             type="search"
@@ -789,7 +854,7 @@ export function OverviewPage({
           </>
         )}
 
-        {!ready ? (
+        {!showEnded ? (
           <>
             <div className="dir-section-head">
               <h2 className="section-title">
@@ -804,11 +869,13 @@ export function OverviewPage({
               <>
                 <div className="dir-section-head">
                   <h2 className="section-title">
-                    {sort === 'recent' ? 'Recently decided' : 'Decided, A–Z'} · {fmt(orderedEnded.length)}
+                    {sort === 'recent' ? 'Recently decided' : 'Decided, A–Z'}
+                    {/* Counted once every row is placed. */}
+                    {ready && ` · ${fmt(orderedEnded.length)}`}
                   </h2>
                   <Legend items={legendFor(statesOf(visibleEnded, facts), true)} />
                   {orderedEnded.length > SEARCH_MIN && (
-                    <div className="segmented dir-sort" role="group" aria-label="Sort decided contests">
+                    <div className="dir-sort" role="group" aria-label="Sort decided contests">
                       <button type="button" aria-pressed={sort === 'recent'} onClick={() => { setSort('recent'); setShown(FIRST_PAGE); }}>
                         Newest
                       </button>
@@ -821,13 +888,16 @@ export function OverviewPage({
                 <ol className="ledger">{visibleEnded.map((c) => row(c, false))}</ol>
                 {remaining > 0 && (
                   <button type="button" className="vote-button ghost dir-more" onClick={() => setShown((n) => n + MORE)}>
-                    Show {Math.min(MORE, remaining)} more <span className="mono-label">· {fmt(remaining)} not shown</span>
+                    Show {Math.min(MORE, remaining)} more
+                    {ready && <span className="mono-label"> · {fmt(remaining)} not shown</span>}
                   </button>
                 )}
               </>
             )}
 
-            {nothingShown && (empty ? <p className="page-note">{empty}</p> : <SkeletonRows count={3} />)}
+            {nothingShown &&
+              !offline &&
+              (ready && empty ? <p className="page-note">{empty}</p> : <SkeletonRows count={3} />)}
           </>
         )}
       </div>
