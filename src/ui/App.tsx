@@ -267,7 +267,11 @@ export function App() {
       )}
 
       <main className="content" id="main" tabIndex={-1}>
-        {sdkState.status === 'loading' && (
+        {sdkState.status === 'loading' && (route.page === 'home' || route.page === 'kind') && (
+          // The directory lays itself out (and shows cached results) while Platform connects.
+          <OverviewPage network={network} kindFilter={route.page === 'kind' ? route.kind : undefined} />
+        )}
+        {sdkState.status === 'loading' && route.page !== 'home' && route.page !== 'kind' && (
           <div className="sdk-loading" role="status">
             <div className="spinner" aria-hidden="true" />
             <p>Connecting to Dash Platform ({network})…</p>

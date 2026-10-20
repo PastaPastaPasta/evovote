@@ -2,6 +2,9 @@ import { dateText } from '../model/text';
 
 export { dateText, plural } from '../model/text';
 
+/** A count with thousands separators: "1,036". */
+export const fmt = (n: number) => n.toLocaleString();
+
 /**
  * The site's one short-id format: the first and last six characters. Every
  * id shown in running text uses the default; the full id stays available

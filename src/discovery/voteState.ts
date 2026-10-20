@@ -111,29 +111,34 @@ export function toContest(
   };
 }
 
-async function queryContest(sdk: EvoSDK, summary: ContestSummary): Promise<Contest> {
+async function queryContest(
+  sdk: EvoSDK,
+  summary: ContestSummary,
+  withDocuments = true,
+): Promise<Contest> {
   const { key } = summary;
   // Documents come with the tallies so adapters can show what each contender
   // asked for (DPNS: the requested spelling). Bytes are decoded through the
-  // SDK against the contract, never rendered raw.
+  // SDK against the contract, never rendered raw. A list row needs only the
+  // tally (and decided contests carry no documents anyway).
   const [state, contract, index, mod] = await Promise.all([
     sdk.voting.contestedResourceVoteState({
       ...pollQuery(key),
-      resultType: 'documentsAndVoteTally',
+      resultType: withDocuments ? 'documentsAndVoteTally' : 'voteTally',
       includeLockedAndAbstaining: true,
       limit: 100,
     }),
-    fetchContract(sdk, key.contractId).catch(() => undefined),
+    withDocuments ? fetchContract(sdk, key.contractId).catch(() => undefined) : undefined,
     fetchContestedIndex(sdk, key.contractId, key.documentTypeName, key.indexName).catch(
       () => undefined,
     ),
-    import('@dashevo/evo-sdk'),
+    withDocuments ? import('@dashevo/evo-sdk') : undefined,
   ]);
   const version = sdk.version();
   try {
     return toContest(summary, state as unknown as RawVoteState, {
       resolution: index?.resolution,
-      decodeDocument: contract
+      decodeDocument: contract && mod
         ? (bytes) => {
             const doc = mod.Document.fromBytes(bytes, contract, key.documentTypeName, version);
             try {
@@ -191,6 +196,27 @@ export function fetchContest(
 /** Drop a cached contest (after voting, so the next read is fresh). */
 export function invalidateContest(keyString: string): void {
   stateCache.delete(keyString);
+  tallyCache.delete(keyString);
+}
+
+const tallyCache = new Map<string, { at: number; promise: Promise<Contest> }>();
+
+/**
+ * A contest's tally and result without contender documents (`voteTally`),
+ * for list rows: lighter to fetch and nothing to decode. A fresh full read
+ * is reused when there is one. Cached like fetchContest; failures are not.
+ */
+export function fetchContestTally(sdk: EvoSDK, summary: ContestSummary): Promise<Contest> {
+  const full = stateCache.get(summary.keyString);
+  if (full && Date.now() - full.at < STATE_TTL_MS) return fetchContest(sdk, summary);
+  const hit = tallyCache.get(summary.keyString);
+  if (hit && Date.now() - hit.at < STATE_TTL_MS) return hit.promise;
+  const entry = { at: Date.now(), promise: queryContest(sdk, summary, false) };
+  tallyCache.set(summary.keyString, entry);
+  entry.promise.catch(() => {
+    if (tallyCache.get(summary.keyString) === entry) tallyCache.delete(summary.keyString);
+  });
+  return entry.promise;
 }
 
 /**
