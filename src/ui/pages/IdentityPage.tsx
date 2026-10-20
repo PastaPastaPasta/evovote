@@ -4,20 +4,82 @@ import { CHARTERS_CONTRACT_ID } from '../../charters/documents';
 import { proposalHref } from '../../charters/pollKey';
 import { fetchProposalsByLeader } from '../../charters/reads';
 import { dashText } from '../../model/credits';
-import { keyRoleText } from '../../identity/keys';
+import { keyRoleText, type KeyBounds } from '../../identity/keys';
 import {
   documentSigningProblem,
+  forgetStepKey,
   refreshIdentity,
   signOut,
   useIdentitySession,
+  type IdentitySession,
 } from '../../identity/session';
 import { targetName } from '../../kinds/charter';
 import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
 import { CopyButton } from '../components/CopyButton';
 import { dateText, firstSentence, shortId } from '../format';
+import { RenewWallet } from '../identity/RenewWallet';
 import { SignInPanel } from '../identity/SignInPanel';
+import { SigningProblemNote } from '../identity/SigningProblemNote';
 import { useAsync } from '../useAsync';
+
+function boundsText(b: KeyBounds | undefined) {
+  if (!b) return 'Any contract';
+  switch (b.kind) {
+    case 'singleContract':
+      return <span className="mono">{shortId(b.contractId)}</span>;
+    case 'documentType':
+      return (
+        <>
+          <span className="mono">{shortId(b.contractId)}</span> / {b.documentTypeName}
+        </>
+      );
+    case 'contractGroup':
+      return (
+        <>
+          Group <span className="mono">{shortId(b.groupId)}</span>
+        </>
+      );
+    case 'unknown':
+      return 'Unreadable bounds';
+  }
+}
+
+/** How this session signs: the wallet's key (allowance, expiry), the pasted key, or both. */
+function SignedInWith({ session }: { session: IdentitySession }) {
+  const walletKey = session.wallet?.keys[0];
+  return (
+    <>
+      {session.via === 'wallet' && (
+        <div>
+          <dt>Signed in with</dt>
+          <dd>
+            Dash Wallet{walletKey ? ` · key #${walletKey.keyId} for comments` : ''}
+            {walletKey?.totalBudget !== undefined &&
+              ` · ${dashText(walletKey.remainingBudget ?? walletKey.totalBudget)} of ${dashText(walletKey.totalBudget)} allowance left`}
+            {walletKey?.expiresAt !== undefined && ` · until ${dateText(walletKey.expiresAt)}`}
+          </dd>
+        </div>
+      )}
+      {session.pastedKey && (
+        <div>
+          <dt>{session.via === 'wallet' ? 'Key for charter steps' : 'Signed in with'}</dt>
+          <dd>
+            Key #{session.pastedKey.keyId} ({keyRoleText(session.pastedKey)}), in this tab only
+            {session.via === 'wallet' && (
+              <>
+                {' '}
+                <button className="link-button" onClick={forgetStepKey}>
+                  Forget it
+                </button>
+              </>
+            )}
+          </dd>
+        </div>
+      )}
+    </>
+  );
+}
 
 /** The proposals this identity leads, each linked to its page. */
 function MyProposals({ sdk, identityId }: { sdk: EvoSDK; identityId: string }) {
@@ -78,7 +140,7 @@ export function IdentityPage({ sdk, network }: { sdk: EvoSDK; network: Network }
             balance; applying for a seat also takes a 0.5 DASH contest fund.
           </p>
         </header>
-        <SignInPanel network={network} />
+        <SignInPanel network={network} mode="page" />
         <p className="fine-print">
           Voting is separate. Masternode owners vote with their masternode&apos;s voting key through{' '}
           <strong>Vote with masternode</strong> in the header; no identity or sign-in is needed for that.
@@ -87,7 +149,8 @@ export function IdentityPage({ sdk, network }: { sdk: EvoSDK; network: Network }
     );
   }
 
-  const problem = documentSigningProblem(session, CHARTERS_CONTRACT_ID);
+  const problem = documentSigningProblem(session, { contractId: CHARTERS_CONTRACT_ID, documentType: 'submittedCharter' });
+  const inUse = new Set([...(session.wallet?.keys.map((k) => k.keyId) ?? []), ...(session.pastedKey ? [session.pastedKey.keyId] : [])]);
   return (
     <div className="about-page identity-page">
       <header className="page-header">
@@ -97,7 +160,7 @@ export function IdentityPage({ sdk, network }: { sdk: EvoSDK; network: Network }
             Identity <span className="mono" title={session.identityId}>{shortId(session.identityId)}</span>{' '}
             <CopyButton text={session.identityId} label="Copy identity id" />
           </span>
-          <span>Signed in for this tab only</span>
+          <span>{session.via === 'wallet' ? 'Signed in with Dash Wallet' : 'Signed in for this tab only'}</span>
         </p>
       </header>
       <dl className="kv-table">
@@ -109,14 +172,10 @@ export function IdentityPage({ sdk, network }: { sdk: EvoSDK; network: Network }
           <dt>Usernames</dt>
           <dd>{session.names.length > 0 ? session.names.join(', ') : 'None'}</dd>
         </div>
-        <div>
-          <dt>Signed in with</dt>
-          <dd>
-            Key #{session.loginKey.keyId} ({keyRoleText(session.loginKey)})
-          </dd>
-        </div>
+        <SignedInWith session={session} />
       </dl>
-      {problem && <p className="page-note error">{problem}</p>}
+      <RenewWallet network={network} session={session} />
+      {problem && <SigningProblemNote problem={problem} />}
       <div className="modal-actions start">
         <button
           className="vote-button ghost"
@@ -127,10 +186,16 @@ export function IdentityPage({ sdk, network }: { sdk: EvoSDK; network: Network }
         >
           Refresh
         </button>
-        <button className="vote-button ghost" onClick={signOut}>
+        <button className="vote-button ghost" onClick={() => void signOut()}>
           Sign out
         </button>
       </div>
+      {session.via === 'wallet' && (
+        <p className="wallet-note">
+          Signing out forgets Dash Wallet&apos;s key in this browser. The key stays on your identity until you
+          revoke it in Dash Wallet.
+        </p>
+      )}
       {refreshError && <p className="meta error">Could not refresh: {refreshError}</p>}
 
       <MyProposals sdk={sdk} identityId={session.identityId} />
@@ -149,23 +214,14 @@ export function IdentityPage({ sdk, network }: { sdk: EvoSDK; network: Network }
           </thead>
           <tbody>
             {session.keys.map((k) => (
-              <tr key={k.keyId} className={k.keyId === session.loginKey.keyId ? 'current' : ''}>
+              <tr key={k.keyId} className={inUse.has(k.keyId) ? 'current' : ''}>
                 <td className="mono">{k.keyId}</td>
                 <td>{keyRoleText(k)}</td>
                 <td className="mono">{k.keyType}</td>
-                <td>
-                  {k.bounds ? (
-                    <>
-                      <span className="mono">{shortId(k.bounds.contractId)}</span>
-                      {k.bounds.documentTypeName ? ` / ${k.bounds.documentTypeName}` : ''}
-                    </>
-                  ) : (
-                    'Any contract'
-                  )}
-                </td>
+                <td>{boundsText(k.bounds)}</td>
                 <td>
                   {k.disabled ? 'Disabled' : k.readOnly ? 'Read-only' : 'Enabled'}
-                  {k.keyId === session.loginKey.keyId && ' · in use'}
+                  {inUse.has(k.keyId) && ' · in use'}
                 </td>
               </tr>
             ))}

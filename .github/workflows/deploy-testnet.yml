@@ -30,6 +30,9 @@ jobs:
         env:
           VITE_DISCUSSION_TESTNET_CONTRACT_ID: ${{ vars.VITE_DISCUSSION_TESTNET_CONTRACT_ID }}
           VITE_DISCUSSION_MAINNET_CONTRACT_ID: ${{ vars.VITE_DISCUSSION_MAINNET_CONTRACT_ID }}
+          # Dash Wallet sign-in: empty uses the discussion contract as the app id; `off` hides it.
+          VITE_APP_CONNECT_APP_ID_TESTNET: ${{ vars.VITE_APP_CONNECT_APP_ID_TESTNET }}
+          VITE_APP_CONNECT_APP_ID_MAINNET: ${{ vars.VITE_APP_CONNECT_APP_ID_MAINNET }}
       - uses: peaceiris/actions-gh-pages@v4
         with:
           deploy_key: ${{ secrets.TESTNET_PAGES_DEPLOY_KEY }}

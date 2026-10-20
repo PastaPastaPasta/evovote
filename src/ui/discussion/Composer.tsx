@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { readBalance } from '../../charters/writes';
 import { estimateComment, commentLength, COMMENT_LIMIT, postComment, validateDraft, type CommentDraft } from '../../discussion/writes';
-import type { Comment } from '../../discussion/reads';
+import { COMMENT_TYPE, type Comment } from '../../discussion/reads';
 import { displayText } from '../../discussion/text';
 import type { Scope } from '../../discussion/scope';
 import type { WriteOutcome } from '../../identity/outcome';
@@ -13,6 +13,7 @@ import { errorMessage } from '../../sdk/errors';
 import { useAsync } from '../useAsync';
 import { shortId } from '../format';
 import { PersonName, type ContenderInfo } from './CommentItem';
+import { SigningProblemNote } from '../identity/SigningProblemNote';
 import { SignInPrompt } from './SignInPrompt';
 
 interface Frozen {
@@ -74,7 +75,7 @@ function ReviewCard({
     onBusyChange?.(true);
     setFailure(null);
     try {
-      const outcome = await withDocumentSigner(handle, contractId, (signer) =>
+      const outcome = await withDocumentSigner(handle, { contractId, documentType: COMMENT_TYPE }, (signer) =>
         postComment(handle, signer, contractId, pollKey, draft),
       );
       await refreshIdentity().catch(() => undefined);
@@ -251,20 +252,8 @@ export function Composer({
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   if (!session) return <SignInPrompt compact={reply} />;
-  const problem = documentSigningProblem(session, contractId);
-  if (problem) {
-    return (
-      <div className="discussion-alert">
-        <p>
-          This sign-in cannot post comments. <a href="#/me">Open your identity</a> to sign in with a different key.
-        </p>
-        <details>
-          <summary>Technical detail</summary>
-          <p>{problem}</p>
-        </details>
-      </div>
-    );
-  }
+  const problem = documentSigningProblem(session, { contractId, documentType: COMMENT_TYPE });
+  if (problem) return <SigningProblemNote problem={problem} />;
 
   const draft: CommentDraft = {
     body,

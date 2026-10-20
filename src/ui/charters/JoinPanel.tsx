@@ -13,6 +13,7 @@ import { dateText, firstSentence } from '../format';
 import { useAsync } from '../useAsync';
 import { FieldProblems } from './FieldProblems';
 import { PaidWrite } from './PaidWrite';
+import { SigningProblemNote } from '../identity/SigningProblemNote';
 
 /** Ask to join a proposal's team: an encrypted message only the leader can read. */
 export function JoinPanel({
@@ -42,8 +43,8 @@ export function JoinPanel({
       </p>
     );
   }
-  const signing = documentSigningProblem(session, CHARTERS_CONTRACT_ID);
-  if (signing) return <p className="page-note error">{signing}</p>;
+  const signing = documentSigningProblem(session, { contractId: CHARTERS_CONTRACT_ID, documentType: 'joinRequest' });
+  if (signing) return <SigningProblemNote problem={signing} />;
   if (leaderReady.status === 'loading') {
     return (
       <p className="meta" role="status">
@@ -110,7 +111,7 @@ export function JoinPanel({
           confirmLabel="Sign and send the join request"
           doneText="Your join request is filed. The leader can now list you as a member."
           run={() =>
-            withDocumentSigner(handle, CHARTERS_CONTRACT_ID, (signer) =>
+            withDocumentSigner(handle, { contractId: CHARTERS_CONTRACT_ID, documentType: 'joinRequest' }, (signer) =>
               fileJoinRequest(handle, signer, {
                 submittedCharterId: proposal.id,
                 message,

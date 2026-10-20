@@ -24,6 +24,7 @@ import { IdentityName } from '../components/IdentityName';
 import { TechnicalDetail } from '../components/TechnicalDetail';
 import { BoundKeySetup } from '../identity/BoundKeySetup';
 import { PaidWrite } from './PaidWrite';
+import { SigningProblemNote } from '../identity/SigningProblemNote';
 
 /** The statement ticked before applying, naming the fund Platform asks for now. */
 const applyAck = (fund: string) =>
@@ -113,7 +114,7 @@ export function LeaderDashboard({
   const [decryptError, setDecryptError] = useState<string | null>(null);
   const [preflight, setPreflight] = useState<ApplyPreflight | 'loading' | { error: string } | null>(null);
 
-  const signing = documentSigningProblem(session, CHARTERS_CONTRACT_ID);
+  const signing = documentSigningProblem(session, { contractId: CHARTERS_CONTRACT_ID, documentType: 'electedCharter' });
   const decryptionHex = heldBoundKeyHex(session, CHARTER_DECRYPTION);
   const joiners = joinRequests.filter((r) => r.memberId !== session.identityId);
   const args = useMemo(
@@ -202,7 +203,7 @@ export function LeaderDashboard({
         Applying takes a contest fund (0.5 DASH while nobody has applied yet) plus fees. The fund pays for the masternode vote and is not refunded,
         win or lose. Nothing is signed until you confirm.
       </p>
-      {signing && <p className="page-note error">{signing}</p>}
+      {signing && <SigningProblemNote problem={signing} />}
       {!signing && preflight === null && (
         <button className="vote-button" onClick={() => void prepare()}>
           Check and prepare the application
@@ -240,7 +241,7 @@ export function LeaderDashboard({
           confirmLabel={`Sign and apply (${dashText(preflight.cost.total)})`}
           doneText="You are a contender for the seat. Masternodes can now vote; share the contest page."
           run={() =>
-            withDocumentSigner(handle, CHARTERS_CONTRACT_ID, async (signer) => {
+            withDocumentSigner(handle, { contractId: CHARTERS_CONTRACT_ID, documentType: 'electedCharter' }, async (signer) => {
               // The election may have moved since the check (a rival applied
               // or won, the window closed): read it again right before signing.
               const fresh = await preflightApply(handle, args);
