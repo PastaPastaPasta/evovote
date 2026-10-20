@@ -6,7 +6,7 @@
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { collectDirectoryIds } from '../charters/directory';
-import { fetchElectionStatus, fetchProposals, fetchTeam, leaderCanReceive } from '../charters/reads';
+import { fetchElectionStatus, fetchProposals, fetchTeam, fetchWinnerProposals, leaderCanReceive } from '../charters/reads';
 import { buildApplication, contestFundToJoin, estimateCreate, MODERATION_CONTEST_FUND } from '../charters/writes';
 import { fetchActivePolls } from '../discovery/activePolls';
 import { keyInfoFrom } from '../identity/keys';
@@ -142,6 +142,19 @@ describe('testnet (rc.4, read-only)', () => {
   it('builds the moderated-contract directory without read failures', async () => {
     const ids = await collectDirectoryIds(sdk, 'testnet');
     expect(ids.failures).toEqual([]);
+  });
+
+  it("reads seated winners' proposals in two batched `in` queries", async () => {
+    // Two seated testnet elections (EvoVote QA, a Yappr staging contract).
+    const targets = ['71PHn75xGEPbQ92i296HDHjFXLoLTWBEXzG3pJEQWStc', 'EFyPZPsEDLHtN1R38CgzeAGfWr23DrgthPpTgbCW8zAt'];
+    const teams = await Promise.all(targets.map((t) => fetchTeam(sdk, t)));
+    const wins = targets.flatMap((t, i) => {
+      const team = teams[i];
+      return team ? [{ targetContractId: t, winnerId: team.leaderId, decidedAtMs: Date.now() }] : [];
+    });
+    expect(wins).toHaveLength(2);
+    const won = await fetchWinnerProposals(sdk, wins);
+    targets.forEach((t, i) => expect(won.get(t)?.id).toBe(teams[i]?.submittedCharterId));
   });
 
   it('prices every charter write with Drive\'s estimator', async () => {

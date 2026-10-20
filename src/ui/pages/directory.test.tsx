@@ -37,6 +37,7 @@ import {
   statusSentence,
   tallyWants,
   toNeedle,
+  winnerNameOf,
   type DirectoryFacts,
 } from './directoryModel';
 
@@ -70,6 +71,7 @@ const facts = (patch: Partial<DirectoryFacts> = {}): DirectoryFacts => ({
   states: {},
   names: {},
   identityNames: {},
+  teamNames: {},
   dpnsVotePeriodMs: DPNS_VOTE_PERIOD_MS.testnet,
   ...patch,
 });
@@ -99,6 +101,35 @@ describe('directory search', () => {
     expect(matchesNeedle(c, kind, f, toNeedle('alice')!)).toBe(false);
     // "dash" is no longer every row: only the ".dash" suffix is stripped.
     expect(matchesNeedle(c, kind, f, toNeedle('dash')!)).toBe(false);
+  });
+
+  it("should name a moderator election's winner by its team, else the leader", () => {
+    const c = summary(charterPollKey(TARGET));
+    const kind = kindFor(c.key);
+    const state = { [c.keyString]: contest(c.key, [5, 2], { id: 'id0' }) };
+    const leader = facts({ states: state, identityNames: { id0: ['bob.dash'] } });
+    expect(winnerNameOf(c, leader)).toBe('bob.dash');
+    const teamNames = { [c.keyString]: { winnerId: 'id0', name: 'Team B' } };
+    const team = facts({ states: state, identityNames: { id0: ['bob.dash'] }, teamNames });
+    expect(winnerNameOf(c, team)).toBe('Team B');
+    expect(matchesNeedle(c, kind, team, toNeedle('team b')!)).toBe(true);
+    expect(matchesNeedle(c, kind, team, toNeedle('bob')!)).toBe(true);
+    // A team read for another winner is not this one's.
+    const stale = facts({
+      states: { [c.keyString]: contest(c.key, [2, 5], { id: 'id1' }) },
+      identityNames: { id1: ['carol.dash'] },
+      teamNames,
+    });
+    expect(winnerNameOf(c, stale)).toBe('carol.dash');
+    expect(matchesNeedle(c, kind, stale, toNeedle('team b')!)).toBe(false);
+    // A username contest never takes a team name.
+    const d = summary(dpnsPollKey('b0b'));
+    const dpns = facts({
+      states: { [d.keyString]: contest(d.key, [3, 1], { id: 'id0' }) },
+      identityNames: { id0: ['bob.dash', 'carol.dash'] },
+      teamNames: { [d.keyString]: { winnerId: 'id0', name: 'Team B' } },
+    });
+    expect(winnerNameOf(d, dpns)).toBe('carol.dash');
   });
 
   it('should find a moderator election by the full target contract id', () => {

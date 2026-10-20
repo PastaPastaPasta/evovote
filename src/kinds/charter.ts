@@ -21,6 +21,22 @@ export { CHARTERS_CONTRACT_ID, charterPollKey };
 
 /** The owner's first DPNS name of each contract the site has no name for, once read ('' when they have none). */
 const ownerNames = new Map<string, string>();
+/** Bumped whenever `targetName` of some contract changes, for pages to re-render (see `subscribeTargetNames`). */
+let namesVersion = 0;
+const nameListeners = new Set<() => void>();
+
+/** Calls `listener` whenever a contract's `targetName` changes; returns the unsubscribe. */
+export function subscribeTargetNames(listener: () => void): () => void {
+  nameListeners.add(listener);
+  return () => {
+    nameListeners.delete(listener);
+  };
+}
+
+/** Changes whenever some contract's `targetName` does. */
+export function targetNamesVersion(): number {
+  return namesVersion;
+}
 
 /**
  * A contract's name, the same on every page: the site's name for a known
@@ -49,6 +65,10 @@ export async function resolveTargetName(sdk: EvoSDK, targetContractId: string): 
     if (contract) {
       const name = typeof owner === 'string' ? (await fetchUsernames(sdk, owner))[0] : undefined;
       ownerNames.set(targetContractId, name ?? '');
+      if (name) {
+        namesVersion += 1;
+        for (const listener of nameListeners) listener();
+      }
     }
   } catch {
     // Best effort: the short id names it.

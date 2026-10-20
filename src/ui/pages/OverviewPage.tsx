@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { EvoSDK } from '@dashevo/evo-sdk';
+import { charterTarget } from '../../charters/pollKey';
+import { fetchWinnerProposals, type CharterWin } from '../../charters/reads';
 import { chunk, createPump, createWantQueue } from '../../discovery/concurrency';
 import { fetchContract } from '../../discovery/contracts';
 import {
@@ -27,11 +29,14 @@ import {
   rememberDpnsSpelling,
   type DpnsName,
 } from '../../kinds/dpns';
+import { resolveTargetName } from '../../kinds/charter';
 import { kindAvailable, kindById, kindFor, kindsFor, sourcesFor } from '../../kinds/registry';
 import type { KindId } from '../../kinds/types';
 import type { Contest, ContestSummary } from '../../model/contest';
 import { decodePollKey } from '../../model/pollKey';
 import { switchNetwork, type Network } from '../../sdk/network';
+import { teamName } from '../charters/standing';
+import { useTargetNames } from '../charters/useTargetName';
 import { ABSTAIN_COLOR, BallotBar, contenderColor, LOCK_COLOR } from '../components/BallotBar';
 import { ContestedName } from '../components/ContestedName';
 import { OpenContractForm } from '../components/OpenContractForm';
@@ -85,6 +90,8 @@ const FIRST_PAGE = 25;
 const MORE = 50;
 /** The search box appears once a tab has more rows than this. */
 const SEARCH_MIN = 10;
+/** Moderator rows whose results land this close together share one read of their teams. */
+const TEAM_BATCH_MS = 150;
 /** Show what is known even if the newest-first order is still settling. */
 const SHOW_ANYWAY_MS = 20_000;
 
@@ -402,6 +409,9 @@ export function OverviewPage({
   const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
   const [namesPending, setNamesPending] = useState(0);
   const [identityNames, setIdentityNames] = useState<Record<string, readonly string[]>>({});
+  const [teamNames, setTeamNames] = useState<DirectoryFacts['teamNames']>({});
+  // Moderator elections are titled by their contract's name: re-render as owners' names are read.
+  useTargetNames();
   const [report, setReport] = useState<StreamReport>({
     status: 'streaming',
     failures: [],
@@ -471,9 +481,10 @@ export function OverviewPage({
       states: { ...cached.states, ...session },
       names: { ...cached.names, ...sessionNames },
       identityNames,
+      teamNames,
       dpnsVotePeriodMs: DPNS_VOTE_PERIOD_MS[network],
     }),
-    [cached, session, sessionNames, identityNames, network],
+    [cached, session, sessionNames, identityNames, teamNames, network],
   );
 
   // Username documents, in batches of 100 as archive pages land: they give
@@ -718,6 +729,60 @@ export function OverviewPage({
           // The row keeps its short id.
         });
     }
+  });
+
+  // Moderator elections, named as on every other page, for the rows shown
+  // (so nothing competes with the first rows, and search finds only names
+  // already read): the contract's name (its owner's, for one the site has
+  // no name for: two reads each) and a decided one's winning team by its
+  // charter's title ("won by Team B": two reads for the rows whose results
+  // land together). Never for usernames; each once per page load.
+  const askedTargets = useRef(new Set<string>());
+  const askedTeams = useRef(new Set<string>());
+  const pendingWins = useRef<Array<CharterWin & { keyString: string }>>([]);
+  const winsTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(
+    () => () => {
+      clearTimeout(winsTimer.current);
+      winsTimer.current = undefined;
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!sdk) return;
+    for (const c of shownRows) {
+      const target = kindIdOf(c) === 'charter' ? charterTarget(c.key) : undefined;
+      if (!target) continue;
+      if (!askedTargets.current.has(target)) {
+        askedTargets.current.add(target);
+        // Never throws; the resolver tells useTargetNames when a name is read.
+        void resolveTargetName(sdk, target);
+      }
+      const winner = loaded(facts, c.keyString)?.winner;
+      const winnerId = winner?.identityId;
+      const asked = `${c.keyString}|${winnerId}`;
+      if (!winnerId || winner.decidedAtMs === undefined || askedTeams.current.has(asked)) continue;
+      askedTeams.current.add(asked);
+      pendingWins.current.push({ keyString: c.keyString, targetContractId: target, winnerId, decidedAtMs: winner.decidedAtMs });
+    }
+    if (pendingWins.current.length === 0 || winsTimer.current !== undefined) return;
+    winsTimer.current = setTimeout(() => {
+      winsTimer.current = undefined;
+      const wins = pendingWins.current.splice(0);
+      fetchWinnerProposals(sdk, wins)
+        .then((won) => {
+          const add: Record<string, { winnerId: string; name: string }> = {};
+          for (const w of wins) {
+            const p = won.get(w.targetContractId);
+            const name = p?.leaderId === w.winnerId ? teamName(p.description) : undefined;
+            if (name) add[w.keyString] = { winnerId: w.winnerId, name };
+          }
+          if (Object.keys(add).length > 0) setTeamNames((prev) => ({ ...prev, ...add }));
+        })
+        .catch(() => {
+          // The rows name the leaders instead.
+        });
+    }, TEAM_BATCH_MS);
   });
 
   // ---- Rendering ----

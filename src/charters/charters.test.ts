@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import type { EvoSDK } from '@dashevo/evo-sdk';
+import { describe, expect, it, vi } from 'vitest';
 import { base58Encode } from '../model/bytes';
 import {
   DEFAULT_WINDOW_SECONDS,
@@ -7,11 +8,19 @@ import {
   electionOpensAtMs,
   parseContractModeration,
 } from './declaration';
-import { charterApplicationView, charterTitle, targetName } from '../kinds/charter';
+import {
+  charterApplicationView,
+  charterTitle,
+  resolveTargetName,
+  subscribeTargetNames,
+  targetName,
+  targetNamesVersion,
+} from '../kinds/charter';
 import { encodePollKey } from '../model/pollKey';
 import { mergeDirectory } from './directory';
-import { mergeReasons, pickLeaderProposal } from './reads';
+import { fetchWinnerProposals, mergeReasons, pickLeaderProposal } from './reads';
 import {
+  CHARTERS_CONTRACT_ID,
   idFromValue,
   splitText,
   toElectedCharter,
@@ -437,6 +446,140 @@ describe('charter kind', () => {
     expect(pickLeaderProposal([early, other, late, after, undated], TARGET, decided)).toEqual({ proposal: late, candidates: 2 });
     expect(pickLeaderProposal([late], TARGET, decided)).toEqual({ proposal: late, candidates: 1 });
     expect(pickLeaderProposal([other, after], TARGET, decided)).toEqual({ proposal: undefined, candidates: 0 });
+  });
+
+  describe("winners' proposals", () => {
+    const decided = 1_790_000_010_000;
+    const OTHER = id32(20);
+    const doc = (json: Record<string, unknown>) => ({ toJSON: () => json });
+    interface Seat {
+      target: string;
+      leaderId: string;
+      proposalId: string;
+    }
+    interface Filed {
+      id: string;
+      leaderId?: string;
+      target?: string;
+      at?: number;
+    }
+    /** A stub SDK answering the two batched reads from some seats and proposals, recording each query. */
+    const stub = (seats: Seat[], filed: Filed[]) => {
+      const queries: unknown[] = [];
+      const sdk = {
+        version: () => 1,
+        documents: {
+          query: async (q: { documentTypeName: string; where: [string, string, string[]][] }) => {
+            queries.push(q);
+            const wanted = q.where[0][2];
+            if (q.documentTypeName === 'electedCharter') {
+              const hits = seats.filter((s) => wanted.includes(s.target));
+              return new Map(
+                hits.map((s, i) => [
+                  id32(100 + i),
+                  doc({ $ownerId: s.leaderId, targetContractId: s.target, submittedCharterId: s.proposalId, members: [] }),
+                ]),
+              );
+            }
+            const hits = filed.filter((f) => wanted.includes(f.id));
+            return new Map(
+              hits.map((f) => [
+                f.id,
+                doc({
+                  $ownerId: f.leaderId ?? LEADER,
+                  targetContractId: f.target ?? TARGET,
+                  description: `Team ${f.id.slice(0, 3)}. Rules.`,
+                  $createdAt: f.at ?? 1_790_000_001_000,
+                }),
+              ]),
+            );
+          },
+        },
+      } as unknown as EvoSDK;
+      return { sdk, queries };
+    };
+    const win = (target = TARGET, winnerId = LEADER) => ({ targetContractId: target, winnerId, decidedAtMs: decided });
+
+    it('should read every seat, then every seated proposal, in two queries', async () => {
+      const { sdk, queries } = stub(
+        [
+          { target: TARGET, leaderId: LEADER, proposalId: id32(1) },
+          { target: OTHER, leaderId: MEMBER, proposalId: id32(2) },
+        ],
+        [{ id: id32(1) }, { id: id32(2), leaderId: MEMBER, target: OTHER }],
+      );
+      const won = await fetchWinnerProposals(sdk, [win(), win(OTHER, MEMBER)]);
+      expect(won.get(TARGET)?.id).toBe(id32(1));
+      expect(won.get(OTHER)?.id).toBe(id32(2));
+      expect(queries).toEqual([
+        {
+          dataContractId: CHARTERS_CONTRACT_ID,
+          documentTypeName: 'electedCharter',
+          where: [['targetContractId', 'in', [TARGET, OTHER]]],
+          orderBy: [['targetContractId', 'asc']],
+          limit: 100,
+        },
+        {
+          dataContractId: CHARTERS_CONTRACT_ID,
+          documentTypeName: 'submittedCharter',
+          where: [['$id', 'in', [id32(1), id32(2)]]],
+          orderBy: [['$id', 'asc']],
+          limit: 100,
+        },
+      ]);
+    });
+
+    it('should name no team when the seat is empty or another leader holds it, without reading proposals', async () => {
+      const { sdk, queries } = stub([{ target: OTHER, leaderId: LEADER, proposalId: id32(1) }], [{ id: id32(1) }]);
+      expect((await fetchWinnerProposals(sdk, [win(), win(OTHER, MEMBER)])).size).toBe(0);
+      expect(queries).toHaveLength(1);
+    });
+
+    it("should not name a proposal that is not the winner's, for this target, filed by the decision", async () => {
+      const proposalOf = async (filed: Omit<Filed, 'id'>) => {
+        const { sdk } = stub([{ target: TARGET, leaderId: LEADER, proposalId: id32(1) }], [{ id: id32(1), ...filed }]);
+        return (await fetchWinnerProposals(sdk, [win()])).get(TARGET);
+      };
+      expect(await proposalOf({ leaderId: MEMBER })).toBeUndefined();
+      expect(await proposalOf({ target: OTHER })).toBeUndefined();
+      expect(await proposalOf({ at: decided + 1 })).toBeUndefined();
+      expect(await proposalOf({ at: decided })).toBeDefined();
+      // The seated proposal no longer exists.
+      const { sdk } = stub([{ target: TARGET, leaderId: LEADER, proposalId: id32(1) }], []);
+      expect((await fetchWinnerProposals(sdk, [win()])).size).toBe(0);
+    });
+
+    it('should read nothing for no wins', async () => {
+      const { sdk, queries } = stub([], []);
+      expect((await fetchWinnerProposals(sdk, [])).size).toBe(0);
+      expect(queries).toHaveLength(0);
+    });
+  });
+
+  it("should name a contract by its owner once read, and tell subscribers", async () => {
+    const target = id32(42);
+    const owner = id32(43);
+    const sdk = {
+      version: () => 1,
+      contracts: { fetch: async () => ({ toJSON: () => ({ id: target, ownerId: owner }) }) },
+      dpns: { usernames: async () => ['alice.dash'] },
+    } as unknown as EvoSDK;
+    const listener = vi.fn();
+    const off = subscribeTargetNames(listener);
+    try {
+      const before = targetNamesVersion();
+      expect(targetName(target)).toBe(`contract ${target.slice(0, 6)}…${target.slice(-6)}`);
+      expect(await resolveTargetName(sdk, target)).toBe("alice.dash's contract");
+      const key = charterPollKey(target);
+      expect(charterTitle({ key, keyString: encodePollKey(key) })).toBe("Moderators of alice.dash's contract");
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(targetNamesVersion()).toBe(before + 1);
+      // Read once: asking again neither reads nor notifies.
+      await resolveTargetName(sdk, target);
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      off();
+    }
   });
 
   it('should say when a losing charter is the latest of several', () => {

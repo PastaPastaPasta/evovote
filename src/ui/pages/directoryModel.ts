@@ -22,6 +22,8 @@ export interface DirectoryFacts {
   names: Readonly<Record<string, DpnsName>>;
   /** Usernames of winners, by identity id. */
   identityNames: Readonly<Record<string, readonly string[]>>;
+  /** A moderator election's winning team (its charter's title) and whom it was read for, by row key. */
+  teamNames: Readonly<Record<string, { winnerId: string; name: string }>>;
   /** How long a username vote runs: a name's registration plus this ≈ its decision. */
   dpnsVotePeriodMs: number;
 }
@@ -253,6 +255,8 @@ export function matchesNeedle(
   }
   for (const contender of state?.tally.contenders ?? []) ids.add(contender.identityId);
   if (state?.winner?.identityId) ids.add(state.winner.identityId);
+  const team = teamNameOf(c, facts);
+  if (team?.toLowerCase().includes(needle.lower)) return true;
   for (const id of ids) {
     if (idMatch(id)) return true;
     const names = facts.identityNames[id] ?? [];
@@ -312,15 +316,25 @@ function otherName(names: readonly string[] | undefined, normalized?: string): s
   return names?.find((n) => normalizedUsername(n) !== normalized);
 }
 
+/** A moderator election's winning team, if read for the row's current winner. */
+function teamNameOf(c: ContestSummary, facts: DirectoryFacts): string | undefined {
+  const team = facts.teamNames[c.keyString];
+  return team && team.winnerId === loaded(facts, c.keyString)?.winner?.identityId ? team.name : undefined;
+}
+
 /**
- * The username of a row's winner, to show "won by alice": for a username
- * contest, a name of the winner's other than the contested one.
+ * The name of a row's winner, to show "won by alice": a moderator
+ * election's team by its charter's title ("Team B"), else the leader's
+ * username; for a username contest, a name of the winner's other than the
+ * contested one.
  */
 export function winnerNameOf(c: ContestSummary, facts: DirectoryFacts): string | undefined {
   const id = loaded(facts, c.keyString)?.winner?.identityId;
   if (!id) return undefined;
   const names = facts.identityNames[id];
-  return kindIdOf(c) === 'dpns' ? otherName(names, dpnsLabel(c.key)) : names?.[0];
+  const kind = kindIdOf(c);
+  if (kind === 'dpns') return otherName(names, dpnsLabel(c.key));
+  return (kind === 'charter' ? teamNameOf(c, facts) : undefined) ?? names?.[0];
 }
 
 /**
