@@ -20,6 +20,7 @@ import { OPEN_PHASES, proposalStanding, splitSentence, viewerNote } from '../cha
 import { CopyButton } from '../components/CopyButton';
 import { IdentityName } from '../components/IdentityName';
 import { ReadIssues } from '../components/ReadIssues';
+import { TechnicalDetail } from '../components/TechnicalDetail';
 import { dateText, firstSentence, shortId } from '../format';
 import { SignInPanel } from '../identity/SignInPanel';
 import { useAsync } from '../useAsync';
@@ -91,10 +92,7 @@ export function ProposalPage({ handle, target, charterId }: { handle: SdkHandle;
         ) : (
           <div className="page-note error" role="alert">
             <p>Could not read this proposal.</p>
-            <details className="technical">
-              <summary>Technical detail</summary>
-              <p className="mono">{view.message}</p>
-            </details>
+            <TechnicalDetail>{view.message}</TechnicalDetail>
             <button className="vote-button ghost" onClick={view.reload}>
               Try again
             </button>
@@ -111,7 +109,7 @@ export function ProposalPage({ handle, target, charterId }: { handle: SdkHandle;
       <div className="contest-page proposal-page">
         <header className="page-header">
           {back}
-          <h1 className="page-title">Proposal not found</h1>
+          <h1 className="page-title">{p ? 'Proposal for another contract' : 'Proposal not found'}</h1>
         </header>
         <p className="page-note error">
           {!p ? (
@@ -133,11 +131,18 @@ export function ProposalPage({ handle, target, charterId }: { handle: SdkHandle;
   const note = viewerNote({
     standing,
     role: isLeader ? 'leader' : myJoin ? 'joiner' : 'other',
-    onSeatedTeam: !!session && !!seated?.members.includes(session.identityId),
+    // The members the election seated: someone who left later was still listed.
+    onSeatedTeam:
+      session && seated?.submittedCharterId === p.id ? seated.electedMembers.includes(session.identityId) : undefined,
   });
   const open = OPEN_PHASES.has(v.status.timing.phase);
   // The leader reads the join requests in the dashboard; nobody needs them twice.
   const leaderDashboard = isLeader && standing.kind === 'not-applied' && !seated;
+  // Joining or applying only while this team can still apply; a note once it has applied.
+  const takePart =
+    !seated &&
+    ((standing.kind === 'not-applied' && (!session || leaderDashboard || (!isLeader && !myJoin))) ||
+      (standing.kind === 'applied' && !!session && !isLeader && !myJoin));
   return (
     <div className="contest-page proposal-page">
       <header className="page-header">
@@ -223,16 +228,12 @@ export function ProposalPage({ handle, target, charterId }: { handle: SdkHandle;
         </section>
       )}
 
-      {!seated && open && (!session || leaderDashboard || (!isLeader && !myJoin)) && (
+      {takePart && (
         <section className="hub-section take-part">
           {!session ? (
             <>
               <h2 className="section-title">Take part</h2>
-              <p>
-                {standing.kind === 'not-applied'
-                  ? 'Sign in with your Dash identity to ask to join this team, or, if you lead it, to apply for the seat.'
-                  : 'Sign in with your Dash identity to see where you stand.'}
-              </p>
+              <p>Sign in with your Dash identity to ask to join this team, or, if you lead it, to apply for the seat.</p>
               <SignInPanel network={network} />
             </>
           ) : leaderDashboard ? (

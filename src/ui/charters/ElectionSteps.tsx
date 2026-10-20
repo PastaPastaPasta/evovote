@@ -13,7 +13,7 @@ export function ElectionSteps() {
       <li>
         <strong>File your charter</strong>
         <span>
-          What you would moderate, how, and how fees are shared. About 0.0005 DASH, plus up to 0.001 DASH once to add a
+          What you would moderate, how, and how fees are shared. Roughly 0.0005 to 0.0015 DASH depending on length, plus up to 0.001 DASH once to add a
           key for reading join requests.
         </span>
       </li>

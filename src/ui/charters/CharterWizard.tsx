@@ -7,7 +7,6 @@ import {
   MAX_REASON_DESCRIPTION,
   MAX_REASON_LABEL,
   shareNote,
-  splitNotes,
   validateCharter,
   validateReason,
 } from '../../charters/validate';
@@ -189,10 +188,12 @@ export function CharterWizard({
   const shareOk = shareValue === undefined || (Number.isInteger(shareValue) && shareValue >= 0 && shareValue <= 100);
   const checklist: Array<[boolean, string]> = [
     [keyReady, 'Your decryption key is added and loaded (step 2)'],
-    [description.trim() !== '' && !problems.some((p) => p.includes('bytes')), 'The charter says what your team would moderate'],
+    [description.trim() !== '', 'The charter says what your team would moderate'],
     [shareOk, "The team's share of fees is a whole number from 0 to 100"],
     [splitSum === 100 && parts.every((x) => Number.isInteger(x) && x >= 0), `The payout split adds up to 100 (now ${Number.isNaN(splitSum) ? '?' : splitSum})`],
   ];
+  // Anything the list does not name (too long, too many reasons) is listed above it.
+  if (problems.length > 0 && checklist.every(([done]) => done)) checklist.push([false, 'Fix the problems listed above']);
   const ready = problems.length === 0 && keyReady;
 
   return (
@@ -284,11 +285,11 @@ export function CharterWizard({
       </fieldset>
       <SplitExample share={shareOk ? (shareValue ?? 100) : undefined} split={split} />
       {shareNote(shareValue) && <p className="fine-print">{shareNote(shareValue)}</p>}
-      {splitNotes(split, 0).map((n) => (
-        <p key={n} className="fine-print">
-          {n}
+      {Number.isInteger(split.equal) && split.equal > 0 && (
+        <p className="fine-print">
+          If you apply with no other members, the {split.equal}% shared equally goes to you too.
         </p>
-      ))}
+      )}
       {description.trim() !== '' && <FieldProblems problems={problems} />}
       {!review ? (
         <>

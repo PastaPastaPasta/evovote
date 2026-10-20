@@ -40,8 +40,8 @@ export function AboutPage() {
             <dt>Your Dash identity</dt>
             <dd>
               For writing: commenting on a contest, and proposing, joining or applying for a moderation team. Each
-              write is a small fee paid from your identity&apos;s balance. Use <strong>Sign in</strong> in the
-              header.
+              write is a small fee paid from your identity&apos;s balance (applying for a seat also takes a 0.5 DASH
+              contest fund). Use <strong>Sign in</strong> in the header.
             </dd>
           </div>
           <div>

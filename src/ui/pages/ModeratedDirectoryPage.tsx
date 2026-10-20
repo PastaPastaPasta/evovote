@@ -20,9 +20,10 @@ import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
 import { IdentityName } from '../components/IdentityName';
 import { ReadIssues } from '../components/ReadIssues';
+import { TechnicalDetail } from '../components/TechnicalDetail';
 import { countdown, dateText, plural, shortId } from '../format';
 import { useNow } from '../hooks';
-import { OPEN_PHASES, phaseTone } from '../charters/standing';
+import { OPEN_PHASES, phaseTone, winningScore } from '../charters/standing';
 import { useAsync } from '../useAsync';
 
 interface Card {
@@ -34,18 +35,26 @@ interface Card {
 
 /** One card's election and, for an unnamed contract, its owner's name. Never throws. */
 async function loadCard(sdk: EvoSDK, id: string): Promise<Card> {
+  let status: ElectionStatus;
   try {
-    const status = await fetchElectionStatus(sdk, id);
-    let ownerName: string | undefined;
-    if (!knownContractById(id) && status.contractFound) {
-      const contract = await fetchContract(sdk, id).catch(() => undefined);
-      const owner = contract && (contractJson(sdk, contract) as { ownerId?: unknown }).ownerId;
-      if (typeof owner === 'string') ownerName = (await fetchUsernames(sdk, owner))[0];
-    }
-    return { status, ownerName };
+    status = await fetchElectionStatus(sdk, id);
   } catch (e) {
     return { error: errorMessage(e) };
   }
+  if (knownContractById(id) || !status.contractFound) return { status };
+  // Best effort: the card falls back to what the contract moderates.
+  try {
+    const contract = await fetchContract(sdk, id);
+    const owner = contract && (contractJson(sdk, contract) as { ownerId?: unknown }).ownerId;
+    return { status, ownerName: typeof owner === 'string' ? (await fetchUsernames(sdk, owner))[0] : undefined };
+  } catch {
+    return { status };
+  }
+}
+
+/** A card whose election could not be read (as opposed to one that is closed). */
+function unreadable(card: Card | undefined): boolean {
+  return !!card && (!card.status || card.status.timing.phase === 'unknown');
 }
 
 /** "Yappr Social", else what the contract moderates and who owns it, else its short id. */
@@ -69,15 +78,13 @@ function CardStatus({ sdk, card, now }: { sdk: EvoSDK; card: Card | undefined; n
   if (s.contractFound === false) return <span className="meta error">No such contract on this network.</span>;
   const { phase, joinClosesAtMs, endsAtMs, opensAtMs } = s.timing;
   if (s.team) {
-    const contenders = s.contest?.tally.contenders ?? [];
-    const winner = contenders.find((c) => c.identityId === s.team!.leaderId);
-    const rest = contenders.filter((c) => c.identityId !== s.team!.leaderId);
+    const score = winningScore(s.contest?.tally.contenders ?? [], s.team.leaderId);
     const decidedAt = s.contest?.winner?.decidedAtMs;
     return (
       <span>
         Seated: <IdentityName sdk={sdk} id={s.team.leaderId} />
         {decidedAt && ` since ${dateText(decidedAt, { time: false })}`}
-        {winner && (rest.length > 0 ? ` · won ${winner.votes}–${rest.map((c) => c.votes).join('–')}` : ' · unopposed')}
+        {score && (score === 'unopposed' ? ' · unopposed' : ` · won ${score}`)}
       </span>
     );
   }
@@ -195,6 +202,7 @@ export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network:
   const decided = byGroup('decided');
   const other = byGroup('other');
   const loading = byGroup('loading');
+  const failed = other.filter((e) => unreadable(cards[e.id])).length;
   const list = (items: typeof entries) => (
     <ol className="election-cards">
       {items.map(({ id, sources }) => (
@@ -221,10 +229,7 @@ export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network:
       {ids.status === 'error' && (
         <div className="page-note error" role="alert">
           <p>Could not build the list of elections.</p>
-          <details className="technical">
-            <summary>Technical detail</summary>
-            <p className="mono">{ids.message}</p>
-          </details>
+          <TechnicalDetail>{ids.message}</TechnicalDetail>
         </div>
       )}
       {ids.status === 'ok' && <ReadIssues failures={ids.value.failures} caps={ids.value.caps} />}
@@ -244,9 +249,13 @@ export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network:
             )}
             {open.length === 0 && loading.length === 0 && (
               <div className="empty-state">
-                <p className="empty-state-title">No election is open on {network} right now.</p>
+                <p className="empty-state-title">
+                  {failed > 0 ? 'Could not check every election right now.' : `No election is open on ${network} right now.`}
+                </p>
                 <p>
-                  {decided.length > 0
+                  {failed > 0
+                    ? `${plural(failed, 'election')} could not be read (listed below), so one may be open. Reload the page to try again.`
+                    : decided.length > 0
                     ? `Every seat below is filled, and on protocol 14 a filled seat is permanent. A new election starts when another contract declares elected moderation.`
                     : 'An election starts when a contract declares elected moderation and a team proposes itself.'}
                 </p>

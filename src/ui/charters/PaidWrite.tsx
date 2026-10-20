@@ -5,6 +5,7 @@ import { refreshIdentity } from '../../identity/session';
 import { dashText } from '../../model/credits';
 import type { SdkHandle } from '../../sdk/connection';
 import { errorMessage } from '../../sdk/errors';
+import { TechnicalDetail } from '../components/TechnicalDetail';
 import { useAsync } from '../useAsync';
 
 function OutcomeNote<T>({ outcome, done }: { outcome: WriteOutcome<T>; done: string }) {
@@ -14,14 +15,11 @@ function OutcomeNote<T>({ outcome, done }: { outcome: WriteOutcome<T>; done: str
       <div className="page-note error">
         <p>Platform refused it: {outcome.error.message}</p>
         {(outcome.error.code || outcome.error.detail !== outcome.error.message) && (
-          <details className="technical">
-            <summary>Technical detail</summary>
-            <p className="mono">
-              {outcome.error.code ? `code ${outcome.error.code}` : ''}
-              {outcome.error.code && outcome.error.detail !== outcome.error.message ? ' · ' : ''}
-              {outcome.error.detail !== outcome.error.message ? outcome.error.detail : ''}
-            </p>
-          </details>
+          <TechnicalDetail>
+            {outcome.error.code ? `code ${outcome.error.code}` : ''}
+            {outcome.error.code && outcome.error.detail !== outcome.error.message ? ' · ' : ''}
+            {outcome.error.detail !== outcome.error.message ? outcome.error.detail : ''}
+          </TechnicalDetail>
         )}
       </div>
     );
@@ -40,12 +38,7 @@ function OutcomeNote<T>({ outcome, done }: { outcome: WriteOutcome<T>; done: str
         No answer from Platform, and it could not be found by reading back. It may still land: wait a minute
         and reload this page before trying again, or you may pay twice.
       </p>
-      {outcome.error && (
-        <details className="technical">
-          <summary>Technical detail</summary>
-          <p className="mono">{outcome.error.detail}</p>
-        </details>
-      )}
+      {outcome.error && <TechnicalDetail>{outcome.error.detail}</TechnicalDetail>}
     </div>
   );
 }
@@ -214,7 +207,8 @@ export function PaidWrite<T>({
             {busy ? 'Signing and waiting for Platform…' : confirmLabel}
           </button>
         )}
-        {secondary}
+        {/* Not while signing or after: leaving now would lose the outcome, or file twice. */}
+        {!busy && !outcome && secondary}
       </div>
       {error && <p className="page-note error">{error}</p>}
       {outcome && <OutcomeNote outcome={outcome} done={doneText} />}

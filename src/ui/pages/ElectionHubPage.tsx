@@ -13,10 +13,11 @@ import { CharterNotices } from '../charters/CharterNotices';
 import { CharterWizard } from '../charters/CharterWizard';
 import { DeclarationCard, moderatedTypesText } from '../charters/DeclarationCard';
 import { ElectionSteps } from '../charters/ElectionSteps';
-import { OPEN_PHASES, phaseTone, proposalStanding, standingChip, votesText } from '../charters/standing';
+import { OPEN_PHASES, phaseTone, proposalStanding, standingChip, votesText, winningScore, type Standing } from '../charters/standing';
 import { CopyButton } from '../components/CopyButton';
 import { IdentityName } from '../components/IdentityName';
 import { ReadIssues } from '../components/ReadIssues';
+import { TechnicalDetail } from '../components/TechnicalDetail';
 import { afterFirstSentence, countdown, dateText, excerpt, firstSentence, plural, shortId } from '../format';
 import { useNow } from '../hooks';
 import { SignInPanel } from '../identity/SignInPanel';
@@ -38,8 +39,7 @@ function Summary({ sdk, network, status, now }: { sdk: EvoSDK; network: string; 
   let headline: ReactNode;
   let detail: ReactNode = null;
   if (team) {
-    const winner = contenders.find((c) => c.identityId === team.leaderId);
-    const rest = contenders.filter((c) => c.identityId !== team.leaderId);
+    const score = winningScore(contenders, team.leaderId);
     headline = (
       <>
         <IdentityName sdk={sdk} id={team.leaderId} />
@@ -48,10 +48,9 @@ function Summary({ sdk, network, status, now }: { sdk: EvoSDK; network: string; 
     );
     detail = (
       <>
-        {winner && rest.length > 0 && `Won ${winner.votes}–${rest.map((c) => c.votes).join('–')}`}
-        {winner && rest.length === 0 && 'Won unopposed'}
+        {score && `Won ${score}`}
         {contest?.winner?.decidedAtMs && ` on ${dateText(contest.winner.decidedAtMs, { time: false })}`}
-        {winner && ' · '}
+        {score && ' · '}
         {team.members.length === 0 ? 'No members besides the leader' : `${plural(team.members.length, 'member')} besides the leader`}
       </>
     );
@@ -193,7 +192,7 @@ function ProposalList({ sdk, status }: { sdk: EvoSDK; status: ElectionStatus }) 
   );
 }
 
-function rank(s: ReturnType<typeof proposalStanding>): number {
+function rank(s: Standing): number {
   switch (s.kind) {
     case 'seated':
       return 0;
@@ -205,6 +204,8 @@ function rank(s: ReturnType<typeof proposalStanding>): number {
       return 3;
     case 'closed':
       return 4;
+    case 'unknown':
+      return 5;
   }
 }
 
@@ -253,10 +254,7 @@ export function ElectionHubPage({ handle, target }: { handle: SdkHandle; target:
         ) : (
           <div className="page-note error" role="alert">
             <p>Could not read this election.</p>
-            <details className="technical">
-              <summary>Technical detail</summary>
-              <p className="mono">{status.status === 'error' ? status.message : ''}</p>
-            </details>
+            <TechnicalDetail>{status.status === 'error' ? status.message : ''}</TechnicalDetail>
             <button className="vote-button ghost" onClick={status.reload}>
               Try again
             </button>

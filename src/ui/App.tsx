@@ -7,6 +7,7 @@ import { useIdentitySession } from '../identity/session';
 import { initKeyring, useMasternodes } from '../voting/keyring';
 import { KeyringPanel, MnDrawer } from './components/KeyringPanel';
 import { VoteModal } from './components/VoteModal';
+import { TechnicalDetail } from './components/TechnicalDetail';
 import { AboutPage } from './pages/AboutPage';
 import { ContestPage } from './pages/ContestPage';
 import { ContractPage } from './pages/ContractPage';
@@ -153,6 +154,9 @@ function useRouteFocus(route: Route): void {
         h1.focus({ preventScroll: true });
       } else if (tries++ < 20) {
         timer = setTimeout(focus, 100);
+      } else {
+        // A page with no h1 (the contest list): start from the content.
+        document.getElementById('main')?.focus({ preventScroll: true });
       }
     };
     focus();
@@ -267,10 +271,7 @@ export function App() {
         {sdkState.status === 'error' && (
           <div className="sdk-loading" role="alert">
             <p className="error">Could not connect to Dash Platform.</p>
-            <details className="technical">
-              <summary>Technical detail</summary>
-              <p className="mono">{sdkState.message}</p>
-            </details>
+            <TechnicalDetail>{sdkState.message}</TechnicalDetail>
             <button className="vote-button" onClick={() => location.reload()}>
               Retry
             </button>

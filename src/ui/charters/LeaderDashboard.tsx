@@ -21,11 +21,13 @@ import { freeQuietly } from '../../sdk/free';
 import { targetName } from '../../kinds/charter';
 import { dateText, firstSentence, shortId } from '../format';
 import { IdentityName } from '../components/IdentityName';
+import { TechnicalDetail } from '../components/TechnicalDetail';
 import { BoundKeySetup } from '../identity/BoundKeySetup';
 import { PaidWrite } from './PaidWrite';
 
-const APPLY_ACK =
-  'I understand: if this team wins, it holds the seat permanently (protocol 14 has no challenges); the 0.5 DASH contest fund is not refunded, win or lose; a tie goes to the team that applied first; and an application Platform refuses still costs its fees.';
+/** The statement ticked before applying, naming the fund Platform asks for now. */
+const applyAck = (fund: string) =>
+  `I understand: if this team wins, it holds the seat permanently (protocol 14 has no challenges); the ${fund} contest fund is not refunded, win or lose; a tie goes to the team that applied first; and an application Platform refuses still costs its fees.`;
 
 /**
  * What the application document says, read back from the built document
@@ -165,10 +167,7 @@ export function LeaderDashboard({
       {decryptError && (
         <div className="page-note error">
           <p>Could not read the messages.</p>
-          <details className="technical">
-            <summary>Technical detail</summary>
-            <p className="mono">{decryptError}</p>
-          </details>
+          <TechnicalDetail>{decryptError}</TechnicalDetail>
         </div>
       )}
       {joiners.length === 0 && <p className="meta">Nobody has asked to join yet. You can still apply alone.</p>}
@@ -200,7 +199,7 @@ export function LeaderDashboard({
 
       <h3>2. Apply for the seat</h3>
       <p className="fine-print">
-        Applying costs a 0.5 DASH contest fund plus fees. The fund pays for the masternode vote and is not refunded,
+        Applying takes a contest fund (0.5 DASH while nobody has applied yet) plus fees. The fund pays for the masternode vote and is not refunded,
         win or lose. Nothing is signed until you confirm.
       </p>
       {signing && <p className="page-note error">{signing}</p>}
@@ -222,10 +221,7 @@ export function LeaderDashboard({
               Try again
             </button>
           </p>
-          <details className="technical">
-            <summary>Technical detail</summary>
-            <p className="mono">{preflight.error}</p>
-          </details>
+          <TechnicalDetail>{preflight.error}</TechnicalDetail>
         </div>
       )}
       {preflight && typeof preflight === 'object' && 'status' in preflight && (
@@ -240,7 +236,7 @@ export function LeaderDashboard({
           balanceChecked
           permanent="application"
           warnings={[...preflight.warnings, ...splitNotes(proposal.rewardSplit, members.length)]}
-          ack={APPLY_ACK}
+          ack={applyAck(dashText(preflight.cost.contestFund))}
           confirmLabel={`Sign and apply (${dashText(preflight.cost.total)})`}
           doneText="You are a contender for the seat. Masternodes can now vote; share the contest page."
           run={() =>

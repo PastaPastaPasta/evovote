@@ -74,8 +74,8 @@ export function IdentityPage({ sdk, network }: { sdk: EvoSDK; network: Network }
           <h1 className="page-title">Sign in</h1>
           <p className="page-lead">
             Sign in with your Dash identity to comment on contests and take part in moderator elections: propose a
-            team, ask to join one, or apply for a seat. Each of those is a small fee paid from your identity&apos;s
-            balance.
+            team, ask to join one, or apply for a seat. Each write is a small fee paid from your identity&apos;s
+            balance; applying for a seat also takes a 0.5 DASH contest fund.
           </p>
         </header>
         <SignInPanel network={network} />

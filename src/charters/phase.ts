@@ -1,4 +1,4 @@
-import { dateText, plural } from '../ui/format';
+import { dateText, plural } from '../model/text';
 import { electedOf, electionOpensAtMs, type ContractModeration } from './declaration';
 
 /**

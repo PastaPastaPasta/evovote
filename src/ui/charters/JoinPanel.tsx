@@ -8,6 +8,7 @@ import { documentSigningProblem, heldBoundKeyHex, withDocumentSigner, type Ident
 import { utf8Length } from '../../model/bytes';
 import type { SdkHandle } from '../../sdk/connection';
 import { BoundKeySetup } from '../identity/BoundKeySetup';
+import { TechnicalDetail } from '../components/TechnicalDetail';
 import { dateText, firstSentence } from '../format';
 import { useAsync } from '../useAsync';
 import { FieldProblems } from './FieldProblems';
@@ -59,10 +60,7 @@ export function JoinPanel({
             Try again
           </button>
         </p>
-        <details className="technical">
-          <summary>Technical detail</summary>
-          <p className="mono">{leaderReady.message}</p>
-        </details>
+        <TechnicalDetail>{leaderReady.message}</TechnicalDetail>
       </div>
     );
   }

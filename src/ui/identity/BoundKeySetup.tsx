@@ -88,7 +88,8 @@ export function BoundKeySetup({
       <div className="bound-key">
         <p>
           Your identity has a {what} (key #{onChain.keyId}). Paste its private key to use it in this session. If
-          EvoVote created it, it is in the backup file <span className="mono">{backupFileName(spec, session.identityId)}</span>.
+          EvoVote created it and you downloaded the backup, it is in{' '}
+          <span className="mono">{backupFileName(spec, session.identityId)}</span>.
         </p>
         <div className="key-field">
           <input

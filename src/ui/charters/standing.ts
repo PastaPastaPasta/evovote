@@ -1,4 +1,4 @@
-import type { CharterProposal } from '../../charters/documents';
+import { toElectedCharter, type CharterProposal } from '../../charters/documents';
 import type { ElectionPhase } from '../../charters/phase';
 import type { ElectionStatus } from '../../charters/reads';
 import { plural } from '../format';
@@ -25,38 +25,60 @@ export function phaseTone(phase: ElectionPhase | undefined): 'won' | 'live' | 'm
  * - seated: its team holds the seat
  * - lost: its leader applied and the seat went to another team
  * - applied: its leader is a contender in the running vote
- * - not-applied: nobody has applied with it (yet, while the election is open)
- * - closed: it never applied and the seat is taken
+ * - not-applied: nobody has applied with it yet, and teams still can
+ * - closed: it never applied, and applications are closed (or the seat taken)
+ * - unknown: a read it depends on failed, so none of the above can be said
  *
- * Contenders are identities, so a leader's standing is shared by every
- * proposal that leader filed, except the one the seated team names.
+ * Contenders are identities. While the vote runs, a contender's application
+ * names its proposal, so a leader's other proposals are told apart; once
+ * decided, every proposal of a losing leader shares the leader's standing.
  */
 export type Standing =
   | { kind: 'seated'; votes?: number; share?: number }
   | { kind: 'lost'; votes: number; share?: number }
   | { kind: 'applied'; votes: number; share?: number }
   | { kind: 'not-applied' }
-  | { kind: 'closed' };
+  | { kind: 'closed' }
+  | { kind: 'unknown' };
+
+/** Reads whose failure leaves a proposal's standing unknown. */
+const STANDING_SOURCES = ['the seated team', 'the contest for the seat'];
+
+/** The proposal a running contender applied with, when its application is in the vote state. */
+function appliedWith(document: Record<string, unknown> | undefined): string | undefined {
+  if (!document) return undefined;
+  try {
+    return toElectedCharter(document).submittedCharterId || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Pure: one proposal's standing from the election status. */
 export function proposalStanding(
-  status: Pick<ElectionStatus, 'team' | 'contest'>,
+  status: Pick<ElectionStatus, 'team' | 'contest'> & Partial<Pick<ElectionStatus, 'timing' | 'failures'>>,
   proposal: Pick<CharterProposal, 'id' | 'leaderId'>,
 ): Standing {
   const { team, contest } = status;
+  if (status.timing?.phase === 'unknown' || status.failures?.some((f) => STANDING_SOURCES.includes(f.source))) {
+    return { kind: 'unknown' };
+  }
   const total = contest?.tally.total ?? 0;
   const contender = contest?.tally.contenders.find((c) => c.identityId === proposal.leaderId);
   const share = contender && total > 0 ? Math.round((contender.votes / total) * 100) : undefined;
   if (team?.submittedCharterId === proposal.id) return { kind: 'seated', votes: contender?.votes, share };
   const decided = !!team || !!contest?.winner;
-  if (contender) {
+  const applicationsClosed = decided || status.timing?.phase === 'voting' || status.timing?.phase === 'closing';
+  const other = appliedWith(contender?.document);
+  if (contender && (other === undefined || other === proposal.id)) {
     // The seated leader's other proposals: the seat was won with another one.
     if (team?.leaderId === proposal.leaderId) return { kind: 'closed' };
     const won = contest?.winner?.identityId === proposal.leaderId && !team;
     if (won) return { kind: 'seated', votes: contender.votes, share };
     return decided ? { kind: 'lost', votes: contender.votes, share } : { kind: 'applied', votes: contender.votes, share };
   }
-  return decided ? { kind: 'closed' } : { kind: 'not-applied' };
+  // Not applied, or the leader applied with another of their proposals (an identity applies once).
+  return applicationsClosed || contender ? { kind: 'closed' } : { kind: 'not-applied' };
 }
 
 /** The chip a proposal row shows: "won · seated", "lost · 4 votes", "applied · 12 votes", "not applied". */
@@ -72,12 +94,22 @@ export function standingChip(s: Standing): { text: string; tone: 'won' | 'lost' 
       return { text: 'not applied', tone: 'muted' };
     case 'closed':
       return { text: 'did not apply', tone: 'muted' };
+    case 'unknown':
+      return { text: 'standing unknown', tone: 'muted' };
   }
 }
 
 /** "12 votes (75%)", or "12 votes" when there is no total to compare with. */
 export function votesText(votes: number, share: number | undefined): string {
   return share === undefined ? plural(votes, 'vote') : `${plural(votes, 'vote')} (${share}%)`;
+}
+
+/** The seated leader's tally against the rest: "12–4", or "unopposed". Undefined if they were not a contender. */
+export function winningScore(contenders: ReadonlyArray<{ identityId: string; votes: number }>, leaderId: string): string | undefined {
+  const winner = contenders.find((c) => c.identityId === leaderId);
+  if (!winner) return undefined;
+  const rest = contenders.filter((c) => c.identityId !== leaderId);
+  return rest.length > 0 ? [winner, ...rest].map((c) => c.votes).join('–') : 'unopposed';
 }
 
 /**
@@ -87,7 +119,10 @@ export function votesText(votes: number, share: number | undefined): string {
 export function viewerNote(args: {
   standing: Standing;
   role: 'leader' | 'joiner' | 'other';
-  /** For a joiner of the seated team: whether its leader listed them. */
+  /**
+   * For a joiner of the winning team: whether the seated team lists them.
+   * Undefined when the seated team has not been read.
+   */
   onSeatedTeam?: boolean;
 }): { tone: 'won' | 'lost' | 'live' | 'muted'; text: string } {
   const { standing: s, role } = args;
@@ -100,9 +135,11 @@ export function viewerNote(args: {
           role === 'leader'
             ? 'Your team won. It holds this seat permanently.'
             : role === 'joiner'
-              ? args.onSeatedTeam
-                ? 'You are on the seated team. It holds this seat permanently.'
-                : 'This team won the seat, but its leader did not list you as a member.'
+              ? args.onSeatedTeam === undefined
+                ? 'You asked to join this team, and it won the seat.'
+                : args.onSeatedTeam
+                  ? 'You are on the seated team. It holds this seat permanently.'
+                  : 'This team won the seat, but its leader did not list you as a member.'
               : `This team won the election${votes ? ` with ${votes}` : ''} and holds the seat permanently.`,
       };
     case 'lost':
@@ -140,8 +177,15 @@ export function viewerNote(args: {
         tone: 'muted',
         text:
           role === 'leader'
-            ? 'You did not apply with this proposal, and the seat is now filled.'
-            : 'This team did not apply, and the seat is now filled by another team.',
+            ? 'You did not apply with this proposal, and applications are now closed.'
+            : role === 'joiner'
+              ? 'You asked to join this team, but it did not apply for the seat, and applications are now closed.'
+              : 'This team did not apply for the seat, and applications are now closed.',
+      };
+    case 'unknown':
+      return {
+        tone: 'muted',
+        text: 'Where this team stands could not be read right now. Reload the page to try again.',
       };
   }
 }
