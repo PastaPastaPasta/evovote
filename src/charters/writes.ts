@@ -12,6 +12,7 @@ import type { DocumentSigner } from '../identity/session';
 import { electedOf } from './declaration';
 import { encryptedSize } from './boundKeys';
 import { CHARTERS_CONTRACT_ID, idFromValue } from './documents';
+import { forgetDirectory } from './directory';
 import { canApply, type ApplyCheck } from './phase';
 import {
   fetchCharterContest,
@@ -291,6 +292,8 @@ export async function fileCharter(
       .then((ps) => new Set(ps.map((p) => p.id)))
       .catch(() => undefined);
     const description = input.description.trim();
+    // A new proposal may add a contract to `#/m`.
+    forgetDirectory();
     return await createAndConfirm(handle, signer, doc, 'submittedCharter', async () => {
       if (!before) return undefined;
       const mine = await fetchProposalsByLeader(handle.sdk, signer.identityId);
@@ -567,6 +570,7 @@ export async function applyForSeat(
     { attempts: 6, delayMs: 3000 },
   );
   invalidateContest(keyString);
+  forgetDirectory();
   return outcome;
 }
 

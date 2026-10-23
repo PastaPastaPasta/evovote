@@ -4,16 +4,22 @@ import { knownContractById } from '../../config/knownContracts';
 import { electedOf } from '../../charters/declaration';
 import {
   addContract,
-  collectDirectoryIds,
+  contractAbout,
+  directoryGroup,
+  directoryNote,
+  discoverDirectory,
   mergeDirectory,
   removeContract,
   useAddedContracts,
+  type DirectoryEntry,
+  type DirectoryGroup,
   type DirectorySource,
 } from '../../charters/directory';
 import { PHASE_TEXT } from '../../charters/phase';
 import { moderatedHref } from '../../charters/pollKey';
 import { fetchElectionStatus, type ElectionStatus } from '../../charters/reads';
 import { forEachConcurrent } from '../../discovery/concurrency';
+import { contractJson, fetchContract } from '../../discovery/contracts';
 import { resolveTargetName, targetTitle } from '../../kinds/charter';
 import { errorMessage } from '../../sdk/errors';
 import type { Network } from '../../sdk/network';
@@ -22,15 +28,27 @@ import { ReadIssues } from '../components/ReadIssues';
 import { TechnicalDetail } from '../components/TechnicalDetail';
 import { countdown, dateText, endDate, plural, shortId } from '../format';
 import { useNow } from '../hooks';
-import { contenderTeamName, OPEN_PHASES, phaseTone, winningScore } from '../charters/standing';
+import { contenderTeamName, phaseTone, winningScore } from '../charters/standing';
 import { useAsync } from '../useAsync';
 
 interface Card {
   status?: ElectionStatus;
+  /** What the contract says about itself (its description or keywords), for one the site has no note for. */
+  about?: string;
   error?: string;
 }
 
-/** One card's election, and (for a contract the site has no name for) its owner's name. Never throws. */
+/** What a contract says about itself, from the fetch its election read already made. Never throws. */
+async function readAbout(sdk: EvoSDK, id: string): Promise<string | undefined> {
+  try {
+    const contract = await fetchContract(sdk, id);
+    return contract ? contractAbout(contractJson(sdk, contract)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One card's election, and (for a contract the site has no name for) its owner's name and description. Never throws. */
 async function loadCard(sdk: EvoSDK, id: string): Promise<Card> {
   let status: ElectionStatus;
   try {
@@ -38,9 +56,10 @@ async function loadCard(sdk: EvoSDK, id: string): Promise<Card> {
   } catch (e) {
     return { error: errorMessage(e) };
   }
+  if (!status.contractFound || knownContractById(id)) return { status };
   // The name every page uses (see targetName), read before the card shows.
-  if (status.contractFound) await resolveTargetName(sdk, id);
-  return { status };
+  const [about] = await Promise.all([readAbout(sdk, id), resolveTargetName(sdk, id)]);
+  return { status, about };
 }
 
 /** A card whose election could not be read (as opposed to one that is closed). */
@@ -48,11 +67,10 @@ function unreadable(card: Card | undefined): boolean {
   return !!card && (!card.status || card.status.timing.phase === 'unknown');
 }
 
-/** For a contract the site has no note for: "Moderates post, reply". */
-function moderatesText(card: Card | undefined): string | undefined {
+/** The document types an elected team moderates, as the contract declares them. */
+function moderatedTypes(card: Card | undefined): string[] {
   const elected = card?.status?.moderation && electedOf(card.status.moderation);
-  const types = elected ? Object.keys(elected.moderatedDocumentTypes) : [];
-  return types.length > 0 ? `Moderates ${types.join(', ')}` : undefined;
+  return elected ? Object.keys(elected.moderatedDocumentTypes) : [];
 }
 
 /** One sentence: who holds the seat, or what is open and until when. */
@@ -98,13 +116,15 @@ function CardStatus({ sdk, card, now }: { sdk: EvoSDK; card: Card | undefined; n
   }
 }
 
-function group(card: Card | undefined): 'loading' | 'open' | 'decided' | 'other' {
-  if (!card) return 'loading';
-  const phase = card.status?.timing.phase;
-  if (!phase) return 'other';
-  if (OPEN_PHASES.has(phase)) return 'open';
-  if (phase === 'seated' || phase === 'decided') return 'decided';
-  return 'other';
+function group(card: Card | undefined): DirectoryGroup | 'loading' {
+  return card ? directoryGroup(card.status?.timing.phase) : 'loading';
+}
+
+/** When an open contest's next step is due: the join window's close while it is open, else the vote's end. */
+function dueAt(card: Card | undefined): number {
+  const timing = card?.status?.timing;
+  const due = timing?.phase === 'join-window' ? timing.joinClosesAtMs : timing?.endsAtMs;
+  return due ?? Number.POSITIVE_INFINITY;
 }
 
 function ElectionCard({
@@ -125,6 +145,7 @@ function ElectionCard({
   const known = knownContractById(id);
   const phase = card?.status?.timing.phase;
   const tone = phaseTone(phase);
+  const note = directoryNote(known, card?.about, moderatedTypes(card));
   return (
     <li className="election-card">
       <a className="election-card-link" href={moderatedHref(id)}>
@@ -136,7 +157,11 @@ function ElectionCard({
           <CardStatus sdk={sdk} card={card} now={now} />
         </span>
         <span className="meta">
-          {known?.note ? `${known.note} · ` : moderatesText(card) ? `${moderatesText(card)} · ` : ''}
+          {note.map((n) => (
+            <span key={n}>
+              <bdi>{n}</bdi> ·{' '}
+            </span>
+          ))}
           <span className="mono" title={id}>
             {shortId(id)}
           </span>
@@ -152,18 +177,18 @@ function ElectionCard({
   );
 }
 
-/** `#/m`: every contract with a moderator election this site knows of, open ones first. */
+/** `#/m`: every contract with moderator proposals, a contest or a seated team on chain, open ones first. */
 export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network: Network }) {
   const added = useAddedContracts(network);
   // The sweep does not depend on the user's list, so adding an id does not re-run it.
-  const ids = useAsync(() => collectDirectoryIds(sdk, network), [sdk, network]);
+  const ids = useAsync(() => discoverDirectory(sdk, network), [sdk, network]);
   const [cards, setCards] = useState<Record<string, Card>>({});
   const [input, setInput] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
   const now = useNow();
 
   const entries = useMemo(
-    () => (ids.status === 'ok' ? mergeDirectory(ids.value.known, ids.value.contested, added) : []),
+    () => (ids.status === 'ok' ? mergeDirectory(ids.value, added) : []),
     [ids, added],
   );
   useEffect(() => {
@@ -186,12 +211,14 @@ export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network:
   };
 
   const byGroup = (g: ReturnType<typeof group>) => entries.filter((e) => group(cards[e.id]) === g);
-  const open = byGroup('open');
-  const decided = byGroup('decided');
+  const open = byGroup('open').sort((a, b) => dueAt(cards[a.id]) - dueAt(cards[b.id]));
+  const byTitle = (a: DirectoryEntry, b: DirectoryEntry) => targetTitle(a.id).localeCompare(targetTitle(b.id));
+  const waiting = byGroup('waiting').sort(byTitle);
+  const decided = byGroup('decided').sort(byTitle);
   const other = byGroup('other');
   const loading = byGroup('loading');
   const failed = other.filter((e) => unreadable(cards[e.id])).length;
-  const list = (items: typeof entries) => (
+  const list = (items: DirectoryEntry[]) => (
     <ol className="election-cards">
       {items.map(({ id, sources }) => (
         <ElectionCard key={id} sdk={sdk} network={network} id={id} sources={sources} card={cards[id]} now={now} />
@@ -243,6 +270,8 @@ export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network:
                 <p>
                   {failed > 0
                     ? `${plural(failed, 'election')} could not be read (listed below), so one may be open. Reload the page to try again.`
+                    : waiting.length > 0
+                    ? 'No team is applying for a seat or being voted on. The contracts below are waiting for a team to apply.'
                     : decided.length > 0
                     ? `Every seat below is filled, and on protocol 14 a filled seat is permanent. A new election starts when another contract declares elected moderation.`
                     : 'An election starts when a contract declares elected moderation and a team proposes itself.'}
@@ -250,6 +279,17 @@ export function ModeratedDirectoryPage({ sdk, network }: { sdk: EvoSDK; network:
               </div>
             )}
           </section>
+          {waiting.length > 0 && (
+            <section className="hub-section">
+              <h2 className="section-title">Proposed, waiting for a team to apply · {waiting.length}</h2>
+              <p className="fine-print">
+                These contracts hold moderator elections, but no team has applied for the seat yet. Once applications
+                are open, the first one starts the election: other teams can still join for a while, then masternodes
+                vote.
+              </p>
+              {list(waiting)}
+            </section>
+          )}
           {decided.length > 0 && (
             <section className="hub-section">
               <h2 className="section-title">Seats filled · {decided.length}</h2>

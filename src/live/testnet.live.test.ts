@@ -5,8 +5,15 @@
  */
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { collectDirectoryIds } from '../charters/directory';
-import { fetchElectionStatus, fetchProposals, fetchTeam, fetchWinnerProposals, leaderCanReceive } from '../charters/reads';
+import { collectDirectoryIds, walkDistinctTargets } from '../charters/directory';
+import {
+  fetchElectionStatus,
+  fetchProposals,
+  fetchTargetsPage,
+  fetchTeam,
+  fetchWinnerProposals,
+  leaderCanReceive,
+} from '../charters/reads';
 import { buildApplication, contestFundToJoin, estimateCreate, MODERATION_CONTEST_FUND } from '../charters/writes';
 import { fetchActivePolls } from '../discovery/activePolls';
 import { keyInfoFrom } from '../identity/keys';
@@ -139,9 +146,28 @@ describe('testnet (rc.4, read-only)', () => {
     await expect(fetchProposals(sdk, DPNS_CONTRACT_ID)).resolves.toEqual({ proposals: [], capped: false });
   });
 
-  it('builds the moderated-contract directory without read failures', async () => {
-    const ids = await collectDirectoryIds(sdk, 'testnet');
+  it('discovers moderated contracts from chain, with no hard-coded list', async () => {
+    const ids = await collectDirectoryIds(sdk);
     expect(ids.failures).toEqual([]);
+    expect(ids.caps).toEqual([]);
+    // Yappr /staging social: proposals filed (2026-10-22).
+    expect(ids.proposed).toContain('4nYYMMs94m4asfQ2PdJ69uqugpfJ7PaQNjhJyHXSeLfb');
+    // Yappr /beta: seated teams.
+    expect(ids.seated).toEqual(
+      expect.arrayContaining([
+        '5Kucw9g9TsiSRXbns2mPumXKVkYW7jwVrTdjFuFhMEwU',
+        '9mMb6qGmPA8mjxkk7wdUE5aotEVpY1hJwPJZqPPdUdPc',
+        'THxfq5ZinV2U5gmPZ8dTwqh11sCtGF53a2a87qHErNR',
+      ]),
+    );
+  });
+
+  it('pages submittedCharter targets with a range, not startAfter', async () => {
+    // Every target, two documents at a time: the range moves past each target's proposals.
+    const { ids } = await walkDistinctTargets((after) => fetchTargetsPage(sdk, 'submittedCharter', after, 2), { pageSize: 2 });
+    const all = await walkDistinctTargets((after) => fetchTargetsPage(sdk, 'submittedCharter', after, 100), { pageSize: 100 });
+    expect(ids).toEqual(all.ids);
+    expect(ids).toContain('4nYYMMs94m4asfQ2PdJ69uqugpfJ7PaQNjhJyHXSeLfb');
   });
 
   it("reads seated winners' proposals in two batched `in` queries", async () => {

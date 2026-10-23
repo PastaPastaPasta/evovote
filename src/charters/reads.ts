@@ -13,6 +13,7 @@ import { isBoundKey, keyInfosOf } from '../identity/keys';
 import { parseContractModeration, type ContractModeration } from './declaration';
 import {
   CHARTERS_CONTRACT_ID,
+  idFromValue,
   toElectedCharter,
   toJoinRequestMeta,
   toProposal,
@@ -139,6 +140,38 @@ export async function fetchTeam(sdk: EvoSDK, targetContractId: string): Promise<
   } finally {
     freeQuietly(team);
   }
+}
+
+/**
+ * One page of the targets that have proposals (`submittedCharter`) or a
+ * seated team (`electedCharter`), in index order, one entry per document:
+ * the documents of the targets after `after`. Throws when the read fails.
+ *
+ * A range on `targetContractId` (not `startAfter`) moves the page on, which
+ * skips the rest of the last target's proposals: on testnet (rc.4) a
+ * `startAfter` walk of the non-unique `submittedCharter.byTargetContract`
+ * index never leaves the cursor document's target (docs/V2_NOTES.md).
+ */
+export async function fetchTargetsPage(
+  sdk: EvoSDK,
+  documentTypeName: 'submittedCharter' | 'electedCharter',
+  after: string | undefined,
+  limit: number,
+): Promise<string[]> {
+  const page = await sdk.documents.query({
+    dataContractId: CHARTERS_CONTRACT_ID,
+    documentTypeName,
+    ...(after ? { where: [['targetContractId', '>', after]] } : {}),
+    orderBy:
+      documentTypeName === 'submittedCharter'
+        ? [
+            ['targetContractId', 'asc'],
+            ['$createdAt', 'asc'],
+          ]
+        : [['targetContractId', 'asc']],
+    limit,
+  });
+  return mapDocs(sdk, page, (json) => idFromValue(json.targetContractId) ?? '');
 }
 
 /** Every proposal for a target, in filing order, up to `max`. Throws when a page fails. */

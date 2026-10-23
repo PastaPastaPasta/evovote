@@ -133,7 +133,10 @@ interface ContestKind {
   - Charters: `contestedResources` on `electedCharter.byTargetContract`, which lists every target ever contested.
   - Generic: when the user opens `#/c/<contractId>`, scan its document types for a contested index and sweep it.
 - **Moderated-contract directory:**
-  - The union of the known-contracts config, every target found by the charters sweep, and contract ids the user adds.
+  - Found on chain: the union of every target with a proposal (`submittedCharter`), every target found by the
+    charters sweep (contested), every target with a seated team (`electedCharter`), and contract ids the user adds.
+    The known-contracts config only labels contracts; it does not decide which are listed.
+  - Sections: open contests; proposals waiting for a team to apply; filled seats; everything else.
   - Each entry shows its declaration (windows, interim, moderated types and abilities, `seatContestable`,
     `maxAddedModerators`) and its seated team (`moderationCharters.team`).
 - **No silent truncation:** caps are explicit and shown ("showing first N").
