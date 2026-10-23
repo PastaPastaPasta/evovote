@@ -80,6 +80,8 @@ export function BoundKeySetup({
   /** True while a phrase is being checked: the controls around it are locked. */
   const [phraseBusy, setPhraseBusy] = useState(false);
   const [phraseAttempts] = useState(attempts);
+  /** True once the update started signing (and after it gave an outcome): no master key is taken any more. */
+  const [masterLocked, setMasterLocked] = useState(false);
   const [revealed, setRevealed] = useState(false);
 
   /** Drop the master key, and any phrase result still on its way (it must not bring the key back). */
@@ -245,7 +247,15 @@ export function BoundKeySetup({
           run={async () => {
             const wif = masterWif;
             clearMaster();
-            return addBoundKey(handle, { identityId: session.identityId, masterWif: wif, spec, newKey: generated });
+            // A master key entered while (or after) the update signs would outlive it.
+            setMasterLocked(true);
+            try {
+              return await addBoundKey(handle, { identityId: session.identityId, masterWif: wif, spec, newKey: generated });
+            } catch (e) {
+              // No outcome: the user may try again with the master key.
+              setMasterLocked(false);
+              throw e;
+            }
           }}
         >
           <div className="field">
@@ -253,7 +263,7 @@ export function BoundKeySetup({
             <span className="field-hint">Used to sign this one update, then dropped. It is never stored or sent anywhere.</span>
             <KeySourceToggle
               value={masterSource}
-              disabled={phraseBusy}
+              disabled={phraseBusy || masterLocked}
               onChange={(next) => {
                 setMasterSource(next);
                 clearMaster();
@@ -275,6 +285,7 @@ export function BoundKeySetup({
                     submitLabel="Find master key"
                     onSubmit={masterFromPhrase}
                     onBusyChange={setPhraseBusy}
+                    disabled={masterLocked}
                   />
                   {phraseError && (
                     <p className="meta error" role="alert">
@@ -291,6 +302,7 @@ export function BoundKeySetup({
                 aria-label="Your identity's master key (WIF)"
                 placeholder="Master key (WIF)"
                 value={masterWif}
+                disabled={masterLocked}
                 onChange={(e) => setMasterWif(e.target.value)}
               />
             )}
