@@ -66,8 +66,8 @@ function SignedInWith({ session }: { session: IdentitySession }) {
         <div>
           <dt>{session.via === 'wallet' ? 'Key for charter steps' : 'Signed in with'}</dt>
           <dd>
-            The private key you pasted (key #{session.pastedKey.keyId}, {session.pastedKey.securityLevel.toLowerCase()}{' '}
-            security), held in this tab only
+            {session.pastedKeyFromPhrase ? 'The key from your recovery phrase' : 'The private key you pasted'} (key #{session.pastedKey.keyId},{' '}
+            {session.pastedKey.securityLevel.toLowerCase()} security), held in this tab only
             {session.via === 'wallet' && (
               <>
                 {' '}

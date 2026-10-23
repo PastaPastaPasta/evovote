@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { SignInPrompt } from '../discussion/SignInPrompt';
 import { SignInPanel, signOutNoticeText } from './SignInPanel';
 import { SigningProblemNote } from './SigningProblemNote';
+import { AddStepKey } from './AddStepKey';
+import { KeySourceToggle, RecoveryPhraseField } from './RecoveryPhraseField';
+import { WALLET_CHARTERS_MESSAGE } from '../../identity/session';
 
 vi.stubEnv('VITE_DISCUSSION_TESTNET_CONTRACT_ID', '2iaUXM8bZb6paYW1mRWCEUMe8EU1tp4Tbg456PXPN3qt');
 
@@ -47,5 +50,35 @@ describe('sign-in rendering', () => {
     expect(renew).toContain('Renew on my identity page');
     const out = renderToStaticMarkup(<SigningProblemNote problem={{ reason: 'signed-out', message: 'Sign in first.' }} />);
     expect(out).toContain('href="#/me">Sign in</a>');
+  });
+});
+
+describe('recovery phrase entry', () => {
+  it('offers a phrase or a key for a step Dash Wallet cannot sign', () => {
+    const html = renderToStaticMarkup(<AddStepKey message={WALLET_CHARTERS_MESSAGE} />);
+    expect(html).toContain('Enter your recovery phrase or a HIGH/CRITICAL key to continue; it stays in this tab only.');
+    expect(html).toContain('Continue with a phrase or key');
+  });
+
+  it('lets the user pick a phrase or a WIF', () => {
+    const html = renderToStaticMarkup(<KeySourceToggle value="phrase" onChange={() => undefined} />);
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Recovery phrase</);
+    expect(html).toMatch(/aria-pressed="false"[^>]*>Private key \(WIF\)</);
+  });
+
+  it('masks the phrase with CSS, not as a password a browser would offer to save, and warns plainly on testnet', () => {
+    vi.stubGlobal('CSS', { supports: (property: string) => property === '-webkit-text-security' });
+    const html = renderToStaticMarkup(<RecoveryPhraseField network="testnet" submitLabel="Use phrase" onSubmit={async () => undefined} />);
+    vi.unstubAllGlobals();
+    expect(html).toContain('type="text"');
+    expect(html).toContain('class="phrase-input"');
+    expect(html).toContain('autoComplete="off"');
+    expect(html).toContain('data-1p-ignore');
+    expect(html).toContain('Your recovery phrase controls your whole wallet. Only enter it on testnet sites you trust.');
+    // Without CSS masking (no CSS global here), a password field is the fallback.
+    const mainnet = renderToStaticMarkup(<RecoveryPhraseField network="mainnet" submitLabel="Use phrase" onSubmit={async () => undefined} />);
+    expect(mainnet).toContain('type="password"');
+    expect(mainnet).not.toContain('testnet');
+    expect(mainnet).toContain('Only enter it on sites you trust.');
   });
 });

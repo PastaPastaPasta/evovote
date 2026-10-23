@@ -102,6 +102,9 @@ const fakeHandle = {
 };
 
 vi.mock('../sdk/connection', () => ({ loadSdk: async () => fakeHandle }));
+// The phrase derivation itself is covered in phraseKeys.test.ts; here only what the session does with its answer.
+const keyFromPhrase = vi.hoisted(() => vi.fn());
+vi.mock('./phraseKeys', () => ({ keyFromPhrase }));
 
 const session = await import('./session');
 type Handle = Parameters<typeof session.withDocumentSigner>[0];
@@ -169,7 +172,8 @@ describe('resolveSigning', () => {
       kind: 'problem',
       problem: {
         reason: 'needs-key',
-        message: "Dash Wallet can't sign moderation-charter documents yet. Add a HIGH authentication key for this step.",
+        message:
+          "Dash Wallet can't sign this step yet. Enter your recovery phrase or a HIGH/CRITICAL key to continue; it stays in this tab only.",
       },
     });
   });
@@ -309,5 +313,84 @@ describe('withDocumentSigner with a wallet sign-in', () => {
       error: { code: 20015, message: 'spent', detail: 'spent' },
     }));
     expect(ring.getStatus().health).toBe('renew-required');
+  });
+});
+
+describe('a key for a charter step while signed in with the wallet', () => {
+  // A testnet WIF shape (version 0xef, compressed); the fake SDK never reads the key itself.
+  const wif = base58Encode(Uint8Array.from([0xef, ...new Array(32).fill(7), 1, 0, 0, 0, 0]));
+  const stepChainKey = () =>
+    walletChainKey({
+      keyId: 2,
+      data: '0201',
+      totalBudget: undefined,
+      expiresAt: undefined,
+      contractBounds: undefined,
+      getPublicKeyHash: () => 'pasted',
+    });
+
+  it('holds the key a recovery phrase derives like a pasted one, and signs the charter write with it', async () => {
+    await signInWithWalletKey();
+    chainKeys = [walletChainKey(), stepChainKey()];
+    keyFromPhrase.mockResolvedValueOnce({ ok: true, wif, key: pastedKey({ keyId: 2 }) });
+    expect(await session.addStepKeyFromPhrase('twelve words')).toEqual({ ok: true });
+    expect(keyFromPhrase).toHaveBeenLastCalledWith(fakeHandle, {
+      identityId: ALICE,
+      who: 'alice.dash',
+      phrase: 'twelve words',
+      want: 'document-signing',
+    });
+    await session.withDocumentSigner(handle, CHARTER, async (s) => {
+      signed.push(s.identityKey.keyId);
+      return { status: 'confirmed' as const, value: 'doc' };
+    });
+    expect(signed).toEqual([2]);
+  });
+
+  it('refuses a phrase of another identity and loads nothing', async () => {
+    await signInWithWalletKey();
+    keyFromPhrase.mockResolvedValueOnce({ ok: false, error: 'This recovery phrase belongs to a different identity, not alice.dash.' });
+    expect(await session.addStepKeyFromPhrase('twelve words')).toEqual({
+      ok: false,
+      error: 'This recovery phrase belongs to a different identity, not alice.dash.',
+    });
+    await expect(session.withDocumentSigner(handle, CHARTER, async () => 'never')).rejects.toMatchObject({ reason: 'needs-key' });
+  });
+
+  it('loads nothing when the user signed out while the phrase was read', async () => {
+    await signInWithWalletKey();
+    chainKeys = [walletChainKey(), stepChainKey()];
+    keyFromPhrase.mockImplementationOnce(async () => {
+      await session.signOut();
+      return { ok: true, wif, key: pastedKey({ keyId: 2 }) };
+    });
+    expect(await session.addStepKeyFromPhrase('twelve words')).toEqual({ ok: false, error: 'You signed out meanwhile.' });
+    expect(session.documentSigningProblem(null, CHARTER)).toMatchObject({ reason: 'signed-out' });
+  });
+
+  it('never loads a key derived for one identity into a session signed in again as another', async () => {
+    await signInWithWalletKey();
+    expect(await session.addStepKey(wif, { fromPhrase: true, expectedIdentityId: 'SomeoneElse' })).toEqual({
+      ok: false,
+      error: 'You signed out meanwhile.',
+    });
+  });
+
+  it('is only for Dash Wallet sign-ins', async () => {
+    const wifSignIn = base58Encode(Uint8Array.from([0xef, ...new Array(32).fill(8), 1, 0, 0, 0, 0]));
+    chainKeys = [stepChainKey()];
+    expect(await session.signIn('testnet', wifSignIn)).toEqual({ ok: true });
+    keyFromPhrase.mockClear();
+    expect((await session.addStepKeyFromPhrase('twelve words')).ok).toBe(false);
+    expect(keyFromPhrase).not.toHaveBeenCalled();
+  });
+
+  it('still checks the derived key against the chain, as for a pasted key', async () => {
+    await signInWithWalletKey();
+    // The derived key is not (or no longer) on the identity.
+    chainKeys = [walletChainKey()];
+    keyFromPhrase.mockResolvedValueOnce({ ok: true, wif, key: pastedKey({ keyId: 2 }) });
+    const result = await session.addStepKeyFromPhrase('twelve words');
+    expect(result.ok).toBe(false);
   });
 });
