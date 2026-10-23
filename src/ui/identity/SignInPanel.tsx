@@ -13,7 +13,7 @@ import { returnAfterSignIn } from './returnTo';
 import { WALLET_GRANT_TEXT, WalletSignIn } from './WalletSignIn';
 
 const WALLET_REQUIREMENT =
-  'Needs a Dash Wallet build with App Connect: today that is the DashPay iOS test build. It covers comments; filing a moderation charter also needs a private key.';
+  'Needs a Dash Wallet build with App Connect: today that is the DashPay iOS test build. It covers comments; filing a moderation charter also needs your recovery phrase or a private key.';
 
 /** What the last sign-out should explain. Pure; exported for tests. */
 export function signOutNoticeText(notice: Exclude<SignOutNotice, null>): string {

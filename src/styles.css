@@ -3361,6 +3361,42 @@ details.signin-key[open] > summary::before {
 .step-key .wallet-note {
   margin-top: 8px;
 }
+.key-source {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.key-source button {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  border-radius: var(--radius);
+  padding: 3px 10px;
+  font-size: 13px;
+}
+.key-source button:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.key-source button[aria-pressed='true'] {
+  background: var(--blue-tint);
+  border-color: var(--blue);
+  color: var(--blue-deep);
+  font-weight: 600;
+}
+.phrase-input {
+  -webkit-text-security: disc;
+}
+.phrase-input::-webkit-credentials-auto-fill-button {
+  display: none !important;
+  visibility: hidden;
+}
+.phrase-warning {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 8px 0 0;
+}
 .step-key .page-note.error {
   padding: 8px 12px;
   border-radius: var(--radius);

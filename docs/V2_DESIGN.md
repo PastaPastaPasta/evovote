@@ -166,6 +166,11 @@ interface ContestKind {
     It is asked for just-in-time and is not kept.
   - The browser generates the new encryption/decryption keypair and shows it to the user to back up. Without it,
     join requests cannot be decrypted.
+  - Signed in with Dash Wallet, whose App Connect key cannot sign charter documents yet: the user may enter the
+    wallet's recovery phrase instead of either key (an interim fix until wallets ship `dashpay://sign`). EvoVote
+    derives the identity's DIP-13 keys as Dash Wallet does (`src/identity/dip13.ts`, `src/identity/phraseKeys.ts`),
+    takes the one matching an enabled unbound HIGH/CRITICAL key (or the MASTER key), refuses a phrase of another
+    identity, and holds the derived key exactly like a pasted one. The phrase is never stored.
 - **Charter wizard** (`#/m/<target>`, "Propose a moderation team"):
   1. Choose or file `reason`s (code `^[A-Z]{3}$`, label, description). The leader's existing reasons are offered for reuse.
   2. Ensure the leader's decryption key exists.

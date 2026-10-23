@@ -20,6 +20,7 @@ import { freeQuietly } from '../sdk/free';
 import type { Network } from '../sdk/network';
 import { wifNetwork } from '../voting/keys';
 import { canSignDocumentsFor, keyInfoFrom, keyInfosOf, keyMatching, signInKeyRefusal, type KeyInfo } from './keys';
+import { keyFromPhrase } from './phraseKeys';
 import { existingBoundKey, type BoundKeySpec } from './update';
 
 /**
@@ -39,7 +40,9 @@ import { existingBoundKey, type BoundKeySpec } from './update';
  *   dropped right after.
  *
  * While signed in with the wallet, a pasted key can be added for one step
- * (`addStepKey`): charter writes need it.
+ * (`addStepKey`): charter writes need it. A recovery phrase can stand in for
+ * the pasted key (`addStepKeyFromPhrase`): the key it derives is held exactly
+ * like a pasted one, and the phrase itself is not kept.
  *
  * Callers: `useIdentitySession()` for the view, `documentSigningProblem()` to
  * say before a paid step why it cannot be signed, `withDocumentSigner()` to
@@ -67,6 +70,8 @@ export interface IdentitySession {
   via: SignedInVia;
   /** The pasted key: the sign-in key (`via: 'key'`), or a key added for a step while signed in with the wallet. */
   pastedKey?: KeyInfo;
+  /** True when the step key was derived from a recovery phrase rather than pasted. */
+  pastedKeyFromPhrase?: boolean;
   /** The wallet's key ring, when signed in with Dash Wallet. */
   wallet?: WalletView;
 }
@@ -107,8 +112,9 @@ export const RENEWED_ELSEWHERE_MESSAGE = 'Your Dash Wallet sign-in was renewed i
 export const RENEW_MESSAGE =
   'Your Dash Wallet sign-in for EvoVote has expired or used up its allowance. Sign in with Dash Wallet again to renew it.';
 export const WALLET_CHARTERS_MESSAGE =
-  "Dash Wallet can't sign moderation-charter documents yet. Add a HIGH authentication key for this step.";
-const WALLET_OTHER_MESSAGE = "Dash Wallet's key for EvoVote can't sign this. Add a HIGH authentication key for this step.";
+  "Dash Wallet can't sign this step yet. Enter your recovery phrase or a HIGH/CRITICAL key to continue; it stays in this tab only.";
+const WALLET_OTHER_MESSAGE =
+  "Dash Wallet's key for EvoVote can't sign this. Enter your recovery phrase or a HIGH/CRITICAL key to continue; it stays in this tab only.";
 
 /**
  * What a sign-out leaves to say on `#/me`: signed out here, the wallet
@@ -306,9 +312,16 @@ export async function signIn(network: Network, wif: string, chosenId?: string): 
  * the same identity for steps the wallet's key cannot sign (charter writes).
  * Memory only, like a key sign-in; the wallet sign-in stays.
  */
-export async function addStepKey(wif: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function addStepKey(
+  wif: string,
+  opts: { fromPhrase?: boolean; expectedIdentityId?: string } = {},
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const current = session;
   if (!current) return { ok: false, error: 'Sign in first.' };
+  // A key derived for one identity is never loaded into another's session.
+  if (opts.expectedIdentityId !== undefined && current.identityId !== opts.expectedIdentityId) {
+    return { ok: false, error: 'You signed out meanwhile.' };
+  }
   const trimmed = wif.trim();
   try {
     const handle = await loadSdk(current.network);
@@ -323,8 +336,36 @@ export async function addStepKey(wif: string): Promise<{ ok: true } | { ok: fals
     if (refusal) return { ok: false, error: refusal };
     if (session?.identityId !== current.identityId) return { ok: false, error: 'You signed out meanwhile.' };
     pastedWif = trimmed;
-    publish({ ...session, ...loaded, pastedKey: key });
+    publish({ ...session, ...loaded, pastedKey: key, pastedKeyFromPhrase: opts.fromPhrase ?? false });
     return { ok: true };
+  } catch (e) {
+    return { ok: false, error: errorMessage(e) };
+  }
+}
+
+/**
+ * `addStepKey` with a recovery phrase: the identity's unbound HIGH (else
+ * CRITICAL) authentication key the phrase derives, checked like a pasted key.
+ * A phrase of another identity is refused. The phrase is not kept.
+ */
+export async function addStepKeyFromPhrase(phrase: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const current = session;
+  if (!current) return { ok: false, error: 'Sign in first.' };
+  if (current.via !== 'wallet') return { ok: false, error: 'A key for a step is only for Dash Wallet sign-ins.' };
+  try {
+    const handle = await loadSdk(current.network);
+    const found = await keyFromPhrase(handle, {
+      identityId: current.identityId,
+      who: current.names[0],
+      phrase,
+      want: 'document-signing',
+    });
+    if (!found.ok) return found;
+    // Signed out, or in again another way or as someone else, while the phrase was read: load nothing.
+    if (session?.identityId !== current.identityId || session.via !== 'wallet') {
+      return { ok: false, error: 'You signed out meanwhile.' };
+    }
+    return await addStepKey(found.wif, { fromPhrase: true, expectedIdentityId: current.identityId });
   } catch (e) {
     return { ok: false, error: errorMessage(e) };
   }
@@ -334,7 +375,7 @@ export async function addStepKey(wif: string): Promise<{ ok: true } | { ok: fals
 export function forgetStepKey(): void {
   if (!session || session.via !== 'wallet') return;
   pastedWif = null;
-  const { pastedKey: _dropped, ...rest } = session;
+  const { pastedKey: _dropped, pastedKeyFromPhrase: _from, ...rest } = session;
   publish(rest);
 }
 
@@ -379,7 +420,15 @@ async function publishWalletSession(network: Network, ring: WalletSessions, iden
   if (!same) dropHeldKeys(null);
   signOutNotice = null;
   const pastedKey = same?.pastedKey ? loaded.keys.find((k) => k.keyId === same.pastedKey?.keyId) : undefined;
-  publish({ network, identityId, ...loaded, names, via: 'wallet', wallet, ...(pastedKey ? { pastedKey } : {}) });
+  publish({
+    network,
+    identityId,
+    ...loaded,
+    names,
+    via: 'wallet',
+    wallet,
+    ...(pastedKey ? { pastedKey, pastedKeyFromPhrase: same?.pastedKeyFromPhrase } : {}),
+  });
 }
 
 /** Read the identity, retrying a lagging or failed read a few times. */
