@@ -60,7 +60,7 @@ Checked on 2026-10-17 against testnet (rc.4), read-only. **[live test]** marks t
 
 | Fact | How verified | Result |
 |---|---|---|
-| No charter activity on testnet yet | `documents.query` on every charters type; `contestedResources` sweep | ✅ 0 `reason`, `submittedCharter`, `joinRequest` and `electedCharter` documents, and no contested target. The directory (`#/m`) is empty unless a contract is configured or added. **[live test]** |
+| No charter activity on testnet yet | `documents.query` on every charters type; `contestedResources` sweep | ✅ 0 `reason`, `submittedCharter`, `joinRequest` and `electedCharter` documents, and no contested target. Superseded: see "Directory discovery" below. **[live test]** |
 | Contract JSON carries `createdAt` | `contract.toJSON(14)` | ✅ A top-level `createdAt` (ms), `null` on system contracts. `electionDelay` is measured from it; a contract with no `createdAt` never opens an election that declares a delay. |
 | Elected declaration shape | wasm-sdk `ContractModerators` typings + Platform book | ⚠️ Not seen live (no elected contract on testnet). `charters/declaration.ts` reads `config.moderation.moderators` with `$type: 'elected'` and defaults missing windows to one week, as the book says. |
 | The fund to join a moderator election | `documents.contestFundToJoin(electedCharter)` | ✅ 50,000,000,000 credits (0.5 DASH) for a contest with no contenders. **[live test]** `documents.create({ contestFund })` states it; no hand-built `$prefundedVotingBalance` is needed. |
@@ -151,3 +151,16 @@ stops at `vote_root_path().len()`), and `check_for_ended_vote_polls/v1` removes 
 | Award | ✅ `WonByIdentity` for the **later** applicant on 12 : 4 within one block of the end; the `electedCharter` is stored and the hub shows "Team seated" |
 | Comments, `supports` and replies | ✅ on chain with the contender and supports badges. ⚠️ Reply did nothing while the "posted" panel was up; fixed. |
 | Not run | 40111 (late applicant) and 40105 (applying after seating): both refusals still cost fees, and the preflight warns about both |
+
+## Directory discovery (2026-10-22)
+
+Checked against testnet (rc.4), read-only. `#/m` finds its contracts on chain; `config/knownContracts.ts` only names them.
+
+| Fact | How verified | Result |
+|---|---|---|
+| `submittedCharter` with `orderBy [[targetContractId, asc], [$createdAt, asc]]` and no `where` | probe + **[live test]** | ✅ Accepted; returns every proposal in index order (16 documents for 12 targets, ~100–300 ms warm, ~1.1 s as a session's first query). `orderBy` on `targetContractId` alone is accepted too. |
+| `startAfter` on that walk | probe | ⚠️ **Does not cross targets.** With `limit` 1, 3 or 5 the walk ends after the cursor document's target (5 of 16 documents), so it cannot list targets. On the unique `electedCharter.byTargetContract` index it pages normally. |
+| A range `where [[targetContractId, >, <last target>]]` with the same `orderBy` | probe + **[live test]** | ✅ Pages correctly on both types, and skips the rest of the last target's proposals, so each page adds at least one target. `charters/directory.ts` walks with it (100 per page, up to 500 targets or 20 pages per source, capped and said so). |
+| `electedCharter` documents | probe + **[live test]** | ✅ Exist only once a contest is won (9 on testnet): the list of seated targets. `orderBy [[targetContractId, asc]]`, no `where`, ~100 ms. |
+| Contract JSON `description` / `keywords` | `contracts.fetch` | ✅ Top-level `description` (null when unset) and `keywords` (array). The directory shows them for a contract the site has no name for. |
+

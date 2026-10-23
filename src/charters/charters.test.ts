@@ -17,7 +17,6 @@ import {
   targetNamesVersion,
 } from '../kinds/charter';
 import { encodePollKey } from '../model/pollKey';
-import { mergeDirectory } from './directory';
 import { fetchWinnerProposals, mergeReasons, pickLeaderProposal } from './reads';
 import {
   CHARTERS_CONTRACT_ID,
@@ -357,16 +356,6 @@ describe('charter validation', () => {
     expect(validateJoinMessage('hello')).toEqual([]);
     expect(validateJoinMessage('')).toHaveLength(1);
     expect(validateJoinMessage('x'.repeat(1024))[0]).toMatch(/1023/);
-  });
-});
-
-describe('moderated-contract directory', () => {
-  it('should merge known, contested and added ids once each, keeping every source', () => {
-    expect(mergeDirectory([TARGET], [TARGET, MEMBER], [MEMBER, LEADER])).toEqual([
-      { id: TARGET, sources: ['known', 'contested'] },
-      { id: MEMBER, sources: ['contested', 'added'] },
-      { id: LEADER, sources: ['added'] },
-    ]);
   });
 });
 
