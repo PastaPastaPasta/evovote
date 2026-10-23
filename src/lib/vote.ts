@@ -110,5 +110,10 @@ export function recordReceipt(
   list.push({ choice, at: Date.now() });
   byMn[proTxHash] = list;
   receipts[label] = byMn;
-  localStorage.setItem(receiptsKey(network), JSON.stringify(receipts));
+  try {
+    localStorage.setItem(receiptsKey(network), JSON.stringify(receipts));
+  } catch {
+    // Receipts are informational. A storage failure must not make a
+    // successfully broadcast vote appear to have failed.
+  }
 }
