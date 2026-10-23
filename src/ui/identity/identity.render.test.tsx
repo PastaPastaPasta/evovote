@@ -81,4 +81,11 @@ describe('recovery phrase entry', () => {
     expect(mainnet).not.toContain('testnet');
     expect(mainnet).toContain('Only enter it on sites you trust.');
   });
+
+  it('takes no phrase while disabled (the update it was for is signing or done)', () => {
+    const html = renderToStaticMarkup(
+      <RecoveryPhraseField network="testnet" submitLabel="Find master key" onSubmit={async () => undefined} disabled />,
+    );
+    expect(html).toMatch(/<input[^>]*disabled=""/);
+  });
 });

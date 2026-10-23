@@ -48,6 +48,7 @@ export function RecoveryPhraseField({
   busyLabel = 'Checking…',
   onSubmit,
   onBusyChange,
+  disabled = false,
 }: {
   network: Network;
   submitLabel: string;
@@ -55,6 +56,8 @@ export function RecoveryPhraseField({
   onSubmit: (phrase: string) => Promise<void>;
   /** Told when a submitted phrase starts and stops being checked (to lock the controls around it). */
   onBusyChange?: (busy: boolean) => void;
+  /** Takes no phrase (say, while the step it is for runs or after it ran). */
+  disabled?: boolean;
 }) {
   const field = useRef<HTMLInputElement>(null);
   const [hasText, setHasText] = useState(false);
@@ -64,7 +67,7 @@ export function RecoveryPhraseField({
   const submit = async () => {
     const input = field.current;
     const phrase = input?.value ?? '';
-    if (!phrase.trim() || busy) return;
+    if (!phrase.trim() || busy || disabled) return;
     if (input) input.value = '';
     setHasText(false);
     setBusy(true);
@@ -94,13 +97,13 @@ export function RecoveryPhraseField({
           data-form-type="other"
           aria-label="Recovery phrase (12–24 words)"
           placeholder="Recovery phrase (12–24 words)"
-          disabled={busy}
+          disabled={busy || disabled}
           onInput={(e) => setHasText(e.currentTarget.value.trim().length > 0)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') submit().catch(() => undefined);
           }}
         />
-        <button type="button" className="vote-button" disabled={!hasText || busy} onClick={() => submit().catch(() => undefined)}>
+        <button type="button" className="vote-button" disabled={!hasText || busy || disabled} onClick={() => submit().catch(() => undefined)}>
           {busy ? busyLabel : submitLabel}
         </button>
       </div>

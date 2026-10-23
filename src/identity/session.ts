@@ -307,6 +307,8 @@ export async function signIn(network: Network, wif: string, chosenId?: string): 
   }
 }
 
+const WALLET_ONLY = 'A key for a step is only for Dash Wallet sign-ins.';
+
 /**
  * While signed in with Dash Wallet: load a pasted HIGH or CRITICAL key of
  * the same identity for steps the wallet's key cannot sign (charter writes).
@@ -318,6 +320,7 @@ export async function addStepKey(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const current = session;
   if (!current) return { ok: false, error: 'Sign in first.' };
+  if (current.via !== 'wallet') return { ok: false, error: WALLET_ONLY };
   // A key derived for one identity is never loaded into another's session.
   if (opts.expectedIdentityId !== undefined && current.identityId !== opts.expectedIdentityId) {
     return { ok: false, error: 'You signed out meanwhile.' };
@@ -334,7 +337,10 @@ export async function addStepKey(
     // The wallet's key already signs comments: a step key is for charter writes.
     const refusal = signInKeyRefusal(key, loaded.keys, [CHARTERS_CONTRACT_ID], contractName(current.network));
     if (refusal) return { ok: false, error: refusal };
-    if (session?.identityId !== current.identityId) return { ok: false, error: 'You signed out meanwhile.' };
+    // Signed out, or in again another way or as someone else, while the identity was read: load nothing.
+    if (session?.identityId !== current.identityId || session.via !== 'wallet') {
+      return { ok: false, error: 'You signed out meanwhile.' };
+    }
     pastedWif = trimmed;
     publish({ ...session, ...loaded, pastedKey: key, pastedKeyFromPhrase: opts.fromPhrase ?? false });
     return { ok: true };
@@ -351,7 +357,7 @@ export async function addStepKey(
 export async function addStepKeyFromPhrase(phrase: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const current = session;
   if (!current) return { ok: false, error: 'Sign in first.' };
-  if (current.via !== 'wallet') return { ok: false, error: 'A key for a step is only for Dash Wallet sign-ins.' };
+  if (current.via !== 'wallet') return { ok: false, error: WALLET_ONLY };
   try {
     const handle = await loadSdk(current.network);
     const found = await keyFromPhrase(handle, {

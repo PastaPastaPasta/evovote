@@ -383,6 +383,8 @@ describe('a key for a charter step while signed in with the wallet', () => {
     keyFromPhrase.mockClear();
     expect((await session.addStepKeyFromPhrase('twelve words')).ok).toBe(false);
     expect(keyFromPhrase).not.toHaveBeenCalled();
+    // Nor does a pasted step key replace a key sign-in's key.
+    expect(await session.addStepKey(wif)).toEqual({ ok: false, error: 'A key for a step is only for Dash Wallet sign-ins.' });
   });
 
   it('still checks the derived key against the chain, as for a pasted key', async () => {
