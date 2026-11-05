@@ -23,7 +23,11 @@ export function countdown(endsAtMs: number, now = Date.now()): Countdown {
 }
 
 export function endDate(endsAtMs: number): string {
-  return new Date(endsAtMs).toLocaleString(undefined, {
+  return new Date(endsAtMs).toLocaleString('en-GB', {
+    year: 'numeric',
+    timeZone: 'UTC',
+    timeZoneName: 'short',
+    hourCycle: 'h23',
     month: 'short',
     day: 'numeric',
     hour: 'numeric',

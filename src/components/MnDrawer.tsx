@@ -7,7 +7,7 @@ import {
   removeMasternode,
   useMasternodes,
 } from '../lib/mn';
-import { plural, shortId } from '../lib/format';
+import { plural } from '../lib/format';
 import type { Network } from '../lib/sdk';
 
 function KeyField({ mnId }: { mnId: string }) {
@@ -120,9 +120,7 @@ export function MnDrawer({
               <li key={mn.id} className="mn-row">
                 <div className="mn-row-head">
                   <span className="mn-pick-label">{mn.label}</span>
-                  <span className="mono-label" title={mn.proTxHash}>
-                    {shortId(mn.proTxHash, 8)}
-                  </span>
+                  <dashhq-hash value={mn.proTxHash} label="ProTx hash" href={window.dashhq.href('radar', '/mn/' + mn.proTxHash)}>{mn.proTxHash}</dashhq-hash>
                   <button
                     className="link-button danger"
                     onClick={() => removeMasternode(mn.id)}

@@ -4,7 +4,7 @@ export function AboutPage() {
       <h1>About EvoVote</h1>
 
       <section>
-        <h2>What a username contest is</h2>
+        <h2>What a name contest is</h2>
         <p>
           Dash Platform usernames (DPNS names) normalize look-alike characters:
           <code>0</code> and <code>o</code>, <code>1</code>/<code>l</code>/
@@ -90,6 +90,7 @@ export function AboutPage() {
           .
         </p>
       </section>
+      <p>Your EvoVote vote receipts stay in this browser, separately for each network. They remain available here after you open Governance.</p>
     </div>
   );
 }

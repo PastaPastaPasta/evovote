@@ -10,48 +10,10 @@ import {
   errorMessage,
   loadSdk,
   storedNetwork,
-  switchNetwork,
   type Network,
   type SdkHandle,
 } from './lib/sdk';
-import { useTheme, type ThemePref } from './lib/theme';
 import type { VoteChoice } from './lib/vote';
-
-function ThemeIcon({ pref }: { pref: ThemePref }) {
-  if (pref === 'light') {
-    return (
-      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-        <circle cx="12" cy="12" r="4.2" fill="currentColor" />
-        <g stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <line x1="12" y1="2.5" x2="12" y2="5" />
-          <line x1="12" y1="19" x2="12" y2="21.5" />
-          <line x1="2.5" y1="12" x2="5" y2="12" />
-          <line x1="19" y1="12" x2="21.5" y2="12" />
-          <line x1="5" y1="5" x2="6.8" y2="6.8" />
-          <line x1="17.2" y1="17.2" x2="19" y2="19" />
-          <line x1="5" y1="19" x2="6.8" y2="17.2" />
-          <line x1="17.2" y1="6.8" x2="19" y2="5" />
-        </g>
-      </svg>
-    );
-  }
-  if (pref === 'dark') {
-    return (
-      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-        <path
-          d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a7 7 0 0 0 11 11z"
-          fill="currentColor"
-        />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" strokeWidth="2" />
-      <path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" />
-    </svg>
-  );
-}
 
 type SdkState =
   | { status: 'loading' }
@@ -59,8 +21,10 @@ type SdkState =
   | { status: 'error'; message: string };
 
 export function App() {
-  // Constant for the page's lifetime: switchNetwork() persists and reloads.
+  // Switching the shell network reloads the page with one SDK instance.
   const network: Network = storedNetwork();
+  const requestedNetwork = new URLSearchParams(location.search).get('network');
+  const unsupportedNetwork = requestedNetwork && !['mainnet', 'testnet', 'main', 'test'].includes(requestedNetwork);
   const [sdkState, setSdkState] = useState<SdkState>({ status: 'loading' });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pendingVote, setPendingVote] = useState<{
@@ -69,7 +33,6 @@ export function App() {
   } | null>(null);
   const route = useRoute();
   const masternodes = useMasternodes();
-  const { pref: themePref, cycle: cycleTheme } = useTheme();
 
   useEffect(() => {
     initMnStore(network);
@@ -90,53 +53,35 @@ export function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <a className="brand" href="#/">
-          <img className="brand-glyph" src="./favicon.svg" alt="" />
-          <span>
-            <span className="brand-mark">EVO</span>VOTE
-          </span>
-          <span className="brand-tag">contested Dash usernames</span>
-        </a>
-        <nav className="topbar-nav">
-          <a href="#/about">About</a>
-          <button
-            className="theme-toggle"
-            onClick={cycleTheme}
-            title={`Theme: ${themePref} — click to change`}
-            aria-label={`Theme: ${themePref} — click to change`}
-          >
-            <ThemeIcon pref={themePref} />
-          </button>
-          <button className="mn-button" onClick={() => setDrawerOpen(true)}>
-            Masternodes
-            {masternodes.length > 0 && (
-              <span className="mn-count">{masternodes.length}</span>
-            )}
-          </button>
-          <select
-            className="network-select"
-            value={network}
-            aria-label="Network"
-            onChange={(e) => switchNetwork(e.target.value as Network)}
-          >
-            <option value="mainnet">mainnet</option>
-            <option value="testnet">testnet</option>
-          </select>
+      <dashhq-bar product="vote" network={network} networks="mainnet testnet" sticky="">
+        <nav slot="nav" aria-label="Name contests">
+          <a href="#/" aria-current={route.page !== 'about' ? 'page' : undefined}>Contests</a>
+          <a href="#/about" aria-current={route.page === 'about' ? 'page' : undefined}>About</a>
         </nav>
-      </header>
+        <div slot="actions">
+          <button className="mn-button" onClick={() => setDrawerOpen(true)}>
+            Masternodes{masternodes.length > 0 && <span className="mn-count">{masternodes.length}</span>}
+          </button>
+        </div>
+      </dashhq-bar>
+      {unsupportedNetwork && <aside className="handoff" role="alert">This EvoVote build supports Mainnet and Testnet. The requested network <bdi>{requestedNetwork}</bdi> is unavailable; showing Mainnet.</aside>}
+      <aside className="handoff" aria-label="Continue in Governance">
+        <strong>Name contests now live in Governance.</strong>
+        <p>Same contests, same voting keys, plus proposals. You can keep using EvoVote here.</p>
+        <a href={window.dashhq.href('gov', route.page === 'contest' ? '/names/' + encodeURIComponent(route.label) : '/names')}>Open in Governance →</a>
+      </aside>
 
-      <main className="content">
-        {sdkState.status === 'loading' && (
+      <main className="content" id="main">
+        {route.page === 'home' && <h1 className="page-heading">Name contests</h1>}
+        {route.page === 'about' && <AboutPage />}
+        {route.page !== 'about' && sdkState.status === 'loading' && (
           <div className="sdk-loading">
             <div className="spinner" aria-hidden="true" />
             <p>Connecting to Dash Platform ({network})…</p>
-            <p className="mono-label">
-              first load fetches the SDK (~9 MB), then it's cached
-            </p>
+            <p className="mono-label">Contests appear as Platform answers. This can take a few seconds.</p>
           </div>
         )}
-        {sdkState.status === 'error' && (
+        {route.page !== 'about' && sdkState.status === 'error' && (
           <div className="sdk-loading">
             <p className="error">
               Could not connect to Platform: {sdkState.message}
@@ -159,30 +104,13 @@ export function App() {
                 onVote={(choice) => setPendingVote({ label: route.label, choice })}
               />
             )}
-            {route.page === 'about' && <AboutPage />}
           </>
         )}
       </main>
 
-      <footer className="footer">
-        <span>
-          Reads and votes go straight to Dash Platform from your browser — no
-          backend, no tracking.
-        </span>
-        <span>
-          <a
-            href="https://github.com/PastaPastaPasta/evovote"
-            target="_blank"
-            rel="noreferrer"
-          >
-            source
-          </a>{' '}
-          ·{' '}
-          <a href="https://dash.org" target="_blank" rel="noreferrer">
-            dash.org
-          </a>
-        </span>
-      </footer>
+      <dashhq-footer product="vote" source="https://github.com/PastaPastaPasta/evovote">
+        <p>Reads and votes go straight to Platform. Voting keys stay in this tab. <a href="#/about">About EvoVote</a></p>
+      </dashhq-footer>
 
       {drawerOpen && (
         <MnDrawer network={network} onClose={() => setDrawerOpen(false)} />

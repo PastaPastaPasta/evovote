@@ -169,12 +169,13 @@ export function VoteModal({
                     .
                   </p>
                 )}
+                {network === 'mainnet' && <p className="mono-label">Mainnet · real DASH</p>}
                 <div className="modal-actions">
                   <button className="vote-button ghost" onClick={onClose}>
                     Cancel
                   </button>
                   <button
-                    className="vote-button"
+                    className="vote-button commit"
                     disabled={selected.size === 0}
                     onClick={broadcast}
                   >

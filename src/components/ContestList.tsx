@@ -227,6 +227,7 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
           </span>
           <span className={statusClass}>{status}</span>
         </a>
+        <a className="governance-link" href={window.dashhq.href('gov', '/names/' + encodeURIComponent(contest.label))}>Open in Governance →</a>
       </li>
     );
   };
@@ -240,7 +241,7 @@ export function ContestList({ sdk, network }: { sdk: EvoSDK; network: Network })
             next closes in {countdown(soonest.endsAtMs, now).text}
           </span>
         )}
-        <span className="mono-label">{network}</span>
+        <span className="mono-label">{network === 'mainnet' ? 'Mainnet' : 'Testnet'}</span>
         {streaming && <span className="mono-label">loading more…</span>}
         {streamStatus === 'partial' && (
           <span className="mono-label error">

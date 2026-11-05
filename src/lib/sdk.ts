@@ -11,14 +11,19 @@ export interface SdkHandle {
 const NETWORK_KEY = 'evovote.network';
 
 export function storedNetwork(): Network {
-  const value = localStorage.getItem(NETWORK_KEY);
-  return value === 'testnet' ? 'testnet' : 'mainnet';
-}
-
-export function switchNetwork(network: Network): void {
-  localStorage.setItem(NETWORK_KEY, network);
-  // A full reload keeps exactly one WASM SDK instance alive per page.
-  location.reload();
+  const url = new URL(location.href);
+  try {
+    const old = localStorage.getItem(NETWORK_KEY);
+    localStorage.removeItem(NETWORK_KEY);
+    if (!url.searchParams.has('network') && old === 'testnet') url.searchParams.set('network', 'testnet');
+  } catch {}
+  const value = url.searchParams.get('network');
+  if (value && !['mainnet', 'testnet', 'main', 'test'].includes(value)) return 'mainnet';
+  const network = value === 'testnet' || value === 'test' ? 'testnet' : 'mainnet';
+  url.searchParams.delete('network');
+  if (network !== 'mainnet') url.searchParams.set('network', network);
+  if (url.href !== location.href) history.replaceState(history.state, '', url);
+  return network;
 }
 
 /** WASM SDK errors are wasm-bindgen objects, not Error instances. */

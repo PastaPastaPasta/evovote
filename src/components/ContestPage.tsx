@@ -81,7 +81,7 @@ function Voters({
       <ul>
         {voters.map((v) => (
           <li key={v} className="mono">
-            {v}
+            <dashhq-hash value={v} label="Voter identity" href={window.dashhq.href('explorer', '/identity?id=' + encodeURIComponent(v))}>{v}</dashhq-hash>
           </li>
         ))}
       </ul>
@@ -123,9 +123,7 @@ function ContenderRow({
               <ContestedName label={requestedLabel} />
             </span>
           )}
-          <span className="mono contender-id" title={identityId}>
-            {shortId(identityId, 8)}
-          </span>
+          <dashhq-hash value={identityId} label="Contender identity" href={window.dashhq.href('explorer', '/identity?id=' + encodeURIComponent(identityId))}>{identityId}</dashhq-hash>
           {names.length > 0 && (
             <span className="contender-names">
               also holds {names.map((n) => `“${n}”`).join(', ')}
@@ -336,6 +334,7 @@ function ContestHeader({
       <a href="#/" className="back-link">
         ← All contests
       </a>
+      <p><a className="governance-link" href={window.dashhq.href('gov', '/names/' + encodeURIComponent(label))}>Open in Governance →</a></p>
       <h1 className="contest-title">
         <ContestedName label={shown} />
         <span className="tld">.dash</span>
