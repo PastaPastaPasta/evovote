@@ -16,8 +16,9 @@
     let label = '';
     try { label = match ? decodeURIComponent(match[1]) : ''; } catch {}
     const target = label ? '/names/' + encodeURIComponent(label) : '/names';
-    link.dataset.path = target;
-    link.href = dashhq.href('gov', target, { network });
+    const arrivalPath = target + '?from=vote';
+    link.dataset.path = arrivalPath;
+    link.href = dashhq.href('gov', arrivalPath, { network });
     link.textContent = label ? 'Open ' + label + ' in Governance →' : 'Open name contests →';
     document.getElementById('destination').textContent = label
       ? 'Your contest bookmark will open on ' + dashhq.network.label(network) + '.'

@@ -13,7 +13,7 @@ function visit(path) {
   runInNewContext(script, {
     location: { hash: url.hash, pathname: url.pathname, replace: href => { redirect = href; } },
     document: { getElementById: id => elements[id], querySelector: () => ({ setAttribute() {} }) },
-    dashhq: { network: { canonicalize() {}, fromUrl: () => network, label: value => value }, href: (key, path, { network }) => `https://${key}.dashhq.org${path}?network=${network}` },
+    dashhq: { network: { canonicalize() {}, fromUrl: () => network, label: value => value }, href: (key, path, { network }) => { const target = new URL(path, `https://${key}.dashhq.org`); target.searchParams.set('network', network); return target.href; } },
     addEventListener: (type, fn) => { events[type] = fn; },
     setTimeout: fn => { pending = fn; return 1; }, clearTimeout: () => { pending = null; },
   });
@@ -23,25 +23,25 @@ function visit(path) {
 for (const route of ['/', '/#/about', '/#/', '/missing/page', '/about']) {
   test(`${route} forwards to the name-contest index`, () => {
     const state = visit(route);
-    assert.equal(state.elements.continue.href, 'https://gov.dashhq.org/names?network=mainnet');
+    assert.equal(state.elements.continue.href, 'https://gov.dashhq.org/names?from=vote&network=mainnet');
     assert.equal(state.forward(), state.elements.continue.href);
   });
 }
 for (const route of ['/?network=testnet#/c/alice', '/c/alice?network=testnet', '/names/alice?network=testnet']) {
   test(`${route} preserves the contest and network`, () => {
-    assert.equal(visit(route).forward(), 'https://gov.dashhq.org/names/alice?network=testnet');
+    assert.equal(visit(route).forward(), 'https://gov.dashhq.org/names/alice?from=vote&network=testnet');
   });
 }
 test('labels are decoded and re-encoded as a single safe path segment', () => {
-  assert.equal(visit('/?network=devnet-paloma#/c/a%2Fb').forward(), 'https://gov.dashhq.org/names/a%2Fb?network=devnet-paloma');
-  assert.equal(visit('/#/c/%E0%A4%A').forward(), 'https://gov.dashhq.org/names?network=mainnet');
+  assert.equal(visit('/?network=devnet-paloma#/c/a%2Fb').forward(), 'https://gov.dashhq.org/names/a%2Fb?from=vote&network=devnet-paloma');
+  assert.equal(visit('/#/c/%E0%A4%A').forward(), 'https://gov.dashhq.org/names?from=vote&network=mainnet');
 });
 test('the visitor can pause forwarding and still follow the exact link', () => {
   const state = visit('/?network=testnet#/c/alice');
   state.elements.stay.click();
   assert.equal(state.forward(), undefined);
   assert.match(state.elements['forward-status'].textContent, /paused/);
-  assert.equal(state.elements.continue.href, 'https://gov.dashhq.org/names/alice?network=testnet');
+  assert.equal(state.elements.continue.href, 'https://gov.dashhq.org/names/alice?from=vote&network=testnet');
   state.events.hashchange();
   assert.equal(state.forward(), undefined);
 });
