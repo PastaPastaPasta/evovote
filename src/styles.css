@@ -853,7 +853,7 @@ a:focus-visible {
 .handoff strong { display: block; font-size: 17px; font-weight: 620; }
 .handoff p { margin: 4px 0 10px; color: var(--dh-ink-2); }
 .handoff a { font-weight: 600; }
-.page-heading { font-size: 30px; font-stretch: 110%; margin: 0 0 20px; letter-spacing: -.015em; }
+.page-heading { font-weight: 660; font-size: 30px; font-stretch: 110%; margin: 0 0 20px; letter-spacing: -.015em; }
 .vote-button { background: var(--dh-surface); color: var(--dh-ink); border: 1px solid var(--dh-line-2); }
 .vote-button:hover:not(:disabled) { background: var(--dh-hover); }
 .vote-button.commit { background: var(--dh-act); color: var(--dh-act-ink); border-color: var(--dh-act); }
@@ -869,4 +869,12 @@ a:focus-visible {
   .content { padding-top: 24px; }
   input, textarea, select { font-size: 16px; }
   .mn-button { min-height: 34px; padding-inline: 8px; font-size: 13px; }
+}
+
+.mn-button-icon { display: none; }
+@media (max-width: 600px) {
+  .mn-button { position: relative; width: 40px; height: 40px; padding: 0; justify-content: center; border-color: var(--dh-line-2); border-radius: var(--dh-r2); }
+  .mn-button-icon { display: block; }
+  .mn-button-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .mn-button .mn-count { position: absolute; right: -4px; top: -6px; min-width: 16px; padding: 0 3px; font-size: 11px; }
 }

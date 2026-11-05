@@ -59,8 +59,9 @@ export function App() {
           <a href="#/about" aria-current={route.page === 'about' ? 'page' : undefined}>About</a>
         </nav>
         <div slot="actions">
-          <button className="mn-button" onClick={() => setDrawerOpen(true)}>
-            Masternodes{masternodes.length > 0 && <span className="mn-count">{masternodes.length}</span>}
+          <button className="mn-button" title="Masternodes" aria-label={`Masternodes${masternodes.length ? ` (${masternodes.length})` : ''}`} onClick={() => setDrawerOpen(true)}>
+            <svg className="mn-button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="8" cy="8" r="5" /><path d="m12 12 9 9m-4-4 3-3m-6 0 3-3" /></svg>
+            <span className="mn-button-label">Masternodes</span>{masternodes.length > 0 && <span className="mn-count">{masternodes.length}</span>}
           </button>
         </div>
       </dashhq-bar>
