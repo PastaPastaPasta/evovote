@@ -1,26 +1,11 @@
 {
-  "name": "evovote",
+  "name": "evovote-retirement",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@dashevo/evo-sdk": "4.1.1",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1"
-  },
-  "devDependencies": {
-    "@types/react": "^19.1.10",
-    "@types/react-dom": "^19.1.7",
-    "@vitejs/plugin-react": "^5.0.1",
-    "typescript": "~5.9.2",
-    "vite": "^7.1.3",
-    "vitest": "^3.2.4"
+    "build": "node scripts/build.mjs",
+    "lint": "node --check retirement.js && node --check scripts/build.mjs",
+    "test": "node --test retirement.test.mjs"
   }
 }
