@@ -18,15 +18,17 @@
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <dashhq-bar product="vote" sticky></dashhq-bar>
-<main id="main">
-<p class="kicker">EvoVote has retired</p>
-<h1>Name contests moved to Governance</h1>
-<p class="lead">Browse name contests, inspect tallies and choose how to vote in one place. Your bookmark still works here.</p>
-<div class="dh-notice"><h2>Continue in Governance</h2><p id="destination">Name contests have one home.</p><p><a id="continue" href="https://gov.dashhq.org/names?network=mainnet&amp;from=vote" data-family="gov" data-path="/names?from=vote">Open name contests →</a></p></div>
+<main id="main" class="dh-container dh-page"><div class="dh-narrow">
+<header class="dh-page-header">
+<p class="dh-page-header__kicker">EvoVote has retired</p>
+<h1 class="dh-page-header__title">Name contests moved to Governance</h1>
+<p class="dh-page-header__lede">Browse name contests, inspect tallies and choose how to vote in one place. Your bookmark still works here.</p>
+</header>
+<div class="dh-notice dh-notice--info"><p class="dh-notice__title">Continue in Governance</p><p id="destination">Name contests have one home.</p><p><a class="dh-btn dh-btn--primary" id="continue" href="https://gov.dashhq.org/names?network=mainnet&amp;from=vote" data-family="gov" data-path="/names?from=vote">Open name contests →</a></p></div>
 <p class="note" id="forward-status" role="status">You’ll continue automatically in 10 seconds.</p>
 <button class="dh-btn" id="stay" type="button">Stay here for now</button>
 <noscript><p>JavaScript is off. Use the link above, then select your network in Governance.</p></noscript>
-</main>
+</div></main>
 <dashhq-footer product="vote" source="https://github.com/PastaPastaPasta/evovote"></dashhq-footer>
 </body>
 </html>
