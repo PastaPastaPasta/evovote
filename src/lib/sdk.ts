@@ -20,8 +20,7 @@ export function storedNetwork(): Network {
   const value = url.searchParams.get('network');
   if (value && !['mainnet', 'testnet', 'main', 'test'].includes(value)) return 'mainnet';
   const network = value === 'testnet' || value === 'test' ? 'testnet' : 'mainnet';
-  url.searchParams.delete('network');
-  if (network !== 'mainnet') url.searchParams.set('network', network);
+  url.searchParams.set('network', network);
   if (url.href !== location.href) history.replaceState(history.state, '', url);
   return network;
 }

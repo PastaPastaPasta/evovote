@@ -22,7 +22,7 @@ describe('URL network migration', () => {
   it('uses an explicit Mainnet URL ahead of the old preference and canonicalizes it', () => {
     const b = browser('https://vote.dashhq.org/?network=mainnet#/about', 'testnet');
     expect(storedNetwork()).toBe('mainnet');
-    expect(b.location.href).toBe('https://vote.dashhq.org/#/about');
+    expect(b.location.href).toBe('https://vote.dashhq.org/?network=mainnet#/about');
   });
   it('keeps an unsupported network visible so the app can disclose the fallback', () => {
     const b = browser('https://vote.dashhq.org/?network=devnet-local#/about', null);
