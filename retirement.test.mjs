@@ -2,52 +2,48 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-const script = readFileSync(new URL('./retirement.js', import.meta.url), 'utf8');
-
-function visit(path) {
-  const url = new URL(path, 'https://vote.dashhq.org');
-  const elements = Object.fromEntries(['continue', 'forward-status', 'stay', 'destination'].map(id => [id, { dataset: {}, addEventListener(type, fn) { this[type] = fn; } }]));
-  let pending, redirect;
+const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+const site = /<dashhq-moved product="([^"]+)"/.exec(html)[1];
+const script = site === 'fees' ? '' : readFileSync(new URL(site === 'fees' ? './public/retirement.js' : './retirement.js', import.meta.url), 'utf8');
+function visit(route, path) {
+  const url = new URL(route, `https://${site}.dashhq.org`);
+  const attrs = { path: path || /<dashhq-moved[^>]+path="([^"]+)"/.exec(html)[1] };
   const events = {};
-  const network = new URLSearchParams(url.search).get('network') || 'mainnet';
-  runInNewContext(script, {
-    location: { hash: url.hash, pathname: url.pathname, replace: href => { redirect = href; } },
-    document: { getElementById: id => elements[id], querySelector: () => ({ setAttribute() {} }) },
-    dashhq: { network: { canonicalize() {}, fromUrl: () => network, label: value => value }, href: (key, path, { network }) => { const target = new URL(path, `https://${key}.dashhq.org`); target.searchParams.set('network', network); return target.href; } },
-    addEventListener: (type, fn) => { events[type] = fn; },
-    setTimeout: fn => { pending = fn; return 1; }, clearTimeout: () => { pending = null; },
-  });
-  return { elements, forward: () => { pending?.(); return redirect; }, events };
+  runInNewContext(script, { URLSearchParams, location: url, dashhq: { network: { canonicalize() {} } },
+    document: { querySelector: () => ({ setAttribute: (k, v) => { attrs[k] = v; }, getAttribute: k => attrs[k] }) },
+    addEventListener: (k, v) => { events[k] = v; } });
+  return { attrs, events, url };
 }
-
-for (const route of ['/', '/#/about', '/#/', '/missing/page', '/about']) {
-  test(`${route} forwards to the name-contest index`, () => {
-    const state = visit(route);
-    assert.equal(state.elements.continue.href, 'https://gov.dashhq.org/names?from=vote&network=mainnet');
-    assert.equal(state.forward(), state.elements.continue.href);
+if (site === 'vote') {
+  for (const route of ['/?network=testnet#/c/alice', '/c/alice?network=testnet', '/names/alice?network=testnet']) test(`${route} preserves the selected contest`, () => {
+    const { attrs } = visit(route);assert.equal(attrs.path, '/names/alice?from=vote');assert.equal(attrs.label, 'Open alice in Governance');
   });
-}
-for (const route of ['/?network=testnet#/c/alice', '/c/alice?network=testnet', '/names/alice?network=testnet']) {
-  test(`${route} preserves the contest and network`, () => {
-    assert.equal(visit(route).forward(), 'https://gov.dashhq.org/names/alice?from=vote&network=testnet');
+  test('labels remain one encoded segment; bad escapes and unknown routes go to index', () => {
+    assert.equal(visit('/#/c/a%2Fb').attrs.path, '/names/a%2Fb?from=vote');
+    for (const path of ['/#/c/%E0%A4%A', '/missing/page', '/#/about']) assert.equal(visit(path).attrs.path, '/names?from=vote');
+  });
+  test('changing an old hash updates the destination and existing arrival parameters survive', () => {
+    const state = visit('/?from=wallet#/c/alice');assert.equal(state.attrs.path, '/names/alice');
+    state.url.hash = '#/c/bob';state.events.hashchange();assert.equal(state.attrs.path, '/names/bob');
   });
 }
-test('labels are decoded and re-encoded as a single safe path segment', () => {
-  assert.equal(visit('/?network=devnet-paloma#/c/a%2Fb').forward(), 'https://gov.dashhq.org/names/a%2Fb?from=vote&network=devnet-paloma');
-  assert.equal(visit('/#/c/%E0%A4%A').forward(), 'https://gov.dashhq.org/names?from=vote&network=mainnet');
+if (site === 'basics') {
+  test('old list routes retain the relevant replacement', () => {
+    assert.equal(visit('/get-identities/?network=testnet#names', '/dpns/search/').attrs.path, '/dpns/search/');
+    assert.equal(visit('/all-dpns/', '/dpns/search/').attrs.path, '/dpns/search/');
+  });
+  test('identity and name parameters select their entity view', () => {
+    assert.equal(visit('/?id=public-id&network=testnet').attrs.path, '/identity/');
+    assert.equal(visit('/?name=alice.dash').attrs.path, '/dpns/');
+  });
+}
+if (site === 'fees') test('root and obsolete paths use Explorer fees', () => {
+  for (const path of ['/?contract=example#costs', '/old/calculator?network=testnet#costs']) assert.equal(visit(path).attrs.path, '/tools/fees/');
 });
-test('the visitor can pause forwarding and still follow the exact link', () => {
-  const state = visit('/?network=testnet#/c/alice');
-  state.elements.stay.click();
-  assert.equal(state.forward(), undefined);
-  assert.match(state.elements['forward-status'].textContent, /paused/);
-  assert.equal(state.elements.continue.href, 'https://gov.dashhq.org/names/alice?from=vote&network=testnet');
-  state.events.hashchange();
-  assert.equal(state.forward(), undefined);
+test('the shared component owns the countdown and retirement policy', () => {
+  assert.match(html, /<dashhq-moved /);assert.doesNotMatch(script, /setTimeout|setInterval|location.replace/);
 });
-test('unknown paths serve the same retirement page with absolute assets and strict CSP', () => {
-  const index = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
-  assert.equal(readFileSync(new URL('./404.html', import.meta.url), 'utf8'), index);
-  assert.match(index, /script-src 'self'/);
-  assert.doesNotMatch(index, /unsafe-|src="\.\//);
+test('root and unknown routes share strict CSP, absolute assets and a no-script link', () => {
+  const fallback = readFileSync(new URL(site === 'fees' ? './public/404.html' : './404.html', import.meta.url), 'utf8');
+  assert.equal(fallback, html);assert.match(html, /script-src 'self'/);assert.doesNotMatch(html, /unsafe-|src="\.\//);assert.match(html, /<noscript>/);
 });
