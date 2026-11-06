@@ -1,49 +1,72 @@
-import { readFileSync } from 'node:fs';
+// The same file in vote, fees and basics. The shell's <dashhq-moved> forwards at once and owns the network, the query
+// and the arrival notice (checked in design/tools/render-demo.mjs); a retired site keeps its pages and its route map.
+import { existsSync, readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+
+const read = (f) => readFileSync(new URL(f, import.meta.url), 'utf8');
+const html = read('./index.html');
 const site = /<dashhq-moved product="([^"]+)"/.exec(html)[1];
-const script = site === 'fees' ? '' : readFileSync(new URL(site === 'fees' ? './public/retirement.js' : './retirement.js', import.meta.url), 'utf8');
-function visit(route, path) {
-  const url = new URL(route, `https://${site}.dashhq.org`);
-  const attrs = { path: path || /<dashhq-moved[^>]+path="([^"]+)"/.exec(html)[1] };
-  const events = {};
-  runInNewContext(script, { URLSearchParams, location: url, dashhq: { network: { canonicalize() {} } },
-    document: { querySelector: () => ({ setAttribute: (k, v) => { attrs[k] = v; }, getAttribute: k => attrs[k] }) },
-    addEventListener: (k, v) => { events[k] = v; } });
-  return { attrs, events, url };
+const fallback = site === 'fees' ? './public/404.html' : './404.html';
+const pages = ['./index.html', fallback, ...(site === 'basics' ? ['./get-identities/index.html', './all-dpns/index.html'] : [])];
+const script = existsSync(new URL('./retirement.js', import.meta.url)) ? read('./retirement.js') : '';
+const home = { vote: 'https://gov.dashhq.org', fees: 'https://explorer.dashhq.org', basics: 'https://explorer.dashhq.org' }[site];
+
+// Run the route map against an old address and return what it leaves on <dashhq-moved>.
+function visit(route, page = html) {
+  const attr = (k) => (new RegExp(`<dashhq-moved[^>]+ ${k}="([^"]+)"`).exec(page) || [])[1];
+  const attrs = { path: attr('path'), label: attr('label') };
+  runInNewContext(script, { URLSearchParams, location: new URL(route, `https://${site}.dashhq.org`),
+    document: { querySelector: () => ({ setAttribute: (k, v) => { attrs[k] = v; }, getAttribute: (k) => attrs[k] }) } });
+  return attrs;
 }
+
 if (site === 'vote') {
-  for (const route of ['/?network=testnet#/c/alice', '/c/alice?network=testnet', '/names/alice?network=testnet']) test(`${route} preserves the selected contest`, () => {
-    const { attrs } = visit(route);assert.equal(attrs.path, '/names/alice?from=vote');assert.equal(attrs.label, 'Open alice in Governance');
-  });
-  test('labels remain one encoded segment; bad escapes and unknown routes go to index', () => {
-    assert.equal(visit('/#/c/a%2Fb').attrs.path, '/names/a%2Fb?from=vote');
-    for (const path of ['/#/c/%E0%A4%A', '/missing/page', '/#/about']) assert.equal(visit(path).attrs.path, '/names?from=vote');
-  });
-  test('changing an old hash updates the destination and existing arrival parameters survive', () => {
-    const state = visit('/?from=wallet#/c/alice');assert.equal(state.attrs.path, '/names/alice');
-    state.url.hash = '#/c/bob';state.events.hashchange();assert.equal(state.attrs.path, '/names/bob');
+  for (const route of ['/?network=testnet#/c/alice', '/c/alice?network=testnet', '/names/Alice', '/#/c/alice.dash']) {
+    test(`${route} opens the contest at the address Governance publishes`, () => {
+      assert.deepEqual(visit(route), { path: '/names/a11ce', label: 'Open alice.dash in Governance' });
+    });
+  }
+  test('anything that is not a contest label opens the contest list', () => {
+    for (const route of ['/#/c/a%2Fb', '/#/c/%E0%A4%A', '/#/c/ab', '/missing/page', '/#/about']) {
+      assert.deepEqual(visit(route), { path: '/names', label: 'Open name contests' }, route);
+    }
   });
 }
 if (site === 'basics') {
-  test('old list routes retain the relevant replacement', () => {
-    assert.equal(visit('/get-identities/?network=testnet#names', '/dpns/search/').attrs.path, '/dpns/search/');
-    assert.equal(visit('/all-dpns/', '/dpns/search/').attrs.path, '/dpns/search/');
+  test('old list pages open username search', () => {
+    for (const page of ['./get-identities/index.html', './all-dpns/index.html']) {
+      assert.equal(visit('/?network=testnet#names', read(page)).path, '/dpns/search/', page);
+    }
   });
-  test('identity and name parameters select their entity view', () => {
-    assert.equal(visit('/?id=public-id&network=testnet').attrs.path, '/identity/');
-    assert.equal(visit('/?name=alice.dash').attrs.path, '/dpns/');
+  test('identity and name parameters open their record', () => {
+    assert.equal(visit('/?id=public-id&network=testnet').path, '/identity/');
+    assert.equal(visit('/?name=alice.dash').path, '/dpns/');
   });
 }
-if (site === 'fees') test('root and obsolete paths use Explorer fees', () => {
-  for (const path of ['/?contract=example#costs', '/old/calculator?network=testnet#costs']) assert.equal(visit(path).attrs.path, '/tools/fees/');
+if (site === 'fees') test('every old address opens the fee estimator in Explorer', () => {
+  for (const route of ['/?contract=example#costs', '/old/calculator?network=testnet#costs']) assert.equal(visit(route).path, '/tools/fees/');
 });
-test('the shared component owns the countdown and retirement policy', () => {
-  assert.match(html, /<dashhq-moved /);assert.doesNotMatch(script, /setTimeout|setInterval|location.replace/);
+
+test('the shell owns the forward: the site writes no timer and no redirect of its own', () => {
+  assert.match(html, /<dashhq-moved /);
+  assert.doesNotMatch(script, /setTimeout|setInterval|location\.(replace|assign|href\s*=)/);
 });
-test('root and unknown routes share strict CSP, absolute assets and a no-script link', () => {
-  const fallback = readFileSync(new URL(site === 'fees' ? './public/404.html' : './404.html', import.meta.url), 'utf8');
-  assert.equal(fallback, html);assert.match(html, /script-src 'self'/);assert.doesNotMatch(html, /unsafe-|src="\.\//);assert.match(html, /<noscript>/);
-});
+test('unknown routes serve the same page', () => assert.equal(read(fallback), html));
+for (const page of pages) {
+  test(`${page} works without JavaScript and has no network menu`, () => {
+    const p = read(page);
+    assert.doesNotMatch(/<dashhq-bar[^>]*>/.exec(p)[0], /networks=/);
+    const link = /<dashhq-moved[\s\S]*?<a class="dh-btn dh-btn--primary" href="([^"]+)"/.exec(p);
+    assert.ok(link, 'a primary link inside <dashhq-moved>');
+    const u = new URL(link[1].replaceAll('&amp;', '&'));
+    assert.equal(u.origin, home);
+    assert.equal(u.searchParams.get('moved-from'), site);
+    assert.ok(u.searchParams.get('network'));
+    assert.match(p, /<h1 class="dh-page-header__title">/);
+    assert.match(p, /<noscript>/);
+    assert.match(p, /script-src 'self'/);
+    assert.doesNotMatch(p, /unsafe-|src="\.\//);
+  });
+}
