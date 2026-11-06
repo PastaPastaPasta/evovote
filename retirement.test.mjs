@@ -18,7 +18,7 @@ function visit(route, page = html) {
   const attr = (k) => (new RegExp(`<dashhq-moved[^>]+ ${k}="([^"]+)"`).exec(page) || [])[1];
   const attrs = { path: attr('path'), label: attr('label') };
   runInNewContext(script, { URLSearchParams, location: new URL(route, `https://${site}.dashhq.org`),
-    document: { querySelector: () => ({ setAttribute: (k, v) => { attrs[k] = v; }, getAttribute: (k) => attrs[k] }) } });
+    document: { querySelector: () => ({ setAttribute: (k, v) => { attrs[k] = v; } }) } });
   return attrs;
 }
 
