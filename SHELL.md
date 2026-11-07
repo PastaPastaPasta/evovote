@@ -1,5 +1,5 @@
-Vendored dashhq shell 1.8.1 from the local family design release.
+Vendored dashhq shell 1.9.1 from the local family design release.
 
-`dashhq/dashhq-shell.js` SHA-256: `daaec6449c94ad5e091792f3cecc70c2a2dbf025bdf21b1627bf41d70ec6d377`.
+`dashhq/dashhq-shell.js` SHA-256: `da56e0a0da875aeeea087c3ae5c33b284e4a72e50db1cb3d93e34218484d88d1`.
 
 The vendored files are unchanged. See `dashhq/README.md` for the component contract.
