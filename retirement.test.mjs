@@ -28,8 +28,13 @@ if (site === 'vote') {
       assert.deepEqual(visit(route), { path: '/names/a11ce', label: 'Open alice.dash in Governance' });
     });
   }
+  test('legacy About links open the name-contest explanation', () => {
+    for (const route of ['/#/about', '/about', '/about/']) {
+      assert.deepEqual(visit(route), { path: '/names#name-contests-about', label: 'How name contests work' });
+    }
+  });
   test('anything that is not a contest label opens the contest list', () => {
-    for (const route of ['/#/c/a%2Fb', '/#/c/%E0%A4%A', '/#/c/ab', '/missing/page', '/#/about']) {
+    for (const route of ['/#/c/a%2Fb', '/#/c/%E0%A4%A', '/#/c/ab', '/missing/page']) {
       assert.deepEqual(visit(route), { path: '/names', label: 'Open name contests' }, route);
     }
   });

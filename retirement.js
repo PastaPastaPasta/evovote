@@ -5,6 +5,11 @@
 (() => {
   const moved = document.querySelector('dashhq-moved');
   const route = location.hash.replace(/^#\/?/, '') || location.pathname.replace(/^\//, '');
+  if (/^about\/?$/.test(route)) {
+    moved.setAttribute('path', '/names#name-contests-about');
+    moved.setAttribute('label', 'How name contests work');
+    return;
+  }
   const match = /^(?:c|names)\/([^/?#]+)\/?$/.exec(route);
   let label = '';
   try { label = match ? decodeURIComponent(match[1]).trim().replace(/\.dash$/i, '').toLowerCase() : ''; } catch { /* the list */ }
