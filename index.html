@@ -1,41 +1,31 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      name="description"
-      content="Live tallies for contested Dash usernames, straight from Dash Platform. Masternode owners can cast votes from the browser — keys never leave the tab."
-    />
-    <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f7f9" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f1b24" />
-    <title>EvoVote — contested Dash usernames</title>
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
-    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <script>
-      // Apply the theme before first paint to avoid a light flash in dark mode.
-      (function () {
-        try {
-          var pref = localStorage.getItem('evovote.theme');
-          var dark =
-            pref === 'dark' ||
-            ((pref === null || pref === 'system') &&
-              matchMedia('(prefers-color-scheme: dark)').matches);
-          document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-        } catch (e) {}
-      })();
-    </script>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="/dashhq/dashhq-shell.js"></script>
+<link rel="preload" href="/dashhq/fonts/archivo-latin-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/dashhq/dashhq-tokens.css">
+<link rel="stylesheet" href="/dashhq/dashhq-shell.css">
+<link rel="stylesheet" href="/dashhq/dashhq-components.css">
+<link rel="stylesheet" href="/retired.css">
+<title>Name contests moved to Governance · dashhq</title>
+<meta name="description" content="Browse name contests, inspect tallies and choose how to vote in one place.">
+<script src="/retirement.js" defer></script>
+</head>
+<body class="dh-fill">
+<a class="skip" href="#main">Skip to content</a>
+<dashhq-bar product="vote" network="mainnet" sticky></dashhq-bar>
+<main id="main" class="dh-container dh-page"><div class="dh-narrow">
+<dashhq-moved product="vote" to="gov" path="/names" heading="Name contests moved to Governance" lede="Browse name contests, inspect tallies and choose how to vote in one place." label="Open name contests">
+<h1 class="dh-page-header__title">Name contests moved to Governance</h1>
+<p class="dh-page-header__lede">Browse name contests, inspect tallies and choose how to vote in one place.</p>
+<p><a class="dh-btn dh-btn--primary" href="https://gov.dashhq.org/names?network=mainnet&amp;moved-from=vote">Open name contests →</a></p>
+</dashhq-moved>
+
+<noscript><p>JavaScript is off, so this page can't open your contest directly. The link above opens the contest list on Mainnet.</p></noscript>
+</div></main>
+<dashhq-footer product="vote" source="https://github.com/PastaPastaPasta/evovote"></dashhq-footer>
+</body>
 </html>
