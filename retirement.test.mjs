@@ -14,10 +14,11 @@ const script = existsSync(new URL('./retirement.js', import.meta.url)) ? read('.
 const home = { vote: 'https://gov.dashhq.org', fees: 'https://explorer.dashhq.org', basics: 'https://explorer.dashhq.org' }[site];
 
 // Run the route map against an old address and return what it leaves on <dashhq-moved>.
-function visit(route, page = html) {
+function visit(route, page = html, stored) {
   const attr = (k) => (new RegExp(`<dashhq-moved[^>]+ ${k}="([^"]+)"`).exec(page) || [])[1];
   const attrs = { path: attr('path'), label: attr('label') };
   runInNewContext(script, { URLSearchParams, location: new URL(route, `https://${site}.dashhq.org`),
+    ...(stored && { localStorage: { getItem: (k) => stored[k] ?? null } }),
     document: { querySelector: () => ({ setAttribute: (k, v) => { attrs[k] = v; } }) } });
   return attrs;
 }
@@ -32,6 +33,27 @@ if (site === 'vote') {
     for (const route of ['/#/about', '/about', '/about/']) {
       assert.deepEqual(visit(route), { path: '/names#name-contests-about', label: 'How name contests work' });
     }
+  });
+  test('an ordinary fragment leaves the path to name the contest', () => {
+    for (const route of ['/c/Alice#votes', '/names/alice#votes']) {
+      assert.deepEqual(visit(route), { path: '/names/a11ce', label: 'Open alice.dash in Governance' }, route);
+    }
+    assert.deepEqual(visit('/about#votes'), { path: '/names#name-contests-about', label: 'How name contests work' });
+  });
+  test('a label with a leading or trailing hyphen opens the contest list', () => {
+    for (const route of ['/c/-alice', '/#/c/alice-', '/names/-ab-']) {
+      assert.deepEqual(visit(route), { path: '/names', label: 'Open name contests' }, route);
+    }
+    assert.equal(visit('/#/c/a-b').path, '/names/a-b');
+  });
+  test('a link without a network opens the network EvoVote last used in this browser', () => {
+    const testnet = { 'evovote.network': 'testnet' };
+    assert.equal(visit('/#/c/alice', html, testnet).network, 'testnet');
+    assert.equal(visit('/', html, testnet).network, 'testnet');
+    assert.equal(visit('/#/c/alice', html, { 'evovote.network': 'mainnet' }).network, undefined);
+    assert.equal(visit('/?network=mainnet#/c/alice', html, testnet).network, undefined);
+    assert.equal(visit('/?net=main#/c/alice', html, testnet).network, undefined);
+    assert.equal(visit('/#/c/alice').network, undefined);
   });
   test('anything that is not a contest label opens the contest list', () => {
     for (const route of ['/#/c/a%2Fb', '/#/c/%E0%A4%A', '/#/c/ab', '/missing/page']) {
